@@ -46,7 +46,8 @@ Two entry paths:
    `/sys/module/wlan/parameters/con_mode`, bring `wlan0` up.
 2. **Boot flag** (slower, recommended):
    write `/data/adb/owly-airdrop-mode`, reboot; an early-boot service writes
-   `con_mode=4` before Android Wi-Fi starts. Exit removes the flag and reboots.
+   `con_mode=4` before Android Wi-Fi starts. `reboot-enter` installs that
+   service automatically. Exit removes the flag and reboots.
 
 The live `con_mode` switch on this firmware can crash or wedge the WLAN
 subsystem. The boot-flag path is the reliable default; the live path is kept
