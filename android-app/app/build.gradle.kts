@@ -5,12 +5,12 @@ plugins {
 }
 
 android {
-    namespace = "io.github.owlyradio"
+    namespace = "io.moonbase.droidy"
     compileSdk = 36
     buildToolsVersion = "35.0.1"
 
     defaultConfig {
-        applicationId = "io.github.owlyradio"
+        applicationId = "io.moonbase.droidy"
         minSdk = 23
         targetSdk = 36
         versionCode = 3
