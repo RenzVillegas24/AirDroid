@@ -277,7 +277,7 @@ class DroidyController(private val context: Context) {
 
     val effectiveStatus: String
         get() = when {
-            scanning || sending || receiverRunning || verifyingKernel -> status
+            scanning || sending || receiverRunning || verifyingKernel || modeSwitching -> status
             !kernel.monitorReady -> kernel.state.badge
             else -> status
         }
