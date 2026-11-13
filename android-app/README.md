@@ -36,7 +36,7 @@ the K20's internal WCN3990 radio is used; external USB Wi-Fi is out of scope.
 
 The base boot image starts in normal Wi-Fi mode (no `wlan.con_mode=4`).
 Use **System → Radio mode → Enter AirDrop mode** when a session is ready.
-The app can also reboot into the mode through the early-boot flag service if
+The app can also reboot into the mode through its `BOOT_COMPLETED` receiver if
 the live switch fails.
 
 ```text

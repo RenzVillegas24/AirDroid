@@ -4,7 +4,6 @@
 
 CON_MODE=/sys/module/wlan/parameters/con_mode
 FLAG=/data/adb/owly-airdrop-mode
-SERVICE=/data/adb/post-fs-data.d/owly-mode-boot.sh
 LOG=/data/local/tmp/owly-mode.log
 
 log() {
@@ -18,32 +17,6 @@ monitor_up() {
 
 hidden_sta_present() {
     ls /sys/class/net/wlan_inj* >/dev/null 2>&1
-}
-
-install_boot_service() {
-    [ -x "$SERVICE" ] && return 0
-    mkdir -p "$(dirname "$SERVICE")" || return 1
-    cat > "$SERVICE" <<'EOS'
-#!/system/bin/sh
-FLAG=/data/adb/owly-airdrop-mode
-CON_MODE=/sys/module/wlan/parameters/con_mode
-LOG=/data/local/tmp/owly-mode-boot.log
-
-[ -e "$FLAG" ] || exit 0
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    [ -e "$CON_MODE" ] && break
-    sleep 0.5
-done
-[ -e "$CON_MODE" ] || exit 1
-echo 4 > "$CON_MODE" 2>> "$LOG"
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [ "$(cat /sys/class/net/wlan0/type 2>/dev/null)" = "803" ] && break
-    sleep 1
-done
-ip link set wlan0 up 2>/dev/null
-echo "boot mode=$(cat "$CON_MODE" 2>/dev/null) type=$(cat /sys/class/net/wlan0/type 2>/dev/null)" >> "$LOG"
-EOS
-    chmod 755 "$SERVICE"
 }
 
 status() {
@@ -63,7 +36,6 @@ status() {
         echo "mode=station-or-off"
     fi
     echo "airdrop_flag=$([ -e "$FLAG" ] && echo present || echo absent)"
-    echo "boot_service=$([ -x "$SERVICE" ] && echo present || echo absent)"
 }
 
 enter_live() {
@@ -126,11 +98,8 @@ case "$1" in
         exit_live
         ;;
     reboot-enter)
-        if ! install_boot_service; then
-            log "reboot-enter failed: could not install boot service"
-            echo "could not install $SERVICE" >&2
-            exit 1
-        fi
+        # The app's BOOT_COMPLETED receiver applies the flag. KernelSU
+        # service.d scripts are not reliable on this K20 build.
         mkdir -p /data/adb
         touch "$FLAG"
         sync
