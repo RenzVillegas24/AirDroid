@@ -142,7 +142,7 @@ bug in the hidden vSTA path on this boot.
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.github.owlyradio/.MainActivity
+adb shell am start -n io.moonbase.droidy/.MainActivity
 ```
 
 Grant KernelSU root when the first radio action asks for it. The app installs
@@ -152,7 +152,7 @@ the helper and monitor tools under `/data/local/tmp/owly-app`.
 
 ```text
 android-app/
-  app/src/main/java/io/github/owlyradio/   Compose UI + controller
+  app/src/main/java/io/moonbase/droidy/   Compose UI + controller
   app/src/main/res/drawable/               Material Symbols vectors
   helper/                                  Rust AWDL/AirDrop helper
   assets/                                  helper + monitor binaries (local)
