@@ -234,7 +234,27 @@ fn dnm_from_txt(txt: &[u8]) -> Option<String> {
 }
 
 async fn read_hidden_mac() -> Result<MacAddr, Box<dyn Error>> {
+    // Base mode: the monitor carries the AWDL address. The hidden wlan_inj*
+    // STA is only the WMI TX tag, so do not use its MAC as the AWDL identity.
     for _ in 0..30 {
+        if let Ok(kind) = std::fs::read_to_string("/sys/class/net/wlan0/type") {
+            if kind.trim() == "803" {
+                if let Ok(text) = std::fs::read_to_string("/sys/class/net/wlan0/address") {
+                    let octets = text
+                        .trim()
+                        .split(':')
+                        .map(|part| u8::from_str_radix(part, 16))
+                        .collect::<Result<Vec<_>, _>>();
+                    if let Ok(octets) = octets {
+                        if octets.len() == 6 {
+                            let mut mac = [0u8; 6];
+                            mac.copy_from_slice(&octets);
+                            return Ok(MacAddr(mac));
+                        }
+                    }
+                }
+            }
+        }
         if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
@@ -259,7 +279,7 @@ async fn read_hidden_mac() -> Result<MacAddr, Box<dyn Error>> {
         }
         sleep(Duration::from_millis(100)).await;
     }
-    Err("injection vSTA did not appear under /sys/class/net/wlan_inj*".into())
+    Err("monitor or injection vSTA did not appear under /sys/class/net".into())
 }
 
 fn sender_id(addr: MacAddr) -> String {
