@@ -77,7 +77,7 @@ private class PendingRequest(
 
 enum class MonitorState(val badge: String) {
     MONITOR("READY"),
-    STOCK("STOCK KERNEL"),
+    STOCK("WIFI MODE"),
     UNVERIFIED("VERIFY KERNEL"),
 }
 
@@ -106,14 +106,21 @@ data class KernelStatus(
         if (effectiveMode == 4) {
             return copy(
                 state = MonitorState.MONITOR,
-                detail = "Root confirmed wlan.con_mode=4 in the boot command line.",
+                detail = "Root confirmed con_mode=4: monitor + hidden STA is active.",
+                verifiedBy = "root",
+            )
+        }
+        if (effectiveMode == 0) {
+            return copy(
+                state = MonitorState.STOCK,
+                detail = "Root confirmed con_mode=0: normal Wi-Fi mode. Enter AirDrop mode when ready.",
                 verifiedBy = "root",
             )
         }
         if (cmdline.isNotBlank() || conMode != null) {
             return copy(
                 state = MonitorState.STOCK,
-                detail = "Root confirmed the boot command line has no wlan.con_mode=4.",
+                detail = "Root confirmed no monitor con_mode=4. Normal Wi-Fi mode.",
                 verifiedBy = "root",
             )
         }
@@ -152,13 +159,13 @@ data class KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.MONITOR,
-                    detail = "Known monitor-enabled kernel. wlan.con_mode=4 is present.",
+                    detail = "Known monitor-enabled kernel. con_mode=4 is active.",
                 )
                 release in STOCK_RELEASES -> KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.STOCK,
-                    detail = "Stock kernel. The monitor boot command line (wlan.con_mode=4) is absent.",
+                    detail = "Normal Wi-Fi boot. Enter AirDrop mode when ready.",
                 )
                 else -> KernelStatus(
                     release = release,
@@ -186,6 +193,7 @@ class DroidyController(private val context: Context) {
         private const val SCAN_TIMEOUT_MS = (SCAN_SECONDS + 20L) * 1000L
         private const val SEND_TIMEOUT_MS = 300_000L
         private val ASSETS = arrayOf(
+            "owly-mode.sh",
             "owly-nl80211-set-channel",
             "owly-monitor-send-frame",
             "owly-monitor-full",
@@ -247,6 +255,8 @@ class DroidyController(private val context: Context) {
     var kernel by mutableStateOf(KernelStatus.detect())
         private set
     var verifyingKernel by mutableStateOf(false)
+        private set
+    var modeSwitching by mutableStateOf(false)
         private set
     var status by mutableStateOf("READY")
         private set
@@ -647,10 +657,10 @@ class DroidyController(private val context: Context) {
     private fun requireMonitorKernel(): Boolean {
         if (kernel.monitorReady) return true
         status = kernel.state.badge
-        sendMessage = "Monitor boot required. Flash boot-owly-monitor-fixed.img."
+        sendMessage = "Enter AirDrop mode to use the radio."
         append("")
         append("Radio action blocked: ${kernel.detail}")
-        append("Expected monitor kernel: 4.14.357-openela-perf-g7a7b4d1b6808")
+        append("Use Enter AirDrop mode; if the live switch fails, use Reboot into AirDrop mode.")
         return false
     }
 
@@ -681,6 +691,75 @@ class DroidyController(private val context: Context) {
                 status = if (kernel.monitorReady) "READY" else kernel.state.badge
                 append("Kernel check did not complete; keeping ${kernel.state.badge}.")
             }
+        }
+    }
+
+    fun enterAirDropMode(reboot: Boolean = false) {
+        if (modeSwitching || scanning || sending || receiverRunning) return
+        scope.launch {
+            modeSwitching = true
+            status = if (reboot) "REBOOTING" else "ENTERING AIRDROP"
+            val action = if (reboot) "reboot-enter" else "enter"
+            append("")
+            append(if (reboot) "Rebooting into AirDrop mode..." else "Entering AirDrop mode...")
+            val rc = execRoot(
+                label = "enter AirDrop mode",
+                command = "$APP_TMP/owly-mode.sh $action",
+            )
+            modeSwitching = false
+            if (reboot && rc == 0) return@launch
+            if (rc == 0) {
+                refreshKernelStatus()
+                append("AirDrop mode: ${kernel.detail}")
+            } else {
+                status = "WIFI MODE"
+                sendMessage = "Could not enter AirDrop mode. Use Reboot into AirDrop mode."
+                append("Enter AirDrop mode failed; the live switch can wedge this firmware. Reboot into AirDrop mode instead.")
+            }
+        }
+    }
+
+    fun exitAirDropMode(reboot: Boolean = false) {
+        if (modeSwitching || scanning || sending || receiverRunning) return
+        scope.launch {
+            modeSwitching = true
+            status = if (reboot) "REBOOTING" else "LEAVING AIRDROP"
+            val action = if (reboot) "reboot-exit" else "exit"
+            append("")
+            append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving AirDrop mode...")
+            val rc = execRoot(
+                label = "exit AirDrop mode",
+                command = "$APP_TMP/owly-mode.sh $action",
+            )
+            modeSwitching = false
+            if (reboot && rc == 0) return@launch
+            if (rc == 0) {
+                refreshKernelStatus()
+                append("Wi-Fi mode: ${kernel.detail}")
+            } else {
+                status = "AIRDROP"
+                sendMessage = "Could not restore Wi-Fi. Reboot to Wi-Fi mode."
+                append("Exit AirDrop mode failed; reboot to restore Wi-Fi.")
+            }
+        }
+    }
+
+    private suspend fun refreshKernelStatus() {
+        var cmdline = ""
+        var conMode: Int? = null
+        val rc = execRoot(
+            label = "kernel check",
+            command = "printf 'CMDLINE='; cat /proc/cmdline; " +
+                "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; echo",
+        ) { line ->
+            when {
+                line.startsWith("CMDLINE=") -> cmdline = line.removePrefix("CMDLINE=").trim()
+                line.startsWith("CON_MODE=") -> conMode = line.removePrefix("CON_MODE=").trim().toIntOrNull()
+            }
+        }
+        if (rc == 0) {
+            kernel = kernel.withRootCheck(cmdline, conMode)
+            status = if (kernel.monitorReady) "READY" else kernel.state.badge
         }
     }
 

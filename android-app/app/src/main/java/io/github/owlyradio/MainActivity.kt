@@ -544,7 +544,7 @@ private fun KernelBanner(controller: DroidyController) {
     if (kernel.monitorReady) return
     val colors = MaterialTheme.colorScheme
     val title = when (kernel.state) {
-        MonitorState.STOCK -> "Stock kernel detected"
+        MonitorState.STOCK -> "Wi-Fi mode"
         MonitorState.UNVERIFIED -> "Kernel not verified"
         MonitorState.MONITOR -> return
     }
@@ -574,7 +574,7 @@ private fun KernelBanner(controller: DroidyController) {
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = "${kernel.detail} Flash boot-owly-monitor-fixed.img before scanning or receiving.",
+                    text = "${kernel.detail} Enter AirDrop mode when ready; if the live switch fails, reboot into it.",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onErrorContainer.copy(alpha = 0.82f),
                 )
@@ -584,6 +584,26 @@ private fun KernelBanner(controller: DroidyController) {
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onErrorContainer.copy(alpha = 0.66f),
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = { controller.enterAirDropMode() },
+                        enabled = !controller.modeSwitching,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_wifi_tethering),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (controller.modeSwitching) "Switching..." else "Enter AirDrop mode")
+                    }
+                    TextButton(
+                        onClick = { controller.enterAirDropMode(reboot = true) },
+                        enabled = !controller.modeSwitching,
+                    ) {
+                        Text("Reboot")
+                    }
+                }
                 TextButton(
                     onClick = { controller.verifyKernelWithRoot() },
                     enabled = !controller.verifyingKernel,
@@ -1391,21 +1411,21 @@ private fun SettingsScreen(controller: DroidyController) {
                     Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Monitor kernel",
+                            text = "Radio mode",
                             style = MaterialTheme.typography.titleMedium,
                             color = colors.onSurface,
                         )
                         Text(
                             text = when (controller.kernel.state) {
-                                MonitorState.MONITOR -> "Monitor boot active"
-                                MonitorState.STOCK -> "Stock boot detected"
-                                MonitorState.UNVERIFIED -> "Unknown boot image"
+                                MonitorState.MONITOR -> "AirDrop mode active"
+                                MonitorState.STOCK -> "Wi-Fi mode"
+                                MonitorState.UNVERIFIED -> "Unknown mode"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = when (controller.kernel.state) {
                                 MonitorState.MONITOR -> colors.primary
-                                MonitorState.STOCK -> colors.error
-                                MonitorState.UNVERIFIED -> colors.tertiary
+                                MonitorState.STOCK -> colors.tertiary
+                                MonitorState.UNVERIFIED -> colors.error
                             },
                         )
                     }
@@ -1424,26 +1444,57 @@ private fun SettingsScreen(controller: DroidyController) {
                 )
                 if (!controller.kernel.monitorReady) {
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(
-                        onClick = { controller.verifyKernelWithRoot() },
-                        enabled = !controller.verifyingKernel,
+                    Button(
+                        onClick = { controller.enterAirDropMode() },
+                        enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_memory),
+                            painter = painterResource(R.drawable.ic_wifi_tethering),
                             contentDescription = null,
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(8.dp))
+                        Text(if (controller.modeSwitching) "Switching..." else "Enter AirDrop mode")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { controller.enterAirDropMode(reboot = true) },
+                        enabled = !controller.modeSwitching,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Reboot into AirDrop mode")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { controller.verifyKernelWithRoot() },
+                        enabled = !controller.verifyingKernel,
+                    ) {
                         Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
                     }
-                } else if (controller.kernel.verifiedBy == "root") {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Verified from /proc/cmdline",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.primary,
-                    )
+                } else {
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = { controller.exitAirDropMode() },
+                        enabled = !controller.modeSwitching,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (controller.modeSwitching) "Switching..." else "Exit AirDrop mode")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { controller.exitAirDropMode(reboot = true) },
+                        enabled = !controller.modeSwitching,
+                    ) {
+                        Text("Reboot to Wi-Fi")
+                    }
+                    if (controller.kernel.verifiedBy == "root") {
+                        Text(
+                            text = "Verified from /proc/cmdline and con_mode",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.primary,
+                        )
+                    }
                 }
             }
         }
