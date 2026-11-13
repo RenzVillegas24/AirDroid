@@ -1,0 +1,31 @@
+# Kernel source is its own git repository.
+workspaces/raphael/kernel/
+# Large local artifacts / generated outputs.
+workspaces/raphael/boot-images/
+workspaces/raphael/boot-artifacts/
+workspaces/raphael/captures/
+workspaces/raphael/logs/
+workspaces/raphael/out/
+workspaces/raphael/scripts/out/
+workspaces/raphael/references/
+workspaces/raphael/tools/
+workspaces/shared/
+workspaces/chenfeng/
+android-app/build/
+android-app/out/
+android-app/tools/
+android-app/assets/
+android-app/debug.keystore
+android-app/helper/target/
+android-app/gen/
+scripts/out/
+vendor-symvers.txt
+*.apk
+*.o
+*.a
+*.symversions
+local.properties
+android-app/.gradle/
+android-app/.kotlin/
+android-app/app/build/
+android-app/local.properties
