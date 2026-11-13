@@ -1,4 +1,4 @@
-package io.github.owlyradio
+package io.moonbase.droidy
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
  */
 class DebugReceiver : BroadcastReceiver() {
     companion object {
-        const val ACTION = "io.github.owlyradio.DEBUG"
+        const val ACTION = "io.moonbase.droidy.DEBUG"
         const val TOKEN = "droidy-local-debug"
         const val OUTPUT = "/data/local/tmp/droidy-debug.txt"
         @Volatile private var debugBle: BleAdvertiser? = null

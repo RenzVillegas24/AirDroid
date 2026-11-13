@@ -21,7 +21,7 @@
             android:name=".DebugReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="io.github.owlyradio.DEBUG" />
+                <action android:name="io.moonbase.droidy.DEBUG" />
             </intent-filter>
         </receiver>
 
