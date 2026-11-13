@@ -1,4 +1,4 @@
-# owly-droid
+# Droidy
 
 Experimental Android AirDrop / AWDL work for two Qualcomm phones.
 
@@ -24,7 +24,7 @@ workspaces/
   raphael/     kernel source, configs, boot images, captures, scripts
   shared/      shared tools and the Owly reference checkout
 
-android-app/   Kotlin "Owly Radio" test APK (Material 3 Expressive UI)
+android-app/   Kotlin "Droidy" test APK (Material 3 Expressive UI)
 scripts/       general monitor/AWDL helpers
 ```
 
