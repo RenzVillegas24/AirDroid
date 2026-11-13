@@ -548,10 +548,13 @@ private fun KernelBanner(controller: DroidyController) {
         MonitorState.UNVERIFIED -> "Kernel not verified"
         MonitorState.MONITOR -> return
     }
+    val wifiMode = kernel.state == MonitorState.STOCK
+    val container = if (wifiMode) colors.secondaryContainer else colors.errorContainer
+    val onContainer = if (wifiMode) colors.onSecondaryContainer else colors.onErrorContainer
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = colors.errorContainer),
+        colors = CardDefaults.cardColors(containerColor = container),
     ) {
         Row(
             modifier = Modifier
@@ -560,9 +563,9 @@ private fun KernelBanner(controller: DroidyController) {
             verticalAlignment = Alignment.Top,
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_warning),
+                painter = painterResource(if (wifiMode) R.drawable.ic_wifi_tethering else R.drawable.ic_warning),
                 contentDescription = null,
-                tint = colors.onErrorContainer,
+                tint = onContainer,
                 modifier = Modifier.size(24.dp),
             )
             Spacer(Modifier.width(12.dp))
@@ -570,19 +573,23 @@ private fun KernelBanner(controller: DroidyController) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
-                    color = colors.onErrorContainer,
+                    color = onContainer,
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = "${kernel.detail} Enter AirDrop mode when ready; if the live switch fails, reboot into it.",
+                    text = if (wifiMode) {
+                        "${kernel.detail} Enter AirDrop mode when ready; if the live switch fails, reboot into it."
+                    } else {
+                        "${kernel.detail} Verify with root, then enter AirDrop mode."
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = colors.onErrorContainer.copy(alpha = 0.82f),
+                    color = onContainer.copy(alpha = 0.82f),
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = "Kernel ${kernel.release}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = colors.onErrorContainer.copy(alpha = 0.66f),
+                    color = onContainer.copy(alpha = 0.66f),
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
