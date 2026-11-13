@@ -15,11 +15,14 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -60,8 +63,9 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarScrollBehavior
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,9 +77,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -91,19 +99,22 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(
+            statusBarStyle = SystemBarStyle.auto(
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
             ),
-            navigationBarStyle = SystemBarStyle.light(
+            navigationBarStyle = SystemBarStyle.auto(
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
             ),
         )
         setContent {
-            DroidyTheme {
-                val context = LocalContext.current
-                val controller = remember { DroidyController(context.applicationContext) }
+            val context = LocalContext.current
+            val controller = remember { DroidyController(context.applicationContext) }
+            DroidyTheme(
+                themeMode = controller.settings.themeMode,
+                tintMode = controller.settings.tintMode,
+            ) {
                 val scope = rememberCoroutineScope()
                 val permissions = remember {
                     val requested = mutableListOf<String>()
@@ -136,122 +147,161 @@ class MainActivity : ComponentActivity() {
 
 private enum class DroidyTab(
     val label: String,
+    val subtitle: String,
     @DrawableRes val icon: Int,
 ) {
-    SEND("Send", R.drawable.ic_send),
-    RECEIVE("Receive", R.drawable.ic_download),
-    LOGS("Logs", R.drawable.ic_receipt_long),
-    SETTINGS("Settings", R.drawable.ic_settings),
+    SEND("Send", "Discover nearby AirDrop peers", R.drawable.ic_send),
+    RECEIVE("Receive", "Accept files from an iPhone", R.drawable.ic_download),
+    LOGS("Logs", "Live radio and session output", R.drawable.ic_receipt_long),
+    SETTINGS("Settings", "Radio, appearance, and receiver identity", R.drawable.ic_settings),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
     var tab by remember { mutableStateOf(DroidyTab.SEND) }
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = { DroidyTopBar(controller) },
-        bottomBar = { DroidyFloatingToolbar(tab) { tab = it } },
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-        ) {
-            when (tab) {
-                DroidyTab.SEND -> SendScreen(controller, scope)
-                DroidyTab.RECEIVE -> ReceiveScreen(controller, scope)
-                DroidyTab.LOGS -> LogsScreen(controller)
-                DroidyTab.SETTINGS -> SettingsScreen(controller)
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+    LaunchedEffect(tab) {
+        topAppBarState.heightOffset = 0f
+        topAppBarState.contentOffset = 0f
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            topBar = { DroidyTopBar(tab, controller, scope, scrollBehavior) },
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .nestedScroll(scrollBehavior.nestedScrollConnection)
+                    .padding(innerPadding),
+            ) {
+                when (tab) {
+                    DroidyTab.SEND -> SendScreen(controller, scope)
+                    DroidyTab.RECEIVE -> ReceiveScreen(controller, scope)
+                    DroidyTab.LOGS -> LogsScreen(controller)
+                    DroidyTab.SETTINGS -> SettingsScreen(controller)
+                }
             }
         }
+        DroidyFloatingToolbar(
+            selected = tab,
+            onSelected = { tab = it },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DroidyTopBar(controller: DroidyController) {
-    TopAppBar(
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_wifi_tethering),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text(
-                        text = "Droidy",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = "AirDrop over AWDL",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        },
-        actions = {
-            StatusPill(controller.effectiveStatus)
-            Spacer(Modifier.width(8.dp))
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-        ),
-    )
-}
-
-@Composable
-private fun StatusPill(status: String) {
-    val colors = when (status) {
-        "SENDING" -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
-        "RECEIVING", "INCOMING", "RECEIVED" ->
-            MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
-        "NO PEERS", "CHECK LOG", "ROOT ERROR", "RECEIVE ERROR",
-        "STOCK KERNEL", "VERIFY KERNEL" ->
-            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
-        else -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+private fun DroidyTopBar(
+    tab: DroidyTab,
+    controller: DroidyController,
+    scope: CoroutineScope,
+    scrollBehavior: TopAppBarScrollBehavior,
+) {
+    val density = LocalDensity.current
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val expandedHeight = 176.dp
+    val collapsedHeight = 64.dp
+    val rangePx = with(density) { (expandedHeight - collapsedHeight).toPx() }
+    LaunchedEffect(rangePx) {
+        scrollBehavior.state.heightOffsetLimit = -rangePx
+        scrollBehavior.state.heightOffset = 0f
     }
-    Surface(shape = CircleShape, color = colors.first) {
+    val collapse = scrollBehavior.state.collapsedFraction.coerceIn(0f, 1f)
+    val headerHeight = expandedHeight + (collapsedHeight - expandedHeight) * collapse + statusTop
+    val titleStyle = MaterialTheme.typography.headlineMedium.copy(
+        fontSize = (34f - 12f * collapse).sp,
+        lineHeight = (42f - 14f * collapse).sp,
+    )
+    val subtitleAlpha = (1f - collapse * 1.6f).coerceIn(0f, 1f)
+    val subtitleHeight = (20.dp * (1f - collapse)).coerceAtLeast(0.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(headerHeight)
+            .background(MaterialTheme.colorScheme.background)
+            .padding(start = 20.dp, end = 20.dp, top = statusTop),
+    ) {
+        Spacer(Modifier.weight(1f))
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .background(colors.second.copy(alpha = 0.7f), CircleShape),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = status,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = colors.second,
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tab.label,
+                    style = titleStyle,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = tab.subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .height(subtitleHeight)
+                        .alpha(subtitleAlpha)
+                        .clipToBounds(),
+                )
+            }
+            when (tab) {
+                DroidyTab.SEND -> {
+                    FilledTonalButton(
+                        onClick = { scope.launch { controller.scan() } },
+                        enabled = controller.kernel.monitorReady && !controller.scanning &&
+                            !controller.sending && !controller.sendCancelling &&
+                            !controller.receiverRunning,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_refresh),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (controller.scanning) "Scanning" else "Scan")
+                    }
+                }
+                DroidyTab.LOGS -> {
+                    TextButton(onClick = { controller.clearLogs() }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_delete),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Clear")
+                    }
+                }
+                DroidyTab.RECEIVE, DroidyTab.SETTINGS -> Unit
+            }
         }
+        Spacer(Modifier.height(12.dp))
     }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun DroidyFloatingToolbar(selected: DroidyTab, onSelected: (DroidyTab) -> Unit) {
+private fun DroidyFloatingToolbar(
+    selected: DroidyTab,
+    onSelected: (DroidyTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 12.dp),
@@ -302,10 +352,9 @@ private fun SendScreen(controller: DroidyController, scope: CoroutineScope) {
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { NearbyPeopleHeader(controller, scope) }
         if (!controller.kernel.monitorReady) {
             item { KernelBanner(controller) }
         }
@@ -319,7 +368,7 @@ private fun SendScreen(controller: DroidyController, scope: CoroutineScope) {
             }
         }
         if (controller.peers.isEmpty()) {
-            item { EmptyPeopleCard(controller, scope) }
+            item { EmptyPeopleCard() }
         } else {
             item {
                 LazyRow(
@@ -349,46 +398,7 @@ private fun SendScreen(controller: DroidyController, scope: CoroutineScope) {
 }
 
 @Composable
-private fun NearbyPeopleHeader(controller: DroidyController, scope: CoroutineScope) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Nearby people",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                text = if (controller.scanning) {
-                    "Scanning AWDL..."
-                } else {
-                    "Choose someone, then send a file."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        FilledTonalButton(
-            onClick = { scope.launch { controller.scan() } },
-            enabled = controller.kernel.monitorReady && !controller.scanning &&
-                !controller.sending && !controller.sendCancelling && !controller.receiverRunning,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_refresh),
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(if (controller.scanning) "Scanning" else "Scan")
-        }
-    }
-}
-
-@Composable
-private fun EmptyPeopleCard(controller: DroidyController, scope: CoroutineScope) {
+private fun EmptyPeopleCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -428,20 +438,6 @@ private fun EmptyPeopleCard(controller: DroidyController, scope: CoroutineScope)
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(14.dp))
-            OutlinedButton(
-                onClick = { scope.launch { controller.scan() } },
-                enabled = controller.kernel.monitorReady && !controller.scanning &&
-                    !controller.sending && !controller.sendCancelling && !controller.receiverRunning,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_refresh),
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Scan for people")
-            }
         }
     }
 }
@@ -813,23 +809,9 @@ private fun ReceiveScreen(controller: DroidyController, scope: CoroutineScope) {
     val colors = MaterialTheme.colorScheme
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item {
-            Column {
-                Text(
-                    text = "Receive",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = colors.onBackground,
-                )
-                Text(
-                    text = "Accept a file from an iPhone into a local folder.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant,
-                )
-            }
-        }
         if (!controller.kernel.monitorReady) {
             item { KernelBanner(controller) }
         }
@@ -1147,67 +1129,20 @@ private fun LogsScreen(controller: DroidyController) {
             listState.scrollToItem(controller.logs.lastIndex)
         }
     }
-    Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        shape = MaterialTheme.shapes.extraLarge,
-        color = colors.inverseSurface,
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 120.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_receipt_long),
-                    contentDescription = null,
-                    tint = colors.inverseOnSurface,
-                    modifier = Modifier.size(24.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = "Session log",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = colors.inverseOnSurface,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = { controller.clearLogs() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = colors.inversePrimary),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_delete),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Clear")
-                }
-            }
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 10.dp),
-                color = colors.inverseOnSurface.copy(alpha = 0.14f),
+        items(controller.logs) { line ->
+            Text(
+                text = line.ifEmpty { " " },
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                color = colors.onSurface.copy(alpha = 0.9f),
             )
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(1.dp),
-            ) {
-                items(controller.logs) { line ->
-                    Text(
-                        text = line.ifEmpty { " " },
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                        color = colors.inverseOnSurface.copy(alpha = 0.9f),
-                    )
-                }
-            }
         }
     }
 }
@@ -1219,26 +1154,14 @@ private fun SettingsScreen(controller: DroidyController) {
     var channel by remember { mutableIntStateOf(controller.settings.channel) }
     var bleArm by remember { mutableIntStateOf(controller.settings.bleArm) }
     var deviceName by remember { mutableStateOf(controller.settings.deviceName) }
+    var themeMode by remember { mutableStateOf(controller.settings.themeMode) }
+    var tintMode by remember { mutableStateOf(controller.settings.tintMode) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item {
-            Column {
-                Text(
-                    text = "Settings",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = colors.onBackground,
-                )
-                Text(
-                    text = "Radio, wake advertisement, and receiver identity.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant,
-                )
-            }
-        }
         item { SectionLabel("CONNECTION") }
         item {
             SettingsCard {
@@ -1317,6 +1240,86 @@ private fun SettingsScreen(controller: DroidyController) {
                 }
             }
         }
+        item { SectionLabel("APPEARANCE") }
+        item {
+            SettingsCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_tune),
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Theme",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onSurface,
+                        )
+                        Text(
+                            text = "Follow the system or force light or dark",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    ThemeMode.entries.forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = themeMode == option,
+                            onClick = {
+                                themeMode = option
+                                controller.saveAppearance(option, tintMode)
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index, ThemeMode.entries.size),
+                            label = { Text(option.label) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_tune),
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Tint",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onSurface,
+                        )
+                        Text(
+                            text = if (Build.VERSION.SDK_INT >= 31) {
+                                "Droidy palette or Android dynamic color"
+                            } else {
+                                "Droidy palette; system tint needs Android 12+"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    TintMode.entries.forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = tintMode == option,
+                            onClick = {
+                                tintMode = option
+                                controller.saveAppearance(themeMode, option)
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index, TintMode.entries.size),
+                            label = { Text(option.label) },
+                        )
+                    }
+                }
+            }
+        }
         item { SectionLabel("IDENTITY") }
         item {
             SettingsCard {
@@ -1352,7 +1355,9 @@ private fun SettingsScreen(controller: DroidyController) {
                 )
                 Spacer(Modifier.height(12.dp))
                 Button(
-                    onClick = { controller.saveSettings(channel, bleArm, deviceName) },
+                    onClick = {
+                        controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(

@@ -37,6 +37,8 @@ data class DroidySettings(
     val channel: Int = 44,
     val bleArm: Int = 0,
     val deviceName: String = "Droidy K20",
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val tintMode: TintMode = TintMode.CUSTOM,
 )
 
 /**
@@ -320,18 +322,34 @@ class DroidyController(private val context: Context) {
         append("Log cleared")
     }
 
-    fun saveSettings(channel: Int, bleArm: Int, deviceName: String) {
+    fun saveAppearance(themeMode: ThemeMode, tintMode: TintMode) {
+        settings = settings.copy(themeMode = themeMode, tintMode = tintMode)
+        prefs.edit()
+            .putString("themeMode", themeMode.name)
+            .putString("tintMode", tintMode.name)
+            .apply()
+    }
+
+    fun saveSettings(
+        channel: Int,
+        bleArm: Int,
+        deviceName: String,
+        themeMode: ThemeMode = settings.themeMode,
+        tintMode: TintMode = settings.tintMode,
+    ) {
         val previous = settings
         val cleanName = deviceName.trim().ifBlank { "Droidy K20" }
-        settings = DroidySettings(channel, bleArm, cleanName)
+        settings = DroidySettings(channel, bleArm, cleanName, themeMode, tintMode)
         prefs.edit()
             .putInt("channel", channel)
             .putInt("bleArm", bleArm)
             .putString("deviceName", cleanName)
+            .putString("themeMode", themeMode.name)
+            .putString("tintMode", tintMode.name)
             .apply()
         sendMessage = "Settings saved · channel $channel"
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        append("Settings saved: channel=$channel bleArm=$bleArm name=$cleanName")
+        append("Settings saved: channel=$channel bleArm=$bleArm name=$cleanName theme=${themeMode.name} tint=${tintMode.name}")
 
         // Channel and identity are fixed when the session helper starts awdl0.
         // Drop the live session so the next scan/send recreates it with the new
@@ -353,6 +371,12 @@ class DroidyController(private val context: Context) {
         channel = prefs.getInt("channel", 44),
         bleArm = prefs.getInt("bleArm", 0),
         deviceName = prefs.getString("deviceName", "Droidy K20") ?: "Droidy K20",
+        themeMode = prefs.getString("themeMode", ThemeMode.SYSTEM.name)
+            ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
+            ?: ThemeMode.SYSTEM,
+        tintMode = prefs.getString("tintMode", TintMode.CUSTOM.name)
+            ?.let { runCatching { TintMode.valueOf(it) }.getOrNull() }
+            ?: TintMode.CUSTOM,
     )
 
     suspend fun prepare() {
