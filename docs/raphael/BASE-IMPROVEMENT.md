@@ -70,6 +70,10 @@ used as the AWDL identity.
   `reboot-exit`.
 - `scripts/install-base-mode-service.sh` — installs the early-boot flag
   service.
+- `workspaces/raphael/scripts/pack-base-mission.sh` — packs the base
+  monitor+hidden-STA kernel without `wlan.con_mode=4`.
+- `android-app/app/src/main/assets/owly-mode.sh` — packaged copy of the mode
+  switcher installed by the app.
 - `android-app/helper/src/main.rs` — reads the monitor MAC for the AWDL
   address.
 

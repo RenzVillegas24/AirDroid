@@ -34,8 +34,16 @@ Compose UI
 The helper deliberately omits Owly's daemon, D-Bus, CLI and Omarchy layer. Only
 the K20's internal WCN3990 radio is used; external USB Wi-Fi is out of scope.
 
-Injection requires the patched K20 boot image with
-`wlan.con_mode=4`:
+The base boot image starts in normal Wi-Fi mode (no `wlan.con_mode=4`).
+Use **System → Radio mode → Enter AirDrop mode** when a session is ready.
+The app can also reboot into the mode through the early-boot flag service if
+the live switch fails.
+
+```text
+../workspaces/raphael/boot-images/boot-owly-base-mission.img
+```
+
+The older always-monitor image remains a fallback:
 
 ```text
 ../workspaces/raphael/boot-images/boot-owly-monitor-fixed.img
