@@ -1,7 +1,8 @@
 # K20 exclusive-mode investigation
 
-Status: **not implemented**. The current working path is global monitor +
-hidden STA injection, not a true IBSS/AP cell.
+Status: **closed (Nov 14, 2026)** — no Owly-compatible exclusive path on the
+WCN3990 firmware. IBSS join resets the device; the hidden AP works, but the
+monitor stops receiving while it is active. Owly requires monitor + cell.
 
 ## What Owly exclusive mode requires
 
@@ -83,3 +84,54 @@ hidden STA injection, not a true IBSS/AP cell.
 Exclusive is a kernel experiment, not a userspace switch. Shared mode remains
 the first focus because it avoids IBSS and `CONFIG_QCA_IBSS_SUPPORT`, but the
 current packet-capture monitor path does not deliver AWDL management frames.
+
+## Nov 14 implementation attempt
+
+- IBSS build gate passed: `-DQCA_IBSS_SUPPORT`, `lim_ibss_peer_mgmt.o`,
+  `QDF_IBSS_MODE` adapter path, and a fresh IBSS vdev start.
+- Joining an IBSS cell on 5220 reset the device. IBSS is not usable on this
+  firmware.
+- Pivoted to Owly's hidden-AP exclusive path:
+  - hidden `owlyap0` vdev starts as `NL80211_IFTYPE_AP`;
+  - hostapd starts it on 5220 MHz, carrier up;
+  - monitor `wlan0` starts on 5220 and captures nearby frames while the AP is
+    down.
+- With the AP active, monitor RX stops. The helper still reports
+  `RADIO_READY channel=44`, but a 30 s live scan found no iPhone peer, and a
+  raw monitor capture returned zero frames.
+- Using the AP MAC as the AWDL address and adapting the helper to read
+  `owlyap0` did not change the result: qcacld cannot keep monitor RX alive
+  beside the active AP on this firmware.
+
+Stock boot restored; Wi-Fi connected on 5220 MHz; AirDrop closed.
+
+## Owly source-of-truth conclusion (Nov 14)
+
+Owly does not support an AP-only receive path. In
+`crates/owly-radio/src/injection/setup.rs`:
+
+- shared mode always calls `self.monitor(...)`;
+- exclusive mode creates the IBSS cell or hidden AP, then still calls
+  `self.monitor(...)`;
+- `crates/owly-radio/src/native.rs` receives and injects through an
+  `AF_PACKET` socket on that monitor, with `awdl0` as the TAP data interface.
+
+So Owly's exclusive architecture is monitor + cell, not AP-only RX.
+
+AP-only experiment result:
+
+- hidden AP `owlyap0` started and carried traffic;
+- `NL80211_CMD_REGISTER_FRAME` on the AP returned `EALREADY` because
+  hostapd/wpa_supplicant already owned the action-frame registrations;
+- even if those registrations were freed, AP-only RX would be a new Owly
+  backend, not the reference design.
+
+With the AP active, qcacld stops monitor RX. With the monitor alone, RX works.
+There is therefore no Owly-compatible exclusive path on the WCN3990 firmware:
+the cell required for ACK and the monitor required for RX cannot coexist.
+Shared mode is also blocked because the monitor cannot coexist with the
+associated station.
+
+The only remaining paths are a different WCN3990 firmware with monitor/AP
+concurrency, or a second radio. Kernel-only changes cannot add the missing
+firmware capability.
