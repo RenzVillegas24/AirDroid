@@ -33,6 +33,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
     [ "$(cat /sys/class/net/wlan0/type 2>/dev/null)" = "803" ] && break
     sleep 1
 done
+ip link set wlan0 up 2>/dev/null
 echo "boot mode=$(cat "$CON_MODE" 2>/dev/null) type=$(cat /sys/class/net/wlan0/type 2>/dev/null)" >> "$LOG"
 EOS
 chmod 755 "$SERVICE"
