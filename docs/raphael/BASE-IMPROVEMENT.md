@@ -45,9 +45,10 @@ Two entry paths:
    `svc wifi disable`, `ip link set wlan0 down`, write `4` to
    `/sys/module/wlan/parameters/con_mode`, bring `wlan0` up.
 2. **Boot flag** (slower, recommended):
-   write `/data/adb/owly-airdrop-mode`, reboot; an early-boot service writes
-   `con_mode=4` before Android Wi-Fi starts. `reboot-enter` installs that
-   service automatically. Exit removes the flag and reboots.
+   write `/data/adb/owly-airdrop-mode`, reboot; the app's `BOOT_COMPLETED`
+   receiver disables Wi-Fi and writes `con_mode=4`. Exit removes the flag and
+   reboots. KernelSU `service.d` scripts were tested and do not run on this
+   K20 build.
 
 The live `con_mode` switch on this firmware can crash or wedge the WLAN
 subsystem. The boot-flag path is the reliable default; the live path is kept
@@ -69,10 +70,10 @@ used as the AWDL identity.
 
 - `scripts/owly-mode.sh` — `status`, `enter`, `exit`, `reboot-enter`,
   `reboot-exit`.
-- `scripts/install-base-mode-service.sh` — installs the early-boot flag
-  service.
 - `workspaces/raphael/scripts/pack-base-mission.sh` — packs the base
   monitor+hidden-STA kernel without `wlan.con_mode=4`.
+- `android-app/app/src/main/java/io/moonbase/droidy/BootReceiver.kt` — applies
+  the AirDrop-mode flag after boot.
 - `android-app/app/src/main/assets/owly-mode.sh` — packaged copy of the mode
   switcher installed by the app.
 - `android-app/helper/src/main.rs` — reads the monitor MAC for the AWDL
