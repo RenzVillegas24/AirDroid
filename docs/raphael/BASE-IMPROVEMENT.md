@@ -1,0 +1,83 @@
+# K20 base improvement
+
+Status: **in progress** — keep normal Wi-Fi on boot, enter the base
+monitor+hidden-STA path only for an AirDrop session.
+
+## Goal
+
+The old base booted with `wlan.con_mode=4`, so Android Wi-Fi could never
+connect. The improved base must:
+
+- boot in mission mode (`con_mode=0`) by default;
+- keep normal Wi-Fi working;
+- enter the base monitor + hidden-STA path only when AirDrop is requested;
+- leave no AP, IBSS, or second cell behind.
+
+## Owly principles kept
+
+- **Monitor is required** for AWDL RX.
+- **Fixed channel** (`Presence::Fixed`), one of 44, 149 or 6.
+- **`tx_noack`** behavior: unicast is sent once, without waiting for a cell
+  ACK. This is Owly's default for a fixed radio.
+- **AWDL address is the monitor MAC**, not the hidden STA MAC. The hidden STA
+  is only a WMI TX tag.
+- **TAP `awdl0`** remains the data interface.
+
+## Owly principles not applied
+
+- No hidden AP and no IBSS. Both break monitor RX on this firmware.
+- No shared mode. It needs monitor beside an associated station, which the
+  WCN3990 firmware cannot do.
+
+## Modes
+
+### Normal boot
+
+- boot image has no `wlan.con_mode=4`;
+- Android Wi-Fi connects normally;
+- no `wlan0` monitor and no `wlan_inj*`.
+
+### AirDrop mode
+
+Two entry paths:
+
+1. **Live switch** (fast, less reliable):
+   `svc wifi disable`, `ip link set wlan0 down`, write `4` to
+   `/sys/module/wlan/parameters/con_mode`, bring `wlan0` up.
+2. **Boot flag** (slower, recommended):
+   write `/data/adb/owly-airdrop-mode`, reboot; an early-boot service writes
+   `con_mode=4` before Android Wi-Fi starts. Exit removes the flag and reboots.
+
+The live `con_mode` switch on this firmware can crash or wedge the WLAN
+subsystem. The boot-flag path is the reliable default; the live path is kept
+only as a fast attempt with a reboot fallback.
+
+## Base data path
+
+```text
+AirDrop mode
+  wlan0            global monitor, fixed channel 44
+  wlan_inj0        hidden STA vdev, WMI TX tag only
+  awdl0            TAP data interface
+```
+
+The monitor MAC is the AWDL address. The hidden STA MAC is deliberately not
+used as the AWDL identity.
+
+## Files
+
+- `scripts/owly-mode.sh` — `status`, `enter`, `exit`, `reboot-enter`,
+  `reboot-exit`.
+- `scripts/install-base-mode-service.sh` — installs the early-boot flag
+  service.
+- `android-app/helper/src/main.rs` — reads the monitor MAC for the AWDL
+  address.
+
+## Acceptance checks
+
+1. Normal boot: `cmd wifi status` shows VILLEGAS connected.
+2. `owly-mode status` reports `con_mode=0`, station mode, no monitor.
+3. `owly-mode enter`: `wlan0` is `type=803`, `wlan_inj0` exists, Wi-Fi is off.
+4. Helper starts and scans without a reset.
+5. `owly-mode exit` (or reboot) restores Wi-Fi.
+6. No `owlyap*`, IBSS, or hostapd process remains.
