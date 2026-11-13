@@ -41,18 +41,20 @@ connect. The improved base must:
 
 Two entry paths:
 
-1. **Live switch** (fast, less reliable):
+1. **Live switch** (fast):
    `svc wifi disable`, `ip link set wlan0 down`, write `4` to
-   `/sys/module/wlan/parameters/con_mode`, bring `wlan0` up.
-2. **Boot flag** (slower, recommended):
+   `/sys/module/wlan/parameters/con_mode`, bring `wlan0` up. The reverse
+   sequence returns to Wi-Fi without rebooting.
+2. **Boot flag**:
    write `/data/adb/owly-airdrop-mode`, reboot; the app's `BOOT_COMPLETED`
    receiver disables Wi-Fi and writes `con_mode=4`. Exit removes the flag and
    reboots. KernelSU `service.d` scripts were tested and do not run on this
    K20 build.
 
-The live `con_mode` switch on this firmware can crash or wedge the WLAN
-subsystem. The boot-flag path is the reliable default; the live path is kept
-only as a fast attempt with a reboot fallback.
+The live monitor-to-station teardown used to panic in
+`wma_mlme_vdev_notify_down_complete` when it received a delete-BSS response
+with vdev id 255. The driver now rejects out-of-range or missing vdev entries;
+live enter and exit both work on the patched image.
 
 ## Base data path
 
