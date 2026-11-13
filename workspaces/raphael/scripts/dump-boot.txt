@@ -1,0 +1,7 @@
+uid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0
+lrwxrwxrwx 1 root root 16 1970-02-24 07:08 /dev/block/by-name/boot -> /dev/block/sde49
+128+0 records in
+128+0 records out
+134217728 bytes (128 M) copied, 0.302 s, 424 M/s
+-rw-rw---- 1 root everybody 134217728 2026-11-12 23:45 /sdcard/Download/boot-current.img
+689f86f2a430f4bce7d58a9c1f47850aaeaeadd3aa69ce19485ef16bfd94445b  /sdcard/Download/boot-current.img
