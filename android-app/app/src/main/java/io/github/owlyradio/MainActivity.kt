@@ -611,17 +611,19 @@ private fun KernelBanner(controller: DroidyController) {
                         Text("Reboot")
                     }
                 }
-                TextButton(
-                    onClick = { controller.verifyKernelWithRoot() },
-                    enabled = !controller.verifyingKernel,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_memory),
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
+                if (kernel.verifiedBy != "root") {
+                    TextButton(
+                        onClick = { controller.verifyKernelWithRoot() },
+                        enabled = !controller.verifyingKernel,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_memory),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
+                    }
                 }
             }
         }
