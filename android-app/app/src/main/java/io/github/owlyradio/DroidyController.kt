@@ -158,8 +158,8 @@ data class KernelStatus(
                 monitorBuild -> KernelStatus(
                     release = release,
                     buildVersion = version,
-                    state = MonitorState.MONITOR,
-                    detail = "Known monitor-enabled kernel. con_mode=4 is active.",
+                    state = MonitorState.UNVERIFIED,
+                    detail = "Patched monitor-capable kernel. Reading con_mode with root...",
                 )
                 release in STOCK_RELEASES -> KernelStatus(
                     release = release,
@@ -303,6 +303,7 @@ class DroidyController(private val context: Context) {
         append("Channel ${settings.channel} · BLE arm ${settings.bleArm}")
         append("Kernel ${kernel.release}")
         append(kernel.detail)
+        scope.launch { verifyKernelWithRoot() }
     }
 
     fun selectPeer(peer: Peer) {
