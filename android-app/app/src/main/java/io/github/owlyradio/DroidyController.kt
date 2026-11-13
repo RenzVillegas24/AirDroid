@@ -113,7 +113,7 @@ data class KernelStatus(
         if (effectiveMode == 0) {
             return copy(
                 state = MonitorState.STOCK,
-                detail = "Root confirmed con_mode=0: normal Wi-Fi mode. Enter AirDrop mode when ready.",
+                detail = "Root confirmed con_mode=0. Normal Wi-Fi mode.",
                 verifiedBy = "root",
             )
         }
@@ -165,7 +165,7 @@ data class KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.STOCK,
-                    detail = "Normal Wi-Fi boot. Enter AirDrop mode when ready.",
+                    detail = "Normal Wi-Fi boot. Android Wi-Fi is active.",
                 )
                 else -> KernelStatus(
                     release = release,
