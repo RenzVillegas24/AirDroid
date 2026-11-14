@@ -19,6 +19,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -136,6 +137,7 @@ import java.util.zip.ZipOutputStream
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -283,13 +285,17 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
     LaunchedEffect(pagerState.currentPage) {
         tab = TOOLBAR_TABS[pagerState.currentPage]
     }
+    var pageJob by remember { mutableStateOf<Job?>(null) }
     fun selectTab(next: AirDroidTab) {
+        val target = TOOLBAR_TABS.indexOf(next)
+        if (target == pagerState.currentPage && pagerState.currentPageOffsetFraction == 0f) return
         tab = next
-        scope.launch {
+        pageJob?.cancel()
+        pageJob = scope.launch {
             pagerState.animateScrollToPage(
-                page = TOOLBAR_TABS.indexOf(next),
+                page = target,
                 animationSpec = tween(
-                    durationMillis = 480,
+                    durationMillis = 420,
                     easing = FastOutSlowInEasing,
                 ),
             )
@@ -303,6 +309,7 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
+            beyondViewportPageCount = 1,
         ) { page ->
             val pageTab = TOOLBAR_TABS[page]
             Column(modifier = Modifier.fillMaxSize()) {
@@ -491,34 +498,38 @@ private fun AirDroidFloatingToolbar(
                 itemSize * hoveredIndex
             }
         }
-        val indicatorOffset by animateDpAsState(
-            targetValue = if (pressed) fingerOffset else itemSize * selectedIndex,
-            animationSpec = if (pressed) {
-                if (dragMoved) {
-                    tween(durationMillis = 12, easing = LinearEasing)
-                } else {
-                    tween(durationMillis = 35, easing = FastOutSlowInEasing)
-                }
+        val indicator = remember { Animatable(0f) }
+        val selectedTargetPx = with(density) { (itemSize * selectedIndex).toPx() }
+        val directTargetPx = with(density) {
+            val raw = fingerX.toDp() - itemSize / 2
+            val center = itemSize * selectedIndex
+            if (dragMoved) {
+                (center + (raw - center) * 0.65f).coerceIn(
+                    0.dp,
+                    itemSize * (TOOLBAR_TABS.size - 1),
+                ).toPx()
             } else {
-                spring(dampingRatio = 0.9f, stiffness = 650f)
-            },
-            label = "toolbar selection",
-        )
-        val indicatorYOffset by animateDpAsState(
-            targetValue = if (pressed && dragMoved) {
-                with(density) {
-                    ((fingerY.toDp() - itemSize / 2) * 0.08f).coerceIn((-2.5).dp, 2.5.dp)
-                }
+                (itemSize * hoveredIndex).toPx()
+            }
+        }
+        LaunchedEffect(pressed, selectedIndex, directTargetPx) {
+            if (pressed) {
+                indicator.snapTo(directTargetPx)
             } else {
-                0.dp
-            },
-            animationSpec = if (pressed) {
-                tween(durationMillis = 12, easing = LinearEasing)
-            } else {
-                spring(dampingRatio = 0.9f, stiffness = 500f)
-            },
-            label = "toolbar selection y",
-        )
+                indicator.animateTo(
+                    targetValue = selectedTargetPx,
+                    animationSpec = spring(dampingRatio = 0.9f, stiffness = 650f),
+                )
+            }
+        }
+        val indicatorOffset = with(density) { indicator.value.toDp() }
+        val indicatorYOffset = if (pressed && dragMoved) {
+            with(density) {
+                ((fingerY.toDp() - itemSize / 2) * 0.08f).coerceIn((-2.5).dp, 2.5.dp)
+            }
+        } else {
+            0.dp
+        }
         val toolbarScale by animateFloatAsState(
             targetValue = if (pressed) 1.06f else 1f,
             animationSpec = spring(dampingRatio = 0.82f, stiffness = 450f),
