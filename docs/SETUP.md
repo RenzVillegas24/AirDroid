@@ -66,10 +66,31 @@ RenzVillegas24/kernel_xiaomi_raphael
 branch: owly-k20
 ```
 
-The boot-image build/flash and injection workflow is intentionally kept on the
-investigation branches (`investigation/exclusive`, `investigation/shared`,
-`experiments/investigation-tools`). The production app does not flash boot
-images.
+### Kernel build status
+
+Kernel building is **not automated** in the production tree.
+`scripts/build-app.sh` builds only the Rust helper and the APK. It does not
+build `Image.gz`, pack a boot image, or flash anything.
+
+The pinned `kernel/` submodule provides the exact kernel source. Building a
+bootable K20 image still requires manual work:
+
+1. an aarch64 kernel toolchain compatible with the 4.14 tree;
+2. the K20 kernel config;
+3. unpacking the stock boot image to obtain its ramdisk and DTB;
+4. building `arch/arm64/boot/Image.gz`;
+5. packing the image with `mkbootimg`;
+6. flashing it manually.
+
+The boot-image pack/flash scripts and the historical config/artifacts are kept
+on the investigation branches (`investigation/exclusive`,
+`investigation/shared`, `experiments/investigation-tools`). They are not part
+of the production build and are not run by CI.
+
+### Release signing
+
+`scripts/build-app.sh release` builds an **unsigned** release APK. Signing is
+not automated; use your release key with `apksigner` before distributing it.
 
 ## 5. Radio mode
 
