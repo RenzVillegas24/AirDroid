@@ -46,20 +46,41 @@ broadcast() {
   "$ADB" shell am broadcast -n "$RECEIVER" "$@" >/dev/null
 }
 
+current_pid() {
+  "$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r'
+}
+
+dump_current() {
+  local pid
+  pid="$(current_pid)"
+  if [[ -n "$pid" ]]; then
+    "$ADB" logcat -d --pid="$pid" -s DroidyDebug:D DroidyLog:D '*:S'
+  else
+    "$ADB" logcat -d -s DroidyDebug:D DroidyLog:D '*:S'
+  fi
+}
+
 case "$command" in
   status)
     broadcast -a "$PKG.debug.STATUS"
-    "$ADB" logcat -d -s DroidyDebug:D '*:S' | tail -n 40
+    sleep 0.3
+    dump_current | grep 'DroidyDebug' | tail -n 40
     ;;
   history)
     broadcast -a "$PKG.debug.HISTORY"
-    "$ADB" logcat -d -s DroidyDebug:D '*:S' | tail -n 80
+    sleep 0.3
+    dump_current | grep 'DroidyDebug' | tail -n 80
     ;;
   log)
-    "$ADB" logcat -d -s DroidyLog:D '*:S'
+    dump_current | grep 'DroidyLog' | tail -n 200
     ;;
   follow)
-    "$ADB" logcat -v time -s DroidyLog:D '*:S'
+    pid="$(current_pid)"
+    if [[ -n "$pid" ]]; then
+      "$ADB" logcat -v time --pid="$pid" -s DroidyLog:D '*:S'
+    else
+      "$ADB" logcat -v time -s DroidyLog:D '*:S'
+    fi
     ;;
   clear-log)
     broadcast -a "$PKG.debug.CLEAR_LOG"
