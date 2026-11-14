@@ -444,3 +444,29 @@ keeping it.
 - Confirm whether completed sent files should persist across app restarts.
 - Confirm whether failed/cancelled sends stay in Sent history.
 - Confirm next version bump after this UI work.
+
+## Implementation status (2026-11-14)
+
+Implemented on `feature/unified-home`:
+
+- Sent/Received inner tabs
+- per-file transfer model and cards
+- foreground incoming-request dialog
+- background incoming-request notification with Accept/Decline actions
+- per-transfer progress notifications and group summary
+- removal of discovery/READY receive notifications
+- transfer-priority pause/resume in the helper
+- ACK/retry experiment (`no_ack=false` default, `OWLY_TX_NO_ACK` override)
+- per-file send events and stable receive indices
+- all offered receive filenames
+
+Current limitations:
+
+- Owly's receiver API has no true per-file progress; receive cards use
+  aggregate progress distributed across files.
+- Notification Accept/Decline/Cancel actions open `MainActivity`; they depend on
+  the app process/controller state being alive.
+- Transfer history is session-only.
+- Received Open/Share currently copies large files into the app cache because
+  the FileProvider only exposes `cache-path`.
+- Live 20 MB performance validation is still pending.
