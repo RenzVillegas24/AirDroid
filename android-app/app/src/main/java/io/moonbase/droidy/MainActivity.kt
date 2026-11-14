@@ -124,6 +124,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         controller = DroidyController(applicationContext)
+        DroidyControllerHolder.current = controller
         handleNotificationIntent(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
@@ -185,6 +186,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (DroidyControllerHolder.current === controller) {
+            DroidyControllerHolder.current = null
+        }
         controller.close()
     }
 
@@ -1078,30 +1082,18 @@ private suspend fun shareReceivedFile(context: Context, path: String) {
 }
 
 /**
- * The FileProvider only exposes the app cache. Received files live in
- * Download/Droidy, so copy them into cache before handing out a content URI.
+ * FileProvider exposes both the app cache and Download/Droidy, so received
+ * files can be opened or shared without copying them first.
  */
-private suspend fun shareableUri(context: Context, path: String): Uri? =
-    withContext(Dispatchers.IO) {
-        val file = File(path)
-        if (!file.exists()) return@withContext null
-        val source = try {
-            if (file.canonicalPath.startsWith(context.cacheDir.canonicalPath)) {
-                file
-            } else {
-                val out = File(context.cacheDir, "shared-${System.currentTimeMillis()}-${file.name}")
-                file.copyTo(out, overwrite = true)
-                out
-            }
-        } catch (_: Exception) {
-            return@withContext null
-        }
-        try {
-            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", source)
-        } catch (_: Exception) {
-            null
-        }
+private fun shareableUri(context: Context, path: String): Uri? {
+    val file = File(path)
+    if (!file.exists()) return null
+    return try {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    } catch (_: Exception) {
+        null
     }
+}
 
 private fun mimeTypeFor(path: String): String {
     val extension = File(path).extension.lowercase(Locale.US)

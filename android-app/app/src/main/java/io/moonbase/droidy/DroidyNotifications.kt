@@ -25,6 +25,10 @@ class DroidyNotifications(private val context: Context) {
         const val EXTRA_REQUEST_ACCEPT = "io.moonbase.droidy.extra.REQUEST_ACCEPT"
         const val EXTRA_CANCEL_TRANSFER = "io.moonbase.droidy.extra.CANCEL_TRANSFER"
 
+        const val ACTION_ACCEPT = "io.moonbase.droidy.action.ACCEPT"
+        const val ACTION_DECLINE = "io.moonbase.droidy.action.DECLINE"
+        const val ACTION_CANCEL = "io.moonbase.droidy.action.CANCEL"
+
         private const val GROUP_KEY = "io.moonbase.droidy.TRANSFERS"
         private const val SUMMARY_ID = 4000
         private const val REQUEST_ID = 4100
@@ -277,15 +281,13 @@ class DroidyNotifications(private val context: Context) {
     }
 
     private fun requestDecisionIntent(requestId: Long, accept: Boolean): PendingIntent {
-        val action = if (accept) "ACCEPT" else "DECLINE"
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            this.action = "io.moonbase.droidy.REQUEST_${requestId}_$action"
+        val intent = Intent(context, TransferActionReceiver::class.java).apply {
+            action = if (accept) ACTION_ACCEPT else ACTION_DECLINE
             putExtra(EXTRA_REQUEST_ID, requestId)
             putExtra(EXTRA_REQUEST_ACCEPT, accept)
         }
         val requestCode = (requestId.hashCode() * 31 + if (accept) 1 else 0) and 0x7fffffff
-        return PendingIntent.getActivity(
+        return PendingIntent.getBroadcast(
             context,
             requestCode,
             intent,
@@ -294,12 +296,11 @@ class DroidyNotifications(private val context: Context) {
     }
 
     private fun cancelTransferIntent(transferId: String): PendingIntent {
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            action = "io.moonbase.droidy.CANCEL_$transferId"
+        val intent = Intent(context, TransferActionReceiver::class.java).apply {
+            action = ACTION_CANCEL
             putExtra(EXTRA_CANCEL_TRANSFER, transferId)
         }
-        return PendingIntent.getActivity(
+        return PendingIntent.getBroadcast(
             context,
             (notificationId(transferId) + 100_000) and 0x7fffffff,
             intent,
