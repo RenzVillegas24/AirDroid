@@ -567,6 +567,7 @@ async fn find_and_send(
 async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
     rustls::crypto::ring::default_provider().install_default().ok();
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
+    let mut live_peers = peers_rx.clone();
     let names = Arc::new(Mutex::new(HashMap::new()));
     let mut sniffer = start_name_sniffer(names.clone());
     let mdns = Mdns::new(index);
@@ -591,6 +592,13 @@ async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
     emit_peer_updates(&mut known, &initial_peers, &initial_names);
     loop {
         tokio::select! {
+            changed = live_peers.changed() => {
+                if changed.is_ok() {
+                    let peers = live_peers.borrow().clone();
+                    let names_snapshot = names.lock().unwrap().clone();
+                    emit_peer_updates(&mut known, &peers, &names_snapshot);
+                }
+            }
             command = cmd_rx.recv() => {
                 let Some(line) = command else { break };
                 let mut parts = line.splitn(4, ' ');

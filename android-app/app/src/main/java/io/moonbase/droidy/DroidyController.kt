@@ -189,10 +189,8 @@ class DroidyController(private val context: Context) {
     companion object {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/Droidy"
-        private const val SCAN_SECONDS = 12L
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
-        private const val SCAN_TIMEOUT_MS = (SCAN_SECONDS + 20L) * 1000L
         private const val SEND_TIMEOUT_MS = 300_000L
         private val ASSETS = arrayOf(
             "owly-mode.sh",
@@ -414,35 +412,28 @@ class DroidyController(private val context: Context) {
     }
 
     suspend fun scan() {
-        if (scanning || sending || sendCancelling || receiverRunning) return
+        if (sending || sendCancelling || receiverRunning) return
         if (!requireMonitorKernel()) return
+        if (scanning) {
+            append("Live scan is already running.")
+            return
+        }
         scanning = true
         status = "SCANNING"
         peers = emptyList()
         selectedMac = null
         append("")
-        append("Scanning for AirDrop people...")
-        val rc = runSessionCommand(
-            kind = "scan",
-            timeoutMs = SCAN_TIMEOUT_MS,
-            command = { id -> "scan $SCAN_SECONDS $id" },
-        )
-        scanning = false
-        status = when {
-            rc != 0 -> "CHECK LOG"
-            peers.isEmpty() -> "NO PEERS"
-            !kernel.monitorReady -> kernel.state.badge
-            else -> "READY"
+        append("Starting live AirDrop scan...")
+        val session = sessionMutex.withLock { ensureSessionLocked() }
+        if (session == null) {
+            scanning = false
+            status = "CHECK LOG"
+            sendMessage = "Live scan could not start; check the log."
+            return
         }
-        if (rc == 0) {
-            sendMessage = if (peers.isEmpty()) {
-                "No people found. Keep the iPhone nearby and AirDrop open."
-            } else {
-                "${peers.size} person(s) found."
-            }
-        } else if (!sendMessage.startsWith("Helper session ended")) {
-            sendMessage = "Scan did not complete; check the log."
-        }
+        status = "SCANNING"
+        sendMessage = "Live scan running. Nearby peers update automatically."
+        append("Live scan running; peer updates are continuous.")
     }
 
     suspend fun pickFile(uri: Uri) {
@@ -473,7 +464,7 @@ class DroidyController(private val context: Context) {
     }
 
     private suspend fun sendFile(path: String) {
-        if (sending || sendCancelling || scanning || receiverRunning) return
+        if (sending || sendCancelling || receiverRunning) return
         if (!requireMonitorKernel()) return
         val target = selectedPeer
         if (target == null) {
@@ -587,8 +578,9 @@ class DroidyController(private val context: Context) {
     }
 
     suspend fun startReceiving() {
-        if (receiverRunning || scanning || sending || sendCancelling) return
+        if (receiverRunning || sending || sendCancelling) return
         if (!requireMonitorKernel()) return
+        scanning = false
         // Claim receive mode before tearing the session down so Scan/Send stay
         // disabled while awdl0 changes hands.
         receiverRunning = true
@@ -712,6 +704,9 @@ class DroidyController(private val context: Context) {
                 kernel = updated
                 status = if (updated.monitorReady) "READY" else updated.state.badge
                 append("Kernel check: ${updated.state.badge} · ${updated.detail}")
+                if (updated.monitorReady && !scanning && !sending && !receiverRunning) {
+                    scan()
+                }
             } else {
                 status = if (kernel.monitorReady) "READY" else kernel.state.badge
                 append("Kernel check did not complete; keeping ${kernel.state.badge}.")
@@ -720,7 +715,7 @@ class DroidyController(private val context: Context) {
     }
 
     fun enterAirDropMode(reboot: Boolean = false) {
-        if (modeSwitching || scanning || sending || receiverRunning) return
+        if (modeSwitching || sending || receiverRunning) return
         scope.launch {
             modeSwitching = true
             status = if (reboot) "REBOOTING" else "ENTERING AIRDROP"
@@ -736,22 +731,27 @@ class DroidyController(private val context: Context) {
             if (rc == 0) {
                 refreshKernelStatus()
                 append("AirDrop mode: ${kernel.detail}")
+                scan()
             } else {
                 status = "WIFI MODE"
-                sendMessage = "Could not enter AirDrop mode. Use Reboot into AirDrop mode."
-                append("Enter AirDrop mode failed; the live switch can wedge this firmware. Reboot into AirDrop mode instead.")
+                sendMessage = "Could not enter AirDrop mode. Try again."
+                append("Enter AirDrop mode failed; check the log and try again.")
             }
         }
     }
 
     fun exitAirDropMode(reboot: Boolean = false) {
-        if (modeSwitching || scanning || sending || receiverRunning) return
+        if (modeSwitching || sending || receiverRunning) return
         scope.launch {
             modeSwitching = true
             status = if (reboot) "REBOOTING" else "LEAVING AIRDROP"
             val action = if (reboot) "reboot-exit" else "exit"
             append("")
             append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving AirDrop mode...")
+            if (!reboot) {
+                stopSession()
+                scanning = false
+            }
             val rc = execRoot(
                 label = "exit AirDrop mode",
                 command = "$APP_TMP/owly-mode.sh $action",

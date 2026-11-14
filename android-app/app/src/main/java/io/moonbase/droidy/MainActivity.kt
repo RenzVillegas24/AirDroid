@@ -261,7 +261,7 @@ private fun DroidyTopBar(
                 DroidyTab.SEND -> {
                     FilledTonalButton(
                         onClick = { scope.launch { controller.scan() } },
-                        enabled = controller.kernel.monitorReady && !controller.scanning &&
+                        enabled = controller.kernel.monitorReady &&
                             !controller.sending && !controller.sendCancelling &&
                             !controller.receiverRunning,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
@@ -357,15 +357,6 @@ private fun SendScreen(controller: DroidyController, scope: CoroutineScope) {
     ) {
         if (!controller.kernel.monitorReady) {
             item { KernelBanner(controller) }
-        }
-        if (controller.scanning) {
-            item {
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp),
-                )
-            }
         }
         if (controller.peers.isEmpty()) {
             item { EmptyPeopleCard() }
@@ -587,39 +578,17 @@ private fun KernelBanner(controller: DroidyController) {
                     style = MaterialTheme.typography.labelSmall,
                     color = onContainer.copy(alpha = 0.66f),
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(
-                        onClick = { controller.enterAirDropMode() },
-                        enabled = !controller.modeSwitching,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_wifi_tethering),
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (controller.modeSwitching) "Switching..." else "Enter AirDrop mode")
-                    }
-                    TextButton(
-                        onClick = { controller.enterAirDropMode(reboot = true) },
-                        enabled = !controller.modeSwitching,
-                    ) {
-                        Text("Reboot")
-                    }
-                }
-                if (kernel.verifiedBy != "root") {
-                    TextButton(
-                        onClick = { controller.verifyKernelWithRoot() },
-                        enabled = !controller.verifyingKernel,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_memory),
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
-                    }
+                TextButton(
+                    onClick = { controller.enterAirDropMode() },
+                    enabled = !controller.modeSwitching,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_wifi_tethering),
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (controller.modeSwitching) "Switching..." else "Enter AirDrop mode")
                 }
             }
         }
@@ -714,7 +683,7 @@ private fun SendCard(
             }
             Button(
                 onClick = onChooseFile,
-                enabled = !controller.sending && !controller.sendCancelling && !controller.scanning,
+                enabled = !controller.sending && !controller.sendCancelling,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = colors.primary,
@@ -733,7 +702,7 @@ private fun SendCard(
                 onClick = onSend,
                 enabled = picked != null && target != null &&
                     controller.kernel.monitorReady && !controller.sending &&
-                    !controller.sendCancelling && !controller.scanning && !controller.receiverRunning,
+                    !controller.sendCancelling && !controller.receiverRunning,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(
@@ -890,7 +859,7 @@ private fun ReceiveScreen(controller: DroidyController, scope: CoroutineScope) {
                         Button(
                             onClick = { scope.launch { controller.startReceiving() } },
                             enabled = controller.kernel.monitorReady && !controller.receiverRunning &&
-                                !controller.scanning && !controller.sending && !controller.sendCancelling,
+                                !controller.sending && !controller.sendCancelling,
                             modifier = Modifier.weight(1f),
                         ) {
                             Icon(
@@ -1281,34 +1250,60 @@ private fun SettingsScreen(controller: DroidyController) {
                     }
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(
-                        onClick = { controller.enterAirDropMode(reboot = true) },
-                        enabled = !controller.modeSwitching,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Reboot into AirDrop mode")
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    TextButton(
                         onClick = { controller.verifyKernelWithRoot() },
                         enabled = !controller.verifyingKernel,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_memory),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
                     }
                 } else {
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = { controller.exitAirDropMode() },
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_stop_circle),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(if (controller.modeSwitching) "Switching..." else "Exit AirDrop mode")
                     }
                     Spacer(Modifier.height(6.dp))
-                    TextButton(
+                    OutlinedButton(
                         onClick = { controller.exitAirDropMode(reboot = true) },
                         enabled = !controller.modeSwitching,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_refresh),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text("Reboot to Wi-Fi")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { controller.verifyKernelWithRoot() },
+                        enabled = !controller.verifyingKernel,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_memory),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
                     }
                     if (controller.kernel.verifiedBy == "root") {
                         Text(
