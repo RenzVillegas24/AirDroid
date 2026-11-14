@@ -1143,7 +1143,7 @@ private fun SettingsScreen(controller: DroidyController) {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 160.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 240.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { SectionLabel("IDENTITY") }
