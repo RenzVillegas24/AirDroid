@@ -25,6 +25,8 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -2364,7 +2366,8 @@ class DroidyController(private val context: Context) {
         if (line.isEmpty()) {
             logs.add("")
         } else {
-            logs.addAll(line.split('\n'))
+            val stamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+            logs.addAll(line.split('\n').map { "$stamp  $it" })
         }
         if (logs.size > 2500) logs.removeRange(0, logs.size - 2000)
     }
