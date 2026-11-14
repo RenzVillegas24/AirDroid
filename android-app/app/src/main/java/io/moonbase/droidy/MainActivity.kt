@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.asPaddingValues
@@ -53,6 +54,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -84,9 +86,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1130,6 +1134,7 @@ private fun LogsScreen(controller: DroidyController) {
 @Composable
 private fun SettingsScreen(controller: DroidyController) {
     val colors = MaterialTheme.colorScheme
+    val uriHandler = LocalUriHandler.current
     var channel by remember { mutableIntStateOf(controller.settings.channel) }
     var bleArm by remember { mutableIntStateOf(controller.settings.bleArm) }
     var deviceName by remember { mutableStateOf(controller.settings.deviceName) }
@@ -1250,27 +1255,35 @@ private fun SettingsScreen(controller: DroidyController) {
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_wifi_tethering),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                        ModeButtonContent(
+                            loading = controller.modeSwitching && controller.modeAction == "enter",
+                            icon = R.drawable.ic_wifi_tethering,
+                            label = if (controller.modeAction == "enter") "Entering AirDrop mode..." else "Enter AirDrop mode",
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (controller.modeSwitching) "Switching..." else "Enter AirDrop mode")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { controller.enterAirDropMode(reboot = true) },
+                        enabled = !controller.modeSwitching,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        ModeButtonContent(
+                            loading = controller.modeSwitching && controller.modeAction == "reboot-enter",
+                            icon = R.drawable.ic_refresh,
+                            label = if (controller.modeAction == "reboot-enter") "Rebooting into AirDrop mode..." else "Reboot into AirDrop mode",
+                        )
                     }
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(
                         onClick = { controller.verifyKernelWithRoot() },
-                        enabled = !controller.verifyingKernel,
+                        enabled = !controller.verifyingKernel && !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_memory),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                        ModeButtonContent(
+                            loading = controller.verifyingKernel,
+                            icon = R.drawable.ic_memory,
+                            label = if (controller.verifyingKernel) "Checking with root..." else "Verify with root",
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
                     }
                 } else {
                     Spacer(Modifier.height(10.dp))
@@ -1279,13 +1292,11 @@ private fun SettingsScreen(controller: DroidyController) {
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_stop_circle),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                        ModeButtonContent(
+                            loading = controller.modeSwitching && controller.modeAction == "exit",
+                            icon = R.drawable.ic_stop_circle,
+                            label = if (controller.modeAction == "exit") "Exiting AirDrop mode..." else "Exit AirDrop mode",
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (controller.modeSwitching) "Switching..." else "Exit AirDrop mode")
                     }
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(
@@ -1293,27 +1304,27 @@ private fun SettingsScreen(controller: DroidyController) {
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_refresh),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                        ModeButtonContent(
+                            loading = controller.modeSwitching && controller.modeAction == "reboot-exit",
+                            icon = R.drawable.ic_refresh,
+                            label = if (controller.modeAction == "reboot-exit") {
+                                "Rebooting to exit AirDrop mode..."
+                            } else {
+                                "Reboot to exit AirDrop mode"
+                            },
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Reboot to Wi-Fi")
                     }
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(
                         onClick = { controller.verifyKernelWithRoot() },
-                        enabled = !controller.verifyingKernel,
+                        enabled = !controller.verifyingKernel && !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_memory),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                        ModeButtonContent(
+                            loading = controller.verifyingKernel,
+                            icon = R.drawable.ic_memory,
+                            label = if (controller.verifyingKernel) "Checking with root..." else "Verify with root",
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (controller.verifyingKernel) "Checking with root..." else "Verify with root")
                     }
                     if (controller.kernel.verifiedBy == "root") {
                         Text(
@@ -1542,10 +1553,82 @@ private fun SettingsScreen(controller: DroidyController) {
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.primary,
                     )
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(color = colors.outlineVariant)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "DEVELOPER",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "RenzVillegas24",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSurface,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "GITHUB REPOSITORY",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "RenzVillegas24/droidy",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.primary,
+                        textDecoration = TextDecoration.Underline,
+                        modifier = Modifier.clickable {
+                            uriHandler.openUri("https://github.com/RenzVillegas24/droidy")
+                        },
+                    )
+                    Text(
+                        text = "github.com/RenzVillegas24/droidy",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "TARGET",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Xiaomi K20 Pro · raphael · WCN3990",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurface,
+                    )
+                    Text(
+                        text = "io.moonbase.droidy · 1.1-compose",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
                 }
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ModeButtonContent(
+    loading: Boolean,
+    @DrawableRes icon: Int,
+    label: String,
+) {
+    if (loading) {
+        LoadingIndicator(
+            modifier = Modifier.size(18.dp),
+            color = LocalContentColor.current,
+        )
+    } else {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+    Spacer(Modifier.width(8.dp))
+    Text(label)
 }
 
 @Composable
