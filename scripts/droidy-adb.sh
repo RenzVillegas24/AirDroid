@@ -5,7 +5,7 @@ set -euo pipefail
 
 ADB="${ADB:-adb}"
 PKG="io.moonbase.droidy"
-RECEIVER="$PKG/.DebugReceiver"
+RECEIVER="$PKG/.ControlReceiver"
 
 usage() {
   cat <<'EOF'

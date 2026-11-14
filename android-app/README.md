@@ -60,32 +60,32 @@ Prerequisites:
 - Build Tools 35.0.1
 - Rust + `aarch64-unknown-linux-musl` target for the helper
 
-The repository includes the Gradle wrapper:
+The repo pins the Owly helper source as `third_party/owly`. The kernel
+submodule is not needed to build the APK.
 
 ```bash
-cd android-app
+# From the repository root.
+git submodule update --init third_party/owly
 
-# Build the helper and put it in the APK asset directory.
-cd helper
-cargo build --release --target aarch64-unknown-linux-musl
-cp target/aarch64-unknown-linux-musl/release/owly-k20-helper ../assets/
-cd ..
-
-# Build the Compose APK.
-./build.sh
+# Builds the helper, copies it into android-app/assets, then builds the APK.
+scripts/build-app.sh debug
 ```
 
-`./build.sh` is a thin wrapper around:
+For a release build:
 
 ```bash
-./gradlew :app:assembleDebug
+scripts/build-app.sh release
 ```
 
 APK output:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/release/
 ```
+
+The old `./build.sh` wrapper remains available for a debug-only Gradle build,
+but it does not build the Rust helper.
 
 ### ARM64 Linux host note
 

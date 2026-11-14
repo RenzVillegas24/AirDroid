@@ -15,12 +15,12 @@ import kotlinx.coroutines.launch
  * "DroidyLog".
  *
  * Examples:
- *   adb shell am broadcast -n io.moonbase.droidy/.DebugReceiver \
+ *   adb shell am broadcast -n io.moonbase.droidy/.ControlReceiver \
  *     -a io.moonbase.droidy.debug.STATUS
- *   adb shell am broadcast -n io.moonbase.droidy/.DebugReceiver \
+ *   adb shell am broadcast -n io.moonbase.droidy/.ControlReceiver \
  *     -a io.moonbase.droidy.debug.SEND --es path /sdcard/Download/file.bin
  */
-class DebugReceiver : BroadcastReceiver() {
+class ControlReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_STATUS = "io.moonbase.droidy.debug.STATUS"
         const val ACTION_START_SCAN = "io.moonbase.droidy.debug.START_SCAN"

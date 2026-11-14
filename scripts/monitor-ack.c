@@ -1,5 +1,5 @@
-/* Capture 802.11 ACK control frames addressed to the hidden injection MAC.
- * Usage: monitor-ack <iface> [hidden-mac]
+/* Capture 802.11 ACK control frames addressed to a hidden injection MAC.
+ * Usage: monitor-ack <iface> <hidden-mac>
  */
 #include <arpa/inet.h>
 #include <linux/if_ether.h>
@@ -11,7 +11,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-static unsigned char hidden[6] = {0x2a, 0xbc, 0xe2, 0xf8, 0xa3, 0x8e};
+static unsigned char hidden[6];
 
 static int parse_mac(const char *s, unsigned char out[6])
 {
@@ -38,8 +38,10 @@ int main(int argc, char **argv)
     unsigned char buf[4096];
     int ifindex, fd, acks = 0;
 
-    if (argc > 2)
-        parse_mac(argv[2], hidden);
+    if (argc < 3 || parse_mac(argv[2], hidden) < 0) {
+        fprintf(stderr, "usage: monitor-ack <iface> <hidden-mac>\n");
+        return 2;
+    }
     ifindex = if_nametoindex(iface);
     if (!ifindex) {
         perror("if_nametoindex");
