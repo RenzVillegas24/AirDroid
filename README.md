@@ -63,13 +63,13 @@ Release build:
 scripts/build-app.sh release
 ```
 
-APK output:
+The release APK is unsigned. To sign it with a private keystore:
 
-```text
-android-app/app/build/outputs/apk/debug/app-debug.apk
-android-app/app/build/outputs/apk/release/
+```bash
+scripts/sign-release.sh
 ```
 
+See [docs/RELEASE.md](docs/RELEASE.md) for keystore creation and signing.
 See [docs/SETUP.md](docs/SETUP.md) for device setup and
 [docs/raphael/ADB-DEBUG.md](docs/raphael/ADB-DEBUG.md) for the ADB controls.
 
