@@ -36,10 +36,17 @@ cp target/aarch64-unknown-linux-musl/release/owly-k20-helper ../assets/owly-k20-
 
 echo "== APK ($MODE) =="
 cd "$ROOT/android-app"
+
+GRADLE_ARGS=()
+AAPT2_OVERRIDE="${AAPT2_OVERRIDE:-$HOME/Android/Sdk/aapt2-qemu/aapt2}"
+if [[ -x "$AAPT2_OVERRIDE" ]]; then
+  GRADLE_ARGS+=("-Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE")
+fi
+
 if [[ "$MODE" == "release" ]]; then
-  ./gradlew :app:assembleRelease -x lintVitalRelease -x lintRelease
+  ./gradlew :app:assembleRelease -x lintVitalRelease -x lintRelease "${GRADLE_ARGS[@]}"
   echo "APK: android-app/app/build/outputs/apk/release/"
 else
-  ./gradlew :app:assembleDebug
+  ./gradlew :app:assembleDebug "${GRADLE_ARGS[@]}"
   echo "APK: android-app/app/build/outputs/apk/debug/app-debug.apk"
 fi
