@@ -5,8 +5,8 @@ edition = "2024"
 rust-version = "1.88"
 
 [dependencies]
-owly-radio = { path = "../../workspaces/shared/reference/owly-ref/crates/owly-radio" }
-owly-awdl = { path = "../../workspaces/shared/reference/owly-ref/crates/owly-awdl", features = ["driver"] }
-owly-airdrop = { path = "../../workspaces/shared/reference/owly-ref/crates/owly-airdrop", features = ["mdns"] }
+owly-radio = { path = "../../third_party/owly/crates/owly-radio" }
+owly-awdl = { path = "../../third_party/owly/crates/owly-awdl", features = ["driver"] }
+owly-airdrop = { path = "../../third_party/owly/crates/owly-airdrop", features = ["mdns"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }

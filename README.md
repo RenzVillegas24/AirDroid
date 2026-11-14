@@ -19,7 +19,10 @@ docs/
   chenfeng/    Civi 4 Pro / QCA6750 findings
   raphael/     K20 Pro / WCN3990 findings
 
-kernel/       Evolution-X kernel_xiaomi_raphael git submodule (pinned)
+kernel/         Evolution-X kernel_xiaomi_raphael git submodule (pinned)
+third_party/
+  owly/         Droidy fork of Owly with K20 radio fixes (pinned)
+                [RenzVillegas24/owly], branch droidy/k20-fixes
 workspaces/
   chenfeng/    captures, artifacts, logs, source for the Civi
   raphael/     patched local kernel checkout, configs, boot images, captures, scripts
@@ -37,11 +40,13 @@ scripts/       general monitor/AWDL helpers
 
 ## K20 Pro quick facts
 
-- Exact source: [Evolution-X-Devices/kernel_xiaomi_raphael](https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael), commit
-  `2a67a9737583b2e6158cd8ef2dc026439bd80e4e`
-- Upstream kernel submodule: `kernel/` (run `git submodule update --init kernel`)
+- Upstream base: [Evolution-X-Devices/kernel_xiaomi_raphael](https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael),
+  commit `2a67a9737583b2e6158cd8ef2dc026439bd80e4e`
+- Droidy kernel fork: [RenzVillegas24/kernel_xiaomi_raphael](https://github.com/RenzVillegas24/kernel_xiaomi_raphael),
+  branch `owly-k20`, commit `e7f71fa7c64f76268407922762c061805fdfeae1`
+- Kernel submodule: `kernel/` (run `git submodule update --init kernel`)
 - Patched local checkout for injection work: `workspaces/raphael/kernel/`
-  (gitignored, includes local commits on `owly-k20`)
+  (gitignored working copy of the same `owly-k20` branch)
 - Kernel: `4.14.357-openela-perf`
 - Monitor: boot with `wlan.con_mode=4`; `wlan0` type 803
 - Injection: hidden STA `wlan_inj0` via the ported `ex18a` design

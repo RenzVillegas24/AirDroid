@@ -36,22 +36,24 @@ progress instead of multi-second stalls.
 
 ## Rebuild
 
-The reference tree and `android-app/assets/` are intentionally gitignored.
-Apply the change in:
+The fix is carried in the `third_party/owly` submodule, forked from
+`t4t5/owly` at `RenzVillegas24/owly`, branch `droidy/k20-fixes`, commit
+`04d8bc3`. The fork also carries the musl `renameat2` build fix needed by the
+K20 helper.
 
-```text
-workspaces/shared/reference/owly-ref/crates/owly-awdl/src/node.rs
-```
-
-Then rebuild and install:
+Initialize the submodule and rebuild:
 
 ```bash
+git submodule update --init third_party/owly
 cd android-app/helper
 ~/.cargo/bin/cargo build --release --target aarch64-unknown-linux-musl
 cp target/aarch64-unknown-linux-musl/release/owly-k20-helper ../assets/owly-k20-helper
 cd ..
 ./gradlew :app:assembleRelease -x lintVitalRelease -x lintRelease
 ```
+
+The helper binary and `android-app/assets/` remain gitignored; the submodule
+pins the exact source used for the APK.
 
 The app session also starts the helper with `OWLY_TX_NO_ACK=1`; the AirDrop
 protocol still handles its own response/retry behavior.
