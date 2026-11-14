@@ -2399,12 +2399,13 @@ class AirDroidController(private val context: Context) {
         )
     }
 
-    private fun clearMonitorOwnerBlocking() {
+    private fun restoreWifiOnCloseBlocking() {
+        if (kernel.state != MonitorState.MONITOR) return
         try {
-            ProcessBuilder("su", "-c", "echo 0 > $MONITOR_OWNER_PATH")
+            ProcessBuilder("su", "-c", "$APP_TMP/owly-mode.sh exit")
                 .redirectErrorStream(true)
                 .start()
-                .waitFor(2, TimeUnit.SECONDS)
+                .waitFor(8, TimeUnit.SECONDS)
         } catch (_: Exception) {
         }
     }
@@ -2443,7 +2444,7 @@ class AirDroidController(private val context: Context) {
     }
 
     fun close() {
-        clearMonitorOwnerBlocking()
+        restoreWifiOnCloseBlocking()
         if (AirDroidService.running) {
             runCatching { AirDroidService.stop(context) }
         }
