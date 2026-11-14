@@ -461,7 +461,7 @@ private fun TopBarPage(
                     } else {
                         Icon(
                             painter = painterResource(
-                                if (transferMode) R.drawable.ic_sensors else R.drawable.ic_wifi_tethering,
+                                if (transferMode) R.drawable.ic_airdroid_home else R.drawable.ic_wifi_tethering,
                             ),
                             contentDescription = null,
                             modifier = Modifier.size(18.dp),
