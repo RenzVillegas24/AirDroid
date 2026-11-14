@@ -436,6 +436,20 @@ class DroidyController(private val context: Context) {
         append("Live scan running; peer updates are continuous.")
     }
 
+    suspend fun stopScanning() {
+        if (!scanning || sending || sendCancelling) return
+        append("Stopping live scan...")
+        stopSession()
+        scanning = false
+        status = when {
+            peers.isEmpty() -> "NO PEERS"
+            !kernel.monitorReady -> kernel.state.badge
+            else -> "READY"
+        }
+        sendMessage = "Scanning stopped."
+        append("Live scan stopped.")
+    }
+
     suspend fun pickFile(uri: Uri) {
         val picked = withContext(Dispatchers.IO) {
             try {
