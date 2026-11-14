@@ -19,9 +19,10 @@ docs/
   chenfeng/    Civi 4 Pro / QCA6750 findings
   raphael/     K20 Pro / WCN3990 findings
 
+kernel/       Evolution-X kernel_xiaomi_raphael git submodule (pinned)
 workspaces/
   chenfeng/    captures, artifacts, logs, source for the Civi
-  raphael/     kernel source, configs, boot images, captures, scripts
+  raphael/     patched local kernel checkout, configs, boot images, captures, scripts
   shared/      shared tools and the Owly reference checkout
 
 android-app/   Kotlin "Droidy" test APK (Material 3 Expressive UI)
@@ -37,8 +38,10 @@ scripts/       general monitor/AWDL helpers
 ## K20 Pro quick facts
 
 - Exact source: [Evolution-X-Devices/kernel_xiaomi_raphael](https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael), commit
-  `2a67a9737583b2e6158cd8ef2dc026439bd80e4e`; local checkout at
-  `workspaces/raphael/kernel/`
+  `2a67a9737583b2e6158cd8ef2dc026439bd80e4e`
+- Upstream kernel submodule: `kernel/` (run `git submodule update --init kernel`)
+- Patched local checkout for injection work: `workspaces/raphael/kernel/`
+  (gitignored, includes local commits on `owly-k20`)
 - Kernel: `4.14.357-openela-perf`
 - Monitor: boot with `wlan.con_mode=4`; `wlan0` type 803
 - Injection: hidden STA `wlan_inj0` via the ported `ex18a` design

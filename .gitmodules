@@ -1,0 +1,3 @@
+[submodule "kernel"]
+	path = kernel
+	url = https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael.git
