@@ -107,6 +107,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -139,6 +140,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -1950,6 +1952,13 @@ private fun SettingsScreen(controller: AirDroidController) {
     var themeMode by remember { mutableStateOf(controller.settings.themeMode) }
     var tintMode by remember { mutableStateOf(controller.settings.tintMode) }
 
+    LaunchedEffect(deviceName) {
+        if (deviceName != controller.settings.deviceName) {
+            delay(650)
+            controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 240.dp),
@@ -1976,7 +1985,13 @@ private fun SettingsScreen(controller: AirDroidController) {
                 OutlinedTextField(
                     value = deviceName,
                     onValueChange = { deviceName = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged {
+                            if (!it.isFocused && deviceName != controller.settings.deviceName) {
+                                controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
+                            }
+                        },
                     singleLine = true,
                     label = { Text("Display name") },
                     leadingIcon = {
@@ -1988,29 +2003,12 @@ private fun SettingsScreen(controller: AirDroidController) {
                     },
                     shape = MaterialTheme.shapes.medium,
                 )
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = {
-                        controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_save),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Save settings")
-                }
-                if (controller.sendMessage.startsWith("Settings saved")) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = controller.sendMessage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.primary,
-                    )
-                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Changes save automatically",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                )
             }
         }
         item { SectionLabel("SYSTEM") }
@@ -2284,7 +2282,10 @@ private fun SettingsScreen(controller: AirDroidController) {
                             else -> "44"
                         }
                     },
-                    onSelected = { channel = it },
+                    onSelected = {
+                        channel = it
+                        controller.saveSettings(it, bleArm, deviceName, themeMode, tintMode)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(6.dp))
@@ -2321,7 +2322,10 @@ private fun SettingsScreen(controller: AirDroidController) {
                     options = bleOptions,
                     selected = bleOptions.getOrElse(bleArm) { "A" },
                     label = { it },
-                    onSelected = { bleArm = bleOptions.indexOf(it) },
+                    onSelected = {
+                        bleArm = bleOptions.indexOf(it)
+                        controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
