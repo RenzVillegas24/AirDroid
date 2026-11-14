@@ -456,7 +456,9 @@ Implemented on `feature/unified-home`:
 - per-transfer progress notifications and group summary
 - removal of discovery/READY receive notifications
 - transfer-priority pause/resume in the helper
-- ACK/retry experiment (`no_ack=false` default, `OWLY_TX_NO_ACK` override)
+- ACK/retry experiment: the app session now starts the helper with
+  `OWLY_TX_NO_ACK=1` to avoid per-frame 802.11 ACK stalls; the helper still
+  supports `OWLY_TX_NO_ACK=0` for comparison
 - per-file send events and stable receive indices
 - all offered receive filenames
 - original source filenames in Sent cards (no cache-prefix names)
@@ -488,5 +490,9 @@ Current limitations:
   controller and auto-starts the session when the monitor kernel is ready, but
   an in-flight request cannot be recovered.
 - Transfer history is session-only by decision.
-- Precise sustained throughput measurement is still pending; completed cards
-  now show average upload/download speed.
+- Precise sustained throughput measurement is still pending. Low Power Mode
+  and a locked iPhone screen throttle AWDL heavily; keep the iPhone unlocked
+  and Low Power Mode off during speed tests.
+- Completed cards show average upload/download speed.
+- The first `no_ack=true` live retest timed out before completion; a clean
+  measurement is still needed.
