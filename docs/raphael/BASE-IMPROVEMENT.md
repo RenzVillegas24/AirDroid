@@ -88,7 +88,7 @@ used as the AWDL identity.
 
 ## Acceptance checks
 
-1. Normal boot: `cmd wifi status` shows VILLEGAS connected.
+1. Normal boot: `cmd wifi status` shows the saved network connected.
 2. `owly-mode status` reports `con_mode=0`, station mode, no monitor.
 3. `owly-mode enter`: `wlan0` is `type=803`, `wlan_inj0` exists, Wi-Fi is off.
 4. Helper starts and scans without a reset.
