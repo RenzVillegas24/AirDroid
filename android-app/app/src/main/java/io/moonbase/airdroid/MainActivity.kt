@@ -548,7 +548,7 @@ private fun AirDroidFloatingToolbar(
         val indicatorOffset = with(density) { animatedIndicatorPx.toDp() }
         val highlightedIndex = with(density) {
             ((animatedIndicatorPx + itemSize.toPx() / 2) / itemSize.toPx())
-                .roundToInt()
+                .toInt()
                 .coerceIn(0, TOOLBAR_TABS.lastIndex)
         }
         val indicatorYOffset = if (pressed && dragMoved) {
