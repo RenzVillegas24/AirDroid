@@ -286,7 +286,13 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
     fun selectTab(next: AirDroidTab) {
         tab = next
         scope.launch {
-            pagerState.animateScrollToPage(TOOLBAR_TABS.indexOf(next))
+            pagerState.animateScrollToPage(
+                page = TOOLBAR_TABS.indexOf(next),
+                animationSpec = tween(
+                    durationMillis = 480,
+                    easing = FastOutSlowInEasing,
+                ),
+            )
         }
     }
     Box(
