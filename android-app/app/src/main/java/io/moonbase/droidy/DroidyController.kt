@@ -279,6 +279,7 @@ class DroidyController(private val context: Context) {
         private set
     var pickedFile by mutableStateOf<File?>(null)
         private set
+    private var pickedDisplayName: String? = null
 
     /** True while MainActivity is started; controls dialog vs notification. */
     var appForeground by mutableStateOf(false)
@@ -410,6 +411,7 @@ class DroidyController(private val context: Context) {
 
     fun clearPickedFile() {
         pickedFile = null
+        pickedDisplayName = null
         sendMessage = ""
     }
 
@@ -524,6 +526,7 @@ class DroidyController(private val context: Context) {
         peers = emptyList()
         selectedMac = null
         append("")
+        runCatching { DroidyService.start(context) }
         if (settings.channel == AUTO_CHANNEL) {
             scanAuto()
             return
@@ -535,6 +538,7 @@ class DroidyController(private val context: Context) {
             scanning = false
             status = "CHECK LOG"
             sendMessage = "Live scan could not start; check the log."
+            runCatching { DroidyService.stop(context) }
             return
         }
         status = "SCANNING"
@@ -557,10 +561,12 @@ class DroidyController(private val context: Context) {
                     scanning = false
                     status = "CHECK LOG"
                     sendMessage = "Live scan could not start; check the log."
+                    runCatching { DroidyService.stop(context) }
                     return
                 }
                 if (!scanning) {
                     stopSession()
+                    runCatching { DroidyService.stop(context) }
                     return
                 }
                 append("Auto scan on channel $channel")
@@ -587,6 +593,7 @@ class DroidyController(private val context: Context) {
         append("Stopping live scan...")
         stopSession()
         scanning = false
+        runCatching { DroidyService.stop(context) }
         status = when {
             peers.isEmpty() -> "NO PEERS"
             !kernel.monitorReady -> kernel.state.badge
@@ -612,21 +619,24 @@ class DroidyController(private val context: Context) {
             }
         }
         pickedFile = picked
+        pickedDisplayName = if (picked == null) null else {
+            queryDisplayName(uri)?.replace(Regex("[^A-Za-z0-9._ -]"), "_") ?: picked.name
+        }
         sendMessage = when {
             picked == null -> "Could not open that file."
-            else -> "Ready to send ${picked.name}."
+            else -> "Ready to send ${pickedDisplayName ?: picked.name}."
         }
     }
 
     suspend fun sendPicked() {
         val file = pickedFile ?: return
-        sendFile(file.absolutePath)
+        sendFile(file.absolutePath, pickedDisplayName)
     }
 
     fun sendPath(path: String) {
         scope.launch {
             pickedFile = File(path)
-            sendFile(path)
+            sendFile(path, File(path).name)
         }
     }
 
@@ -639,11 +649,11 @@ class DroidyController(private val context: Context) {
             val file = File(context.cacheDir, "clipboard-${System.currentTimeMillis()}.txt")
             withContext(Dispatchers.IO) { file.writeText(text) }
             pickedFile = file
-            sendFile(file.absolutePath)
+            sendFile(file.absolutePath, "Clipboard.txt")
         }
     }
 
-    private suspend fun sendFile(path: String) {
+    private suspend fun sendFile(path: String, displayName: String? = null) {
         if (sending || sendCancelling) return
         if (!requireMonitorKernel()) return
         val target = selectedPeer
@@ -653,6 +663,7 @@ class DroidyController(private val context: Context) {
         }
         val cleanPath = path.replace('\n', ' ').replace('\r', ' ')
         val file = File(cleanPath)
+        val shownName = displayName?.takeIf { it.isNotBlank() } ?: file.name
         val generation = ++sendGeneration
         sendCancelled = false
         sendProgressBytes = 0
@@ -660,12 +671,12 @@ class DroidyController(private val context: Context) {
         sending = true
         sendCancelling = false
         status = "SENDING"
-        sendMessage = "Sending ${file.name} to ${target.displayName()}..."
+        sendMessage = "Sending $shownName to ${target.displayName()}..."
         val transfer = TransferItem(
             id = "tx-${System.currentTimeMillis()}-${++sendTransferCounter}",
             direction = TransferDirection.SENT,
             peerName = target.displayName(),
-            fileName = file.name,
+            fileName = shownName,
             totalBytes = file.length().coerceAtLeast(0),
             transferredBytes = 0,
             status = TransferStatus.WAITING,
@@ -989,6 +1000,7 @@ class DroidyController(private val context: Context) {
             if (!reboot) {
                 stopSession()
                 scanning = false
+                runCatching { DroidyService.stop(context) }
             }
             val rc = execRoot(
                 label = "exit AirDrop mode",
@@ -2376,6 +2388,9 @@ class DroidyController(private val context: Context) {
     }
 
     fun close() {
+        if (DroidyService.running) {
+            runCatching { DroidyService.stop(context) }
+        }
         pendingRequest?.let { pending ->
             if (!pending.completion.isCompleted) pending.completion.complete(-1)
         }
