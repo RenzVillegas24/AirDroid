@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -114,6 +115,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -1969,12 +1971,7 @@ private fun SettingsScreen(controller: AirDroidController) {
         item {
             SettingsCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_badge),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
+                    SettingsIconBubble(R.drawable.ic_badge)
                     Spacer(Modifier.width(10.dp))
                     Text(
                         text = "Device name",
@@ -2016,12 +2013,7 @@ private fun SettingsScreen(controller: AirDroidController) {
         item {
             SettingsCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_memory),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
+                    SettingsIconBubble(R.drawable.ic_memory)
                     Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -2141,79 +2133,69 @@ private fun SettingsScreen(controller: AirDroidController) {
         }
         item { SectionLabel("APPEARANCE") }
         item {
-            SettingsCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_tune),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Theme",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = "Follow the system or force light or dark",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
+            SettingsListGroup {
+                SettingsCard(grouped = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBubble(R.drawable.ic_tune)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Theme",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "Follow the system or force light or dark",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
                     }
-                }
-                Spacer(Modifier.height(10.dp))
-                AirDroidButtonGroup(
-                    options = ThemeMode.entries,
-                    selected = themeMode,
-                    label = { it.label },
-                    onSelected = {
-                        themeMode = it
-                        controller.saveAppearance(it, tintMode)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-        item {
-            SettingsCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_tune),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
+                    Spacer(Modifier.height(10.dp))
+                    AirDroidButtonGroup(
+                        options = ThemeMode.entries,
+                        selected = themeMode,
+                        label = { it.label },
+                        onSelected = {
+                            themeMode = it
+                            controller.saveAppearance(it, tintMode)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Tint",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = if (Build.VERSION.SDK_INT >= 31) {
-                                "AirDroid palette or Android dynamic color"
-                            } else {
-                                "AirDroid palette; system tint needs Android 12+"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
                 }
-                Spacer(Modifier.height(10.dp))
-                AirDroidButtonGroup(
-                    options = TintMode.entries,
-                    selected = tintMode,
-                    label = { it.label },
-                    onSelected = {
-                        tintMode = it
-                        controller.saveAppearance(themeMode, it)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                SettingsCard(grouped = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBubble(R.drawable.ic_tune)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Tint",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = if (Build.VERSION.SDK_INT >= 31) {
+                                    "AirDroid palette or Android dynamic color"
+                                } else {
+                                    "AirDroid palette; system tint needs Android 12+"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    AirDroidButtonGroup(
+                        options = TintMode.entries,
+                        selected = tintMode,
+                        label = { it.label },
+                        onSelected = {
+                            tintMode = it
+                            controller.saveAppearance(themeMode, it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
         item { SectionLabel("RECEIVER") }
@@ -2233,89 +2215,73 @@ private fun SettingsScreen(controller: AirDroidController) {
         }
         item { SectionLabel("CONNECTION") }
         item {
-            SettingsCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_cell_tower),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "AWDL channel",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = "Fixed monitor channel on the WCN3990 radio",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                AirDroidButtonGroup(
-                    options = listOf(0, 44, 6, 149),
-                    selected = channel,
-                    label = { option ->
-                        when (option) {
-                            0 -> "Auto"
-                            6 -> "6"
-                            149 -> "149"
-                            else -> "44"
+            SettingsListGroup {
+                SettingsCard(grouped = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBubble(R.drawable.ic_cell_tower)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "AWDL channel",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "Fixed monitor channel on the WCN3990 radio",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
                         }
-                    },
-                    onSelected = {
-                        channel = it
-                        controller.saveSettings(it, bleArm, deviceName, themeMode, tintMode)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Auto tries 44 → 6 → 149 and locks onto the first channel with peers.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.onSurfaceVariant,
-                )
-            }
-        }
-        item {
-            SettingsCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_bluetooth),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "BLE wake arm",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = "Apple Continuity advertisement shape",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
                     }
+                    Spacer(Modifier.height(10.dp))
+                    AirDroidButtonGroup(
+                        options = listOf(0, 44, 6, 149),
+                        selected = channel,
+                        label = { option ->
+                            when (option) {
+                                0 -> "Auto"
+                                6 -> "6"
+                                149 -> "149"
+                                else -> "44"
+                            }
+                        },
+                        onSelected = {
+                            channel = it
+                            controller.saveSettings(it, bleArm, deviceName, themeMode, tintMode)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
-                Spacer(Modifier.height(10.dp))
-                val bleOptions = listOf("A", "V2", "B")
-                AirDroidButtonGroup(
-                    options = bleOptions,
-                    selected = bleOptions.getOrElse(bleArm) { "A" },
-                    label = { it },
-                    onSelected = {
-                        bleArm = bleOptions.indexOf(it)
-                        controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                SettingsCard(grouped = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBubble(R.drawable.ic_bluetooth)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "BLE wake arm",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "Apple Continuity advertisement shape",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    val bleOptions = listOf("A", "V2", "B")
+                    AirDroidButtonGroup(
+                        options = bleOptions,
+                        selected = bleOptions.getOrElse(bleArm) { "A" },
+                        label = { it },
+                        onSelected = {
+                            bleArm = bleOptions.indexOf(it)
+                            controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
         item { SectionLabel("ABOUT") }
@@ -2325,6 +2291,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                     icon = R.drawable.ic_badge,
                     headline = "Developer",
                     supporting = "RenzVillegas24",
+                    avatarRes = R.drawable.dev_avatar,
                 )
                 SettingsListItem(
                     icon = R.drawable.ic_computer,
@@ -2371,6 +2338,25 @@ private fun ModeButtonContent(
 }
 
 @Composable
+private fun SettingsIconBubble(@DrawableRes icon: Int) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = CircleShape,
+        color = colors.primaryContainer,
+        modifier = Modifier.size(40.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = null,
+                tint = colors.onPrimaryContainer,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun SettingsListGroup(content: @Composable ColumnScope.() -> Unit) {
     Column(
         modifier = Modifier
@@ -2388,6 +2374,7 @@ private fun SettingsListItem(
     headline: String,
     supporting: String,
     trailing: String? = null,
+    avatarRes: Int? = null,
     onClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -2406,19 +2393,17 @@ private fun SettingsListItem(
     ) {
         ListItem(
             leadingContent = {
-                Surface(
-                    shape = CircleShape,
-                    color = colors.primaryContainer,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(icon),
-                            contentDescription = null,
-                            tint = colors.onPrimaryContainer,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
+                if (avatarRes != null) {
+                    Image(
+                        painter = painterResource(avatarRes),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape),
+                    )
+                } else {
+                    SettingsIconBubble(icon)
                 }
             },
             headlineContent = {
@@ -2449,10 +2434,13 @@ private fun SettingsListItem(
 }
 
 @Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsCard(
+    grouped: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
+        shape = if (grouped) RoundedCornerShape(4.dp) else MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
