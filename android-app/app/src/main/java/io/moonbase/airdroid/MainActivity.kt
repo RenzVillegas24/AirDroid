@@ -2214,35 +2214,16 @@ private fun SettingsScreen(controller: AirDroidController) {
         }
         item { SectionLabel("RECEIVER") }
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
-            ) {
-                ListItem(
-                    headlineContent = { Text("Incoming storage") },
-                    supportingContent = { Text(AirDroidController.RECEIVE_DIR) },
-                    leadingContent = {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_folder),
-                            contentDescription = null,
-                            tint = colors.primary,
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsListItem(
+                    icon = R.drawable.ic_folder,
+                    headline = "Incoming storage",
+                    supporting = AirDroidController.RECEIVE_DIR,
                 )
-                HorizontalDivider(color = colors.outlineVariant)
-                ListItem(
-                    headlineContent = { Text("AirDrop port") },
-                    supportingContent = { Text("8771 · AWDL link-local") },
-                    leadingContent = {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_sensors),
-                            contentDescription = null,
-                            tint = colors.primary,
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                SettingsListItem(
+                    icon = R.drawable.ic_sensors,
+                    headline = "AirDrop port",
+                    supporting = "8771 · AWDL link-local",
                 )
             }
         }
@@ -2457,6 +2438,63 @@ private fun ModeButtonContent(
     }
     Spacer(Modifier.width(8.dp))
     Text(label)
+}
+
+@Composable
+private fun SettingsListItem(
+    @DrawableRes icon: Int,
+    headline: String,
+    supporting: String,
+    trailing: String? = null,
+) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
+    ) {
+        ListItem(
+            leadingContent = {
+                Surface(
+                    shape = CircleShape,
+                    color = colors.primaryContainer,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(icon),
+                            contentDescription = null,
+                            tint = colors.onPrimaryContainer,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                }
+            },
+            headlineContent = {
+                Text(
+                    text = headline,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            },
+            supportingContent = {
+                Text(
+                    text = supporting,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+            },
+            trailingContent = trailing?.let {
+                {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
+    }
 }
 
 @Composable
