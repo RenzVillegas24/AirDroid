@@ -759,6 +759,7 @@ class DroidyController(private val context: Context) {
                         } else {
                             item.status
                         },
+                        uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
                     )
                 }
             }
@@ -782,7 +783,10 @@ class DroidyController(private val context: Context) {
             activeSendTransferId?.let { id ->
                 updateTransfer(id) { item ->
                     if (item.status.isActive && item.status != TransferStatus.TRANSFERRING) {
-                        item.copy(status = TransferStatus.ACCEPTED)
+                        item.copy(
+                            status = TransferStatus.ACCEPTED,
+                            uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
+                        )
                     } else {
                         item
                     }
@@ -1345,6 +1349,7 @@ class DroidyController(private val context: Context) {
                 } else {
                     item.status
                 },
+                uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
             )
         }
     }
@@ -1361,6 +1366,7 @@ class DroidyController(private val context: Context) {
                 transferredBytes = bytes,
                 totalBytes = if (total > 0) total else item.totalBytes,
                 status = TransferStatus.TRANSFERRING,
+                uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
             )
         }
         receiveProgressBytes = activeTransfers

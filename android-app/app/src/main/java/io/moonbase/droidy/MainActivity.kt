@@ -895,6 +895,11 @@ private fun transferStatusLine(transfer: TransferItem): String = when (transfer.
             append(" · ")
             append(transfer.totalBytes.readableBytes())
         }
+        transfer.averageBytesPerSecond?.let {
+            append(" · ")
+            append(it.readableBytes())
+            append("/s")
+        }
         transfer.completedAt?.let {
             append(" · ")
             append(formatClock(it))

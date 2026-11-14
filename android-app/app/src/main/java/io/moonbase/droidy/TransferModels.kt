@@ -44,6 +44,8 @@ data class TransferItem(
     val localPath: String? = null,
     val startedAt: Long,
     val completedAt: Long? = null,
+    /** First upload/download event, excluding the AirDrop prompt wait. */
+    val uploadStartedAt: Long? = null,
 ) {
     val progressPercent: Int?
         get() = if (totalBytes > 0) {
@@ -52,6 +54,15 @@ data class TransferItem(
                 .coerceIn(0, 100)
         } else {
             null
+        }
+
+    val averageBytesPerSecond: Long?
+        get() {
+            val start = uploadStartedAt ?: return null
+            val end = completedAt ?: return null
+            val elapsedMs = end - start
+            if (elapsedMs <= 0 || transferredBytes <= 0) return null
+            return transferredBytes * 1000 / elapsedMs
         }
 
     val isComplete: Boolean
