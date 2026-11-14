@@ -470,27 +470,36 @@ private fun AirDroidFloatingToolbar(
         var hoveredIndex by remember { mutableIntStateOf(selectedIndex) }
         var fingerX by remember { mutableFloatStateOf(0f) }
         var fingerY by remember { mutableFloatStateOf(0f) }
+        var dragMoved by remember { mutableStateOf(false) }
         var dragDelta by remember { mutableStateOf(Offset.Zero) }
         val density = LocalDensity.current
         val fingerOffset = with(density) {
             val raw = fingerX.toDp() - itemSize / 2
             val center = itemSize * selectedIndex
-            (center + (raw - center) * 0.65f).coerceIn(
-                0.dp,
-                itemSize * (TOOLBAR_TABS.size - 1),
-            )
+            if (dragMoved) {
+                (center + (raw - center) * 0.65f).coerceIn(
+                    0.dp,
+                    itemSize * (TOOLBAR_TABS.size - 1),
+                )
+            } else {
+                itemSize * hoveredIndex
+            }
         }
         val indicatorOffset by animateDpAsState(
             targetValue = if (pressed) fingerOffset else itemSize * selectedIndex,
             animationSpec = if (pressed) {
-                tween(durationMillis = 12, easing = LinearEasing)
+                if (dragMoved) {
+                    tween(durationMillis = 12, easing = LinearEasing)
+                } else {
+                    tween(durationMillis = 35, easing = FastOutSlowInEasing)
+                }
             } else {
                 spring(dampingRatio = 0.9f, stiffness = 650f)
             },
             label = "toolbar selection",
         )
         val indicatorYOffset by animateDpAsState(
-            targetValue = if (pressed) {
+            targetValue = if (pressed && dragMoved) {
                 with(density) {
                     ((fingerY.toDp() - itemSize / 2) * 0.08f).coerceIn((-2.5).dp, 2.5.dp)
                 }
@@ -578,6 +587,7 @@ private fun AirDroidFloatingToolbar(
                         val downPosition = down.position
                         fingerX = down.position.x
                         fingerY = down.position.y
+                        dragMoved = false
                         dragDelta = Offset.Zero
                         hoveredIndex = indexAt(down.position.x)
                         pressed = true
@@ -591,12 +601,18 @@ private fun AirDroidFloatingToolbar(
                                 fingerX = change.position.x
                                 fingerY = change.position.y
                                 dragDelta = change.position - downPosition
+                                if (kotlin.math.abs(dragDelta.x) > 4.dp.toPx() ||
+                                    kotlin.math.abs(dragDelta.y) > 4.dp.toPx()
+                                ) {
+                                    dragMoved = true
+                                }
                                 hoveredIndex = indexAt(change.position.x)
                                 released = !change.pressed
                                 change.consume()
                             }
                         }
                         pressed = false
+                        dragMoved = false
                         dragDelta = Offset.Zero
                         onSelected(TOOLBAR_TABS[hoveredIndex])
                     }
