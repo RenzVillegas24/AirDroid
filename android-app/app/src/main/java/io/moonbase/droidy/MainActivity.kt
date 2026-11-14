@@ -296,8 +296,7 @@ private fun DroidyTopBar(
                             }
                         },
                         enabled = controller.kernel.monitorReady &&
-                            !controller.sending && !controller.sendCancelling &&
-                            !controller.receiverRunning,
+                            !controller.sending && !controller.sendCancelling,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         Icon(

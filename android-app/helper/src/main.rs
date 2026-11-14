@@ -62,7 +62,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "session" => {
             let channel = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
             let name = args.get(3).cloned().unwrap_or_else(|| "Droidy K20".into());
-            session(channel, name).await
+            let dir = PathBuf::from(
+                args.get(4).cloned().unwrap_or_else(|| "/sdcard/Download/Droidy".into()),
+            );
+            let port = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(RECEIVER_PORT);
+            session(channel, name, dir, port).await
         }
         "receive" => {
             let dir = PathBuf::from(args.get(2).ok_or("usage: helper receive <dir> <port> <channel>")?);
@@ -579,18 +583,52 @@ async fn find_and_send(
     Ok(())
 }
 
-async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
+async fn session(
+    channel: u8,
+    name: String,
+    receive_dir: PathBuf,
+    receive_port: u16,
+) -> Result<(), Box<dyn Error>> {
     rustls::crypto::ring::default_provider().install_default().ok();
+    std::fs::create_dir_all(&receive_dir)?;
+    std::fs::create_dir_all(STATE_DIR)?;
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
     let mut live_peers = peers_rx.clone();
     let names = Arc::new(Mutex::new(HashMap::new()));
     let mut sniffer = start_name_sniffer(names.clone());
-    let mdns = Mdns::new(index);
+    let mdns = Mdns::new(index).with_burst(Some(Burst {
+        count: 64,
+        interval: Duration::from_micros(16_400),
+        pause: Duration::from_secs(3),
+    }));
+    let identity = Identity::load_or_generate(Path::new(STATE_DIR))?;
+    let mut receiver_config = ReceiverConfig::new(name.clone());
+    receiver_config.model_name = "Linux".into();
+    receiver_config.ask_timeout = Duration::from_secs(60);
+    let receiver_options = ReceiverOptions::new(receiver_config, receive_dir.clone());
+    let local = addr.link_local();
+    let (receiver, mut receiver_events) = Receiver::bind(
+        SocketAddrV6::new(local, receive_port, 0, index),
+        &identity,
+        receiver_options,
+    )
+    .await?;
+    let actual_port = receiver.local_addr()?.port();
+    let service = Service {
+        instance: sender_id(addr),
+        host: "droidy-k20".into(),
+        port: actual_port,
+        addr: local,
+        flags: RECEIVER_FLAGS,
+    };
+    let _registration = mdns.register(service).await?;
+    let _receiver_task = tokio::spawn(receiver.run());
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
     let sender = Sender::new(sender_config)?;
     let mut known: HashMap<String, KnownPeer> = HashMap::new();
+    let mut requests: HashMap<u64, Request> = HashMap::new();
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     std::thread::spawn(move || {
@@ -602,6 +640,12 @@ async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
     });
 
     println!("SESSION_READY channel={channel} mac={addr:?}");
+    println!(
+        "RECEIVE_READY addr={} port={} dir={}",
+        local,
+        actual_port,
+        receive_dir.display()
+    );
     let initial_peers = peers_rx.borrow().clone();
     let initial_names = names.lock().unwrap().clone();
     emit_peer_updates(&mut known, &initial_peers, &initial_names);
@@ -614,6 +658,43 @@ async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
                     emit_peer_updates(&mut known, &peers, &names_snapshot);
                 }
             }
+            receiver_event = receiver_events.recv() => match receiver_event {
+                Some(ReceiverEvent::Discovered { peer, .. }) => {
+                    println!("RECEIVE_DISCOVER peer={peer}");
+                }
+                Some(ReceiverEvent::Request(request)) => {
+                    let id = request.id;
+                    let peer = request.peer;
+                    let (files, total, names) = offer_summary(&request.ask.offer);
+                    let sender = request.ask.sender_computer_name.clone();
+                    println!(
+                        "RECEIVE_REQUEST id={id} peer={peer} files={files} total={total} sender={sender}"
+                    );
+                    if !names.is_empty() {
+                        println!("RECEIVE_REQUEST_FILES id={id} names={names}");
+                    }
+                    requests.insert(id, request);
+                }
+                Some(ReceiverEvent::Urls { id, urls }) => {
+                    println!("RECEIVE_URLS id={id} urls={urls:?}");
+                }
+                Some(ReceiverEvent::Received { id, paths }) => {
+                    requests.remove(&id);
+                    for path in &paths {
+                        println!("RECEIVED id={id} path={}", path.display());
+                    }
+                    println!("RECEIVE_DONE id={id}");
+                }
+                Some(ReceiverEvent::Failed { id, reason }) => {
+                    requests.remove(&id);
+                    println!("RECEIVE_FAILED id={id} reason={reason}");
+                }
+                Some(ReceiverEvent::Withdrawn { id }) => {
+                    requests.remove(&id);
+                    println!("RECEIVE_WITHDRAWN id={id}");
+                }
+                None => {}
+            },
             command = cmd_rx.recv() => {
                 let Some(line) = command else { break };
                 let mut parts = line.splitn(4, ' ');
@@ -673,6 +754,27 @@ async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
                         ).await {
                             Ok(()) => println!("SEND_OK {id}"),
                             Err(e) => println!("SEND_ERR {id} {e}"),
+                        }
+                    }
+                    "accept" => {
+                        let id = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
+                        match id.and_then(|id| requests.remove(&id).map(|request| (id, request))) {
+                            Some((id, request)) => {
+                                let total = offer_total(&request.ask.offer);
+                                request.accept();
+                                println!("RECEIVE_ACCEPTED id={id} total={total}");
+                            }
+                            None => println!("RECEIVE_ERROR unknown_request"),
+                        }
+                    }
+                    "decline" => {
+                        let id = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
+                        match id.and_then(|id| requests.remove(&id).map(|request| (id, request))) {
+                            Some((id, request)) => {
+                                request.decline();
+                                println!("RECEIVE_DECLINED id={id}");
+                            }
+                            None => println!("RECEIVE_ERROR unknown_request"),
                         }
                     }
                     "quit" => break,
