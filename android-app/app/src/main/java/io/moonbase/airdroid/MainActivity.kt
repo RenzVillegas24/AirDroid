@@ -88,6 +88,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
@@ -440,29 +441,25 @@ private fun TopBarPage(
         }
         when (tab) {
             AirDroidTab.HOME -> {
-                FilledTonalButton(
-                    onClick = {
-                        scope.launch {
-                            if (controller.scanning) {
-                                controller.stopScanning()
-                            } else {
-                                controller.scan()
-                            }
-                        }
-                    },
-                    enabled = controller.kernel.monitorReady &&
-                        !controller.sending && !controller.sendCancelling,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(
-                            if (controller.scanning) R.drawable.ic_stop_circle else R.drawable.ic_refresh,
-                        ),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                val transferMode = controller.kernel.state == MonitorState.MONITOR
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = if (transferMode) "ON" else "OFF",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (controller.scanning) "Stop" else "Scan")
+                    Switch(
+                        checked = transferMode,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                controller.enterTransferMode()
+                            } else {
+                                controller.exitTransferMode()
+                            }
+                        },
+                        enabled = !controller.modeSwitching &&
+                            !controller.sending && !controller.sendCancelling,
+                    )
                 }
             }
             AirDroidTab.LOGS -> {
@@ -1708,9 +1705,9 @@ private fun KernelBanner(controller: AirDroidController) {
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = if (wifiMode) {
-                        "${kernel.detail} Enter AirDrop mode when ready; if the live switch fails, reboot into it."
+                        "${kernel.detail} Enter Transfer mode when ready; if the live switch fails, reboot into it."
                     } else {
-                        "${kernel.detail} Verify with root, then enter AirDrop mode."
+                        "${kernel.detail} Verify with root, then enter Transfer mode."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = onContainer.copy(alpha = 0.82f),
@@ -1724,7 +1721,7 @@ private fun KernelBanner(controller: AirDroidController) {
                     )
                 }
                 TextButton(
-                    onClick = { controller.enterAirDropMode() },
+                    onClick = { controller.enterTransferMode() },
                     enabled = !controller.modeSwitching,
                 ) {
                     Icon(
@@ -1733,7 +1730,7 @@ private fun KernelBanner(controller: AirDroidController) {
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(if (controller.modeSwitching) "Switching..." else "Enter AirDrop mode")
+                    Text(if (controller.modeSwitching) "Switching..." else "Enter Transfer mode")
                 }
             }
         }
@@ -2023,7 +2020,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                         )
                         Text(
                             text = when (controller.kernel.state) {
-                                MonitorState.MONITOR -> "AirDrop mode active"
+                                MonitorState.MONITOR -> "Transfer mode active"
                                 MonitorState.STOCK -> "Wi-Fi mode"
                                 MonitorState.UNVERIFIED -> "Unknown mode"
                             },
@@ -2053,26 +2050,26 @@ private fun SettingsScreen(controller: AirDroidController) {
                 if (!controller.kernel.monitorReady) {
                     Spacer(Modifier.height(10.dp))
                     Button(
-                        onClick = { controller.enterAirDropMode() },
+                        onClick = { controller.enterTransferMode() },
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         ModeButtonContent(
                             loading = controller.modeSwitching && controller.modeAction == "enter",
                             icon = R.drawable.ic_wifi_tethering,
-                            label = if (controller.modeAction == "enter") "Entering AirDrop mode..." else "Enter AirDrop mode",
+                            label = if (controller.modeAction == "enter") "Entering Transfer mode..." else "Enter Transfer mode",
                         )
                     }
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(
-                        onClick = { controller.enterAirDropMode(reboot = true) },
+                        onClick = { controller.enterTransferMode(reboot = true) },
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         ModeButtonContent(
                             loading = controller.modeSwitching && controller.modeAction == "reboot-enter",
                             icon = R.drawable.ic_refresh,
-                            label = if (controller.modeAction == "reboot-enter") "Rebooting into AirDrop mode..." else "Reboot into AirDrop mode",
+                            label = if (controller.modeAction == "reboot-enter") "Rebooting into Transfer mode..." else "Reboot into Transfer mode",
                         )
                     }
                     Spacer(Modifier.height(6.dp))
@@ -2090,19 +2087,19 @@ private fun SettingsScreen(controller: AirDroidController) {
                 } else {
                     Spacer(Modifier.height(10.dp))
                     FilledTonalButton(
-                        onClick = { controller.exitAirDropMode() },
+                        onClick = { controller.exitTransferMode() },
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         ModeButtonContent(
                             loading = controller.modeSwitching && controller.modeAction == "exit",
                             icon = R.drawable.ic_stop_circle,
-                            label = if (controller.modeAction == "exit") "Exiting AirDrop mode..." else "Exit AirDrop mode",
+                            label = if (controller.modeAction == "exit") "Exiting Transfer mode..." else "Exit Transfer mode",
                         )
                     }
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(
-                        onClick = { controller.exitAirDropMode(reboot = true) },
+                        onClick = { controller.exitTransferMode(reboot = true) },
                         enabled = !controller.modeSwitching,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
@@ -2110,9 +2107,9 @@ private fun SettingsScreen(controller: AirDroidController) {
                             loading = controller.modeSwitching && controller.modeAction == "reboot-exit",
                             icon = R.drawable.ic_refresh,
                             label = if (controller.modeAction == "reboot-exit") {
-                                "Rebooting to exit AirDrop mode..."
+                                "Rebooting to exit Transfer mode..."
                             } else {
-                                "Reboot to exit AirDrop mode"
+                                "Reboot to exit Transfer mode"
                             },
                         )
                     }

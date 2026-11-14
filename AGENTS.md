@@ -85,7 +85,7 @@ Implementation details:
 - Receiver: `io.moonbase.airdroid/.ControlReceiver`
 - Protection: `android.permission.DUMP` (adb shell has it)
 - It only works while the app process/controller is alive; the foreground
-  service keeps it alive in AirDrop mode.
+  service keeps it alive in Transfer mode.
 - Logs are mirrored to logcat:
 
 ```bash
@@ -104,12 +104,12 @@ adb logcat -d -s AirDroidDebug:D '*:S'
 
 1. Build and install the app.
 2. Ask the user to open AirDrop only when a live iPhone test is ready.
-3. Enter AirDrop mode from Settings.
+3. Enter Transfer mode from Settings.
 4. Use `scripts/airdroid-adb.sh status` to confirm peers/transfers.
 5. Use `scripts/airdroid-adb.sh log` for timestamped progress.
 6. For speed issues, compare progress timestamps and byte counts; identify
    gaps before changing code.
-7. After the test, exit AirDrop mode and restore Wi-Fi unless the user is
+7. After the test, exit Transfer mode and restore Wi-Fi unless the user is
    waiting for another test.
 8. Tell the user when AirDrop can be closed.
 

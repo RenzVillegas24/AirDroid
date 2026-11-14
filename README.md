@@ -136,7 +136,7 @@ git submodule update --init kernel
 
 The monitor/injection boot-image workflow is kept on the investigation
 branches. The app only switches the already-flashed kernel between normal
-Wi-Fi and AirDrop mode.
+Wi-Fi and Transfer mode.
 
 ## Credits
 

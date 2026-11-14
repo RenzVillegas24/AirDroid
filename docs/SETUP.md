@@ -103,14 +103,14 @@ See [RELEASE.md](RELEASE.md) for keystore creation, signing, and verification.
 In the app:
 
 ```text
-Settings -> Radio mode -> Enter AirDrop mode
+Settings -> Radio mode -> Enter Transfer mode
 ```
 
 The live switch disables Wi-Fi, sets `wlan.con_mode=4`, and waits for the
 monitor/hidden-STA interfaces. To restore normal Wi-Fi:
 
 ```text
-Settings -> Radio mode -> Exit AirDrop mode
+Settings -> Radio mode -> Exit Transfer mode
 ```
 
 ## 6. ADB control and logs

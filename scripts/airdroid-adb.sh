@@ -27,9 +27,9 @@ Usage: scripts/airdroid-adb.sh <command> [args]
   delete <path>          delete a received file and its history entry
   channel <44|6|149|0>   save AWDL channel (0 = auto)
   name <device-name>     save the AirDrop display name
-  enter                  enter AirDrop mode
+  enter                  enter Transfer mode
   exit                   exit to Wi-Fi mode
-  reboot-enter           reboot into AirDrop mode
+  reboot-enter           reboot into Transfer mode
   reboot-exit            reboot into Wi-Fi mode
 EOF
 }
@@ -132,10 +132,10 @@ case "$command" in
     broadcast -a "$PKG.debug.SET_NAME" --es name "$name"
     ;;
   enter)
-    broadcast -a "$PKG.debug.ENTER_AIRDROP"
+    broadcast -a "$PKG.debug.ENTER_TRANSFER"
     ;;
   exit)
-    broadcast -a "$PKG.debug.EXIT_AIRDROP"
+    broadcast -a "$PKG.debug.EXIT_TRANSFER"
     ;;
   reboot-enter)
     broadcast -a "$PKG.debug.REBOOT_ENTER"

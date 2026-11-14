@@ -3,7 +3,7 @@
 # Usage: owly-mode status|enter|exit|reboot-enter|reboot-exit
 
 CON_MODE=/sys/module/wlan/parameters/con_mode
-FLAG=/data/adb/owly-airdrop-mode
+FLAG=/data/adb/owly-transfer-mode
 LOG=/data/local/tmp/owly-mode.log
 
 log() {
@@ -35,7 +35,7 @@ status() {
     else
         echo "mode=station-or-off"
     fi
-    echo "airdrop_flag=$([ -e "$FLAG" ] && echo present || echo absent)"
+    echo "transfer_flag=$([ -e "$FLAG" ] && echo present || echo absent)"
 }
 
 enter_live() {

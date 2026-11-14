@@ -33,8 +33,8 @@ class ControlReceiver : BroadcastReceiver() {
         const val ACTION_CANCEL = "io.moonbase.airdroid.debug.CANCEL"
         const val ACTION_CHANNEL = "io.moonbase.airdroid.debug.CHANNEL"
         const val ACTION_SET_NAME = "io.moonbase.airdroid.debug.SET_NAME"
-        const val ACTION_ENTER_AIRDROP = "io.moonbase.airdroid.debug.ENTER_AIRDROP"
-        const val ACTION_EXIT_AIRDROP = "io.moonbase.airdroid.debug.EXIT_AIRDROP"
+        const val ACTION_ENTER_TRANSFER = "io.moonbase.airdroid.debug.ENTER_TRANSFER"
+        const val ACTION_EXIT_TRANSFER = "io.moonbase.airdroid.debug.EXIT_TRANSFER"
         const val ACTION_REBOOT_ENTER = "io.moonbase.airdroid.debug.REBOOT_ENTER"
         const val ACTION_REBOOT_EXIT = "io.moonbase.airdroid.debug.REBOOT_EXIT"
         const val ACTION_DUMP_LOG = "io.moonbase.airdroid.debug.DUMP_LOG"
@@ -111,10 +111,10 @@ class ControlReceiver : BroadcastReceiver() {
                         controller.saveSettings(s.channel, s.bleArm, name, s.themeMode, s.tintMode)
                         Log.i("AirDroidDebug", "name=$name")
                     }
-                    ACTION_ENTER_AIRDROP -> controller.enterAirDropMode()
-                    ACTION_EXIT_AIRDROP -> controller.exitAirDropMode()
-                    ACTION_REBOOT_ENTER -> controller.enterAirDropMode(reboot = true)
-                    ACTION_REBOOT_EXIT -> controller.exitAirDropMode(reboot = true)
+                    ACTION_ENTER_TRANSFER -> controller.enterTransferMode()
+                    ACTION_EXIT_TRANSFER -> controller.exitTransferMode()
+                    ACTION_REBOOT_ENTER -> controller.enterTransferMode(reboot = true)
+                    ACTION_REBOOT_EXIT -> controller.exitTransferMode(reboot = true)
                     ACTION_DUMP_LOG -> controller.logs.forEach { Log.i("AirDroidLog", it) }
                     ACTION_CLEAR_LOG -> {
                         controller.clearLogs()
