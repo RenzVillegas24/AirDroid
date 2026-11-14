@@ -1330,13 +1330,6 @@ private fun SettingsScreen(controller: DroidyController) {
                             label = if (controller.verifyingKernel) "Checking with root..." else "Verify with root",
                         )
                     }
-                    if (controller.kernel.verifiedBy == "root") {
-                        Text(
-                            text = "Verified from /proc/cmdline and con_mode",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.primary,
-                        )
-                    }
                 }
             }
         }
