@@ -483,9 +483,9 @@ private fun AirDroidFloatingToolbar(
         val indicatorOffset by animateDpAsState(
             targetValue = if (pressed) fingerOffset else itemSize * selectedIndex,
             animationSpec = if (pressed) {
-                tween(durationMillis = 20, easing = LinearEasing)
+                tween(durationMillis = 12, easing = LinearEasing)
             } else {
-                spring(dampingRatio = 0.82f, stiffness = 260f)
+                spring(dampingRatio = 0.9f, stiffness = 650f)
             },
             label = "toolbar selection",
         )
@@ -498,7 +498,7 @@ private fun AirDroidFloatingToolbar(
                 0.dp
             },
             animationSpec = if (pressed) {
-                tween(durationMillis = 20, easing = LinearEasing)
+                tween(durationMillis = 12, easing = LinearEasing)
             } else {
                 spring(dampingRatio = 0.9f, stiffness = 500f)
             },
@@ -506,13 +506,18 @@ private fun AirDroidFloatingToolbar(
         )
         val toolbarScale by animateFloatAsState(
             targetValue = if (pressed) 1.06f else 1f,
-            animationSpec = spring(dampingRatio = 0.72f, stiffness = 280f),
+            animationSpec = spring(dampingRatio = 0.82f, stiffness = 450f),
             label = "toolbar scale",
         )
         val highlightScale by animateFloatAsState(
-            targetValue = if (pressed) 1.08f else 1f,
-            animationSpec = spring(dampingRatio = 0.86f, stiffness = 520f),
+            targetValue = if (pressed) 1.04f else 1f,
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 650f),
             label = "highlight scale",
+        )
+        val highlightWidth by animateDpAsState(
+            targetValue = if (pressed) itemSize + 6.dp else itemSize,
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
+            label = "highlight width",
         )
         val barShiftX by animateDpAsState(
             targetValue = if (pressed) {
@@ -522,7 +527,7 @@ private fun AirDroidFloatingToolbar(
             } else {
                 0.dp
             },
-            animationSpec = spring(dampingRatio = 0.76f, stiffness = 300f),
+            animationSpec = spring(dampingRatio = 0.85f, stiffness = 480f),
             label = "toolbar x",
         )
         val barShiftY by animateDpAsState(
@@ -533,7 +538,7 @@ private fun AirDroidFloatingToolbar(
             } else {
                 0.dp
             },
-            animationSpec = spring(dampingRatio = 0.76f, stiffness = 300f),
+            animationSpec = spring(dampingRatio = 0.85f, stiffness = 480f),
             label = "toolbar y",
         )
         val barRotation by animateFloatAsState(
@@ -542,7 +547,7 @@ private fun AirDroidFloatingToolbar(
             } else {
                 0f
             },
-            animationSpec = spring(dampingRatio = 0.76f, stiffness = 300f),
+            animationSpec = spring(dampingRatio = 0.85f, stiffness = 480f),
             label = "toolbar tilt",
         )
         HorizontalFloatingToolbar(
@@ -599,8 +604,12 @@ private fun AirDroidFloatingToolbar(
             ) {
                 Box(
                     modifier = Modifier
-                        .offset(x = indicatorOffset, y = indicatorYOffset)
-                        .size(itemSize)
+                        .offset(
+                            x = indicatorOffset - (highlightWidth - itemSize) / 2,
+                            y = indicatorYOffset,
+                        )
+                        .width(highlightWidth)
+                        .height(itemSize)
                         .graphicsLayer {
                             scaleX = highlightScale
                             scaleY = highlightScale
