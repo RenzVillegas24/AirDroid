@@ -1,5 +1,6 @@
 package io.moonbase.airdroid
 
+import android.os.Process as AndroidProcess
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.net.Uri
@@ -200,6 +201,7 @@ class AirDroidController(private val context: Context) {
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
+        private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
         private val ASSETS = arrayOf(
             "owly-mode.sh",
             "owly-k20-helper",
@@ -964,6 +966,9 @@ class AirDroidController(private val context: Context) {
                 kernel = updated
                 status = if (updated.monitorReady) "READY" else updated.state.badge
                 append("Kernel check: ${updated.state.badge} · ${updated.detail}")
+                if (updated.state == MonitorState.MONITOR) {
+                    setMonitorOwner(AndroidProcess.myPid())
+                }
                 if (updated.monitorReady && !scanning && !sending && !receiverRunning) {
                     scan()
                 }
@@ -991,6 +996,7 @@ class AirDroidController(private val context: Context) {
             modeSwitching = false
             if (reboot && rc == 0) return@launch
             if (rc == 0) {
+                setMonitorOwner(AndroidProcess.myPid())
                 refreshKernelStatus()
                 append("AirDrop mode: ${kernel.detail}")
                 scan()
@@ -1011,6 +1017,7 @@ class AirDroidController(private val context: Context) {
             modeAction = action
             append("")
             append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving AirDrop mode...")
+            setMonitorOwner(0)
             if (!reboot) {
                 stopSession()
                 scanning = false
@@ -2383,6 +2390,25 @@ class AirDroidController(private val context: Context) {
         return if (separator >= 0) rest.substring(separator + 1) else cacheName
     }
 
+    /** Registers this app process with the kernel monitor watchdog. */
+    private suspend fun setMonitorOwner(pid: Int) {
+        execRoot(
+            label = "monitor owner",
+            command = "echo $pid > $MONITOR_OWNER_PATH",
+            requirePrepared = false,
+        )
+    }
+
+    private fun clearMonitorOwnerBlocking() {
+        try {
+            ProcessBuilder("su", "-c", "echo 0 > $MONITOR_OWNER_PATH")
+                .redirectErrorStream(true)
+                .start()
+                .waitFor(2, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun queryDisplayName(uri: Uri): String? {
         var result: String? = null
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -2417,6 +2443,7 @@ class AirDroidController(private val context: Context) {
     }
 
     fun close() {
+        clearMonitorOwnerBlocking()
         if (AirDroidService.running) {
             runCatching { AirDroidService.stop(context) }
         }
