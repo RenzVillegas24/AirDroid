@@ -22,6 +22,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -468,6 +469,8 @@ private fun AirDroidFloatingToolbar(
         var pressed by remember { mutableStateOf(false) }
         var hoveredIndex by remember { mutableIntStateOf(selectedIndex) }
         var fingerX by remember { mutableFloatStateOf(0f) }
+        var fingerY by remember { mutableFloatStateOf(0f) }
+        var fastDrag by remember { mutableStateOf(false) }
         var dragDelta by remember { mutableStateOf(Offset.Zero) }
         val density = LocalDensity.current
         val fingerOffset = with(density) {
@@ -478,12 +481,27 @@ private fun AirDroidFloatingToolbar(
         }
         val indicatorOffset by animateDpAsState(
             targetValue = if (pressed) fingerOffset else itemSize * selectedIndex,
-            animationSpec = if (pressed) {
-                spring(dampingRatio = 0.95f, stiffness = 1800f)
-            } else {
-                spring(dampingRatio = 0.82f, stiffness = 260f)
+            animationSpec = when {
+                pressed && fastDrag -> snap()
+                pressed -> spring(dampingRatio = 0.95f, stiffness = 1800f)
+                else -> spring(dampingRatio = 0.82f, stiffness = 260f)
             },
             label = "toolbar selection",
+        )
+        val indicatorYOffset by animateDpAsState(
+            targetValue = if (pressed) {
+                with(density) {
+                    ((fingerY.toDp() - itemSize / 2) * 0.12f).coerceIn((-3).dp, 3.dp)
+                }
+            } else {
+                0.dp
+            },
+            animationSpec = if (pressed && fastDrag) {
+                snap()
+            } else {
+                spring(dampingRatio = 0.9f, stiffness = 500f)
+            },
+            label = "toolbar selection y",
         )
         val toolbarScale by animateFloatAsState(
             targetValue = if (pressed) 1.06f else 1f,
@@ -553,6 +571,8 @@ private fun AirDroidFloatingToolbar(
                             (x / itemSize.toPx()).toInt().coerceIn(0, TOOLBAR_TABS.lastIndex)
                         val downPosition = down.position
                         fingerX = down.position.x
+                        fingerY = down.position.y
+                        fastDrag = false
                         dragDelta = Offset.Zero
                         hoveredIndex = indexAt(down.position.x)
                         pressed = true
@@ -564,13 +584,17 @@ private fun AirDroidFloatingToolbar(
                                 released = true
                             } else {
                                 fingerX = change.position.x
+                                fingerY = change.position.y
                                 dragDelta = change.position - downPosition
+                                fastDrag = fastDrag ||
+                                    kotlin.math.abs(dragDelta.x) > itemSize.toPx() * 0.45f
                                 hoveredIndex = indexAt(change.position.x)
                                 released = !change.pressed
                                 change.consume()
                             }
                         }
                         pressed = false
+                        fastDrag = false
                         dragDelta = Offset.Zero
                         onSelected(TOOLBAR_TABS[hoveredIndex])
                     }
@@ -578,7 +602,7 @@ private fun AirDroidFloatingToolbar(
             ) {
                 Box(
                     modifier = Modifier
-                        .offset(x = indicatorOffset)
+                        .offset(x = indicatorOffset, y = indicatorYOffset)
                         .size(itemSize)
                         .graphicsLayer {
                             scaleX = highlightScale
