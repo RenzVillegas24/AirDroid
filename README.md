@@ -36,8 +36,9 @@ scripts/       general monitor/AWDL helpers
 
 ## K20 Pro quick facts
 
-- Exact source: `Evolution-X-Devices/kernel_xiaomi_raphael`, commit
-  `2a67a9737583b2e6158cd8ef2dc026439bd80e4e`
+- Exact source: [Evolution-X-Devices/kernel_xiaomi_raphael](https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael), commit
+  `2a67a9737583b2e6158cd8ef2dc026439bd80e4e`; local checkout at
+  `workspaces/raphael/kernel/`
 - Kernel: `4.14.357-openela-perf`
 - Monitor: boot with `wlan.con_mode=4`; `wlan0` type 803
 - Injection: hidden STA `wlan_inj0` via the ported `ex18a` design
