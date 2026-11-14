@@ -1714,9 +1714,9 @@ private fun KernelBanner(controller: AirDroidController) {
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = if (wifiMode) {
-                        "${kernel.detail} Enter Transfer mode when ready; if the live switch fails, reboot into it."
+                        "${kernel.detail} Tap the ON/OFF button above to switch to Transfer mode."
                     } else {
-                        "${kernel.detail} Verify with root, then enter Transfer mode."
+                        "${kernel.detail} Tap the ON/OFF button above to switch back to Wi-Fi."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = onContainer.copy(alpha = 0.82f),
@@ -1728,18 +1728,6 @@ private fun KernelBanner(controller: AirDroidController) {
                         style = MaterialTheme.typography.labelSmall,
                         color = onContainer.copy(alpha = 0.66f),
                     )
-                }
-                TextButton(
-                    onClick = { controller.enterTransferMode() },
-                    enabled = !controller.modeSwitching,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_wifi_tethering),
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (controller.modeSwitching) "Switching..." else "Enter Transfer mode")
                 }
             }
         }
