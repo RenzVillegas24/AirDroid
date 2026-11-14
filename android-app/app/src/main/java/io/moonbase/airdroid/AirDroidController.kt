@@ -196,7 +196,7 @@ class AirDroidController(private val context: Context) {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
-        private const val AUTO_CHANNEL_DWELL_MS = 2_500L
+        private const val AUTO_CHANNEL_DWELL_MS = 4_000L
         private val AUTO_CHANNELS = intArrayOf(44, 149, 6)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
@@ -585,14 +585,19 @@ class AirDroidController(private val context: Context) {
                     delay(250)
                 }
                 if (peers.isNotEmpty()) {
-                    if (channel != 6) {
-                        lastAutoChannel = channel
-                        prefs.edit().putInt("lastAutoChannel", channel).apply()
+                    val candidate = peers.first().mac
+                    delay(1_200)
+                    if (peers.any { it.mac == candidate }) {
+                        if (channel != 6) {
+                            lastAutoChannel = channel
+                            prefs.edit().putInt("lastAutoChannel", channel).apply()
+                        }
+                        status = "SCANNING"
+                        sendMessage = "${peers.size} person(s) found on channel $channel."
+                        append("Auto channel locked on $channel.")
+                        return
                     }
-                    status = "SCANNING"
-                    sendMessage = "${peers.size} person(s) found on channel $channel."
-                    append("Auto channel locked on $channel.")
-                    return
+                    append("Auto channel $channel peer was transient; continuing.")
                 }
             }
         }
