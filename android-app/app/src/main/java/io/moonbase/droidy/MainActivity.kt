@@ -586,12 +586,14 @@ private fun KernelBanner(controller: DroidyController) {
                     style = MaterialTheme.typography.bodySmall,
                     color = onContainer.copy(alpha = 0.82f),
                 )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Kernel ${kernel.release}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = onContainer.copy(alpha = 0.66f),
-                )
+                if (kernel.state == MonitorState.UNVERIFIED) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Kernel ${kernel.release}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = onContainer.copy(alpha = 0.66f),
+                    )
+                }
                 TextButton(
                     onClick = { controller.enterAirDropMode() },
                     enabled = !controller.modeSwitching,
@@ -1242,12 +1244,14 @@ private fun SettingsScreen(controller: DroidyController) {
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Release ${controller.kernel.release}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.onSurfaceVariant,
-                )
+                if (controller.kernel.state == MonitorState.UNVERIFIED) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Kernel ${controller.kernel.release}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
                 if (!controller.kernel.monitorReady) {
                     Spacer(Modifier.height(10.dp))
                     Button(

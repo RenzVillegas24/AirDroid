@@ -109,21 +109,21 @@ data class KernelStatus(
         if (effectiveMode == 4) {
             return copy(
                 state = MonitorState.MONITOR,
-                detail = "AirDrop mode is active.",
+                detail = "Ready for AirDrop discovery and transfers.",
                 verifiedBy = "root",
             )
         }
         if (effectiveMode == 0) {
             return copy(
                 state = MonitorState.STOCK,
-                detail = "Wi-Fi mode is active.",
+                detail = "Normal Wi-Fi connectivity is available.",
                 verifiedBy = "root",
             )
         }
         if (cmdline.isNotBlank() || conMode != null) {
             return copy(
                 state = MonitorState.STOCK,
-                detail = "Wi-Fi mode is active.",
+                detail = "Normal Wi-Fi connectivity is available.",
                 verifiedBy = "root",
             )
         }
@@ -168,7 +168,7 @@ data class KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.STOCK,
-                    detail = "Wi-Fi mode is active.",
+                    detail = "Normal Wi-Fi connectivity is available.",
                 )
                 else -> KernelStatus(
                     release = release,
