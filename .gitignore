@@ -29,3 +29,7 @@ android-app/.gradle/
 android-app/.kotlin/
 android-app/app/build/
 android-app/local.properties
+
+# Signing material
+*.jks
+*.keystore

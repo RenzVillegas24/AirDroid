@@ -44,7 +44,8 @@ scripts/build-app.sh release
   builds the APK.
 - Do not commit helper binaries or `android-app/assets/`.
 - On ARM64 hosts, pass `AAPT2_OVERRIDE="$HOME/Android/Sdk/aapt2-qemu/aapt2"`.
-- Release APKs are unsigned; signing is manual.
+- Release APKs are unsigned by default; sign with `scripts/sign-release.sh`
+  and a private keystore. Never commit keystores or passwords.
 - Kernel building, boot-image packing, and flashing are **not automated**.
   Keep that workflow on the investigation branches.
 - The kernel source is pinned in `kernel/`; do not add boot images or flashing
