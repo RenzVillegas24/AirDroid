@@ -4,15 +4,15 @@ The release app exposes a local debug receiver while the controller/service is
 running. It is protected by `android.permission.DUMP`, which the adb shell user
 holds; normal apps cannot call it.
 
-All app and helper output is mirrored to logcat under `DroidyLog`, with
-millisecond timestamps. Controller state is under `DroidyDebug`.
+All app and helper output is mirrored to logcat under `AirDroidLog`, with
+millisecond timestamps. Controller state is under `AirDroidDebug`.
 
 ## Commands
 
 ```bash
-scripts/droidy-adb.sh status
-scripts/droidy-adb.sh log
-scripts/droidy-adb.sh follow
+scripts/airdroid-adb.sh status
+scripts/airdroid-adb.sh log
+scripts/airdroid-adb.sh follow
 ```
 
 `status` prints scanning/receiver state, peers, active transfers, and the
@@ -20,31 +20,31 @@ current incoming request. `log` dumps the timestamped buffer; `follow` streams
 it live.
 
 ```bash
-scripts/droidy-adb.sh scan
-scripts/droidy-adb.sh stop
-scripts/droidy-adb.sh accept
-scripts/droidy-adb.sh decline
-scripts/droidy-adb.sh history
+scripts/airdroid-adb.sh scan
+scripts/airdroid-adb.sh stop
+scripts/airdroid-adb.sh accept
+scripts/airdroid-adb.sh decline
+scripts/airdroid-adb.sh history
 ```
 
 ```bash
-scripts/droidy-adb.sh send /sdcard/Download/example.bin <redacted-mac>
-scripts/droidy-adb.sh send-text "hello" <redacted-mac>
-scripts/droidy-adb.sh cancel <transfer-id>
-scripts/droidy-adb.sh pin <redacted-mac>
-scripts/droidy-adb.sh delete /sdcard/Download/Droidy/example.jpg
+scripts/airdroid-adb.sh send /sdcard/Download/example.bin <redacted-mac>
+scripts/airdroid-adb.sh send-text "hello" <redacted-mac>
+scripts/airdroid-adb.sh cancel <transfer-id>
+scripts/airdroid-adb.sh pin <redacted-mac>
+scripts/airdroid-adb.sh delete /sdcard/Download/AirDroid/example.jpg
 ```
 
 The peer MAC is optional when a peer is already selected. It is read at
 runtime; do not commit real device identifiers.
 
 ```bash
-scripts/droidy-adb.sh channel 6
-scripts/droidy-adb.sh name "Droidy K20"
-scripts/droidy-adb.sh enter
-scripts/droidy-adb.sh exit
-scripts/droidy-adb.sh reboot-enter
-scripts/droidy-adb.sh reboot-exit
+scripts/airdroid-adb.sh channel 6
+scripts/airdroid-adb.sh name "AirDroid K20"
+scripts/airdroid-adb.sh enter
+scripts/airdroid-adb.sh exit
+scripts/airdroid-adb.sh reboot-enter
+scripts/airdroid-adb.sh reboot-exit
 ```
 
 `channel` saves the fixed monitor channel (`0` = auto) and drops the live
@@ -56,11 +56,11 @@ name.
 Every action can also be sent directly:
 
 ```bash
-adb shell am broadcast -n io.moonbase.droidy/.ControlReceiver \
-  -a io.moonbase.droidy.debug.STATUS
-adb shell am broadcast -n io.moonbase.droidy/.ControlReceiver \
-  -a io.moonbase.droidy.debug.SEND --es path /sdcard/Download/example.bin
-adb logcat -d -s DroidyLog:D '*:S'
+adb shell am broadcast -n io.moonbase.airdroid/.ControlReceiver \
+  -a io.moonbase.airdroid.debug.STATUS
+adb shell am broadcast -n io.moonbase.airdroid/.ControlReceiver \
+  -a io.moonbase.airdroid.debug.SEND --es path /sdcard/Download/example.bin
+adb logcat -d -s AirDroidLog:D '*:S'
 ```
 
 ## Notes

@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -24,11 +24,11 @@ import kotlinx.coroutines.launch
  * The notification is deliberately quiet and is not a discovery/readiness
  * event; it is the platform-required foreground-service indicator.
  */
-class DroidyService : Service() {
+class AirDroidService : Service() {
     companion object {
-        const val ACTION_START = "io.moonbase.droidy.service.START"
-        const val ACTION_STOP = "io.moonbase.droidy.service.STOP"
-        private const val CHANNEL_ID = "droidy_background"
+        const val ACTION_START = "io.moonbase.airdroid.service.START"
+        const val ACTION_STOP = "io.moonbase.airdroid.service.STOP"
+        private const val CHANNEL_ID = "airdroid_background"
         private const val NOTIFICATION_ID = 4099
         private const val STOP_REQUEST = 4099
 
@@ -37,12 +37,12 @@ class DroidyService : Service() {
             private set
 
         fun start(context: Context) {
-            val intent = Intent(context, DroidyService::class.java).setAction(ACTION_START)
+            val intent = Intent(context, AirDroidService::class.java).setAction(ACTION_START)
             ContextCompat.startForegroundService(context, intent)
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, DroidyService::class.java))
+            context.stopService(Intent(context, AirDroidService::class.java))
         }
     }
 
@@ -52,9 +52,9 @@ class DroidyService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
-        if (DroidyControllerHolder.current == null) {
+        if (AirDroidControllerHolder.current == null) {
             ownsController = true
-            DroidyControllerHolder.current = DroidyController(applicationContext).also {
+            AirDroidControllerHolder.current = AirDroidController(applicationContext).also {
                 it.verifyKernelWithRoot()
             }
         }
@@ -64,7 +64,7 @@ class DroidyService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            val controller = DroidyControllerHolder.current
+            val controller = AirDroidControllerHolder.current
             serviceScope.launch {
                 controller?.stopScanning()
                 stopForeground(true)
@@ -79,10 +79,10 @@ class DroidyService : Service() {
         running = false
         serviceScope.cancel()
         if (ownsController) {
-            val controller = DroidyControllerHolder.current
+            val controller = AirDroidControllerHolder.current
             if (controller != null) {
                 controller.close()
-                DroidyControllerHolder.current = null
+                AirDroidControllerHolder.current = null
             }
         }
         super.onDestroy()
@@ -117,7 +117,7 @@ class DroidyService : Service() {
         val stop = PendingIntent.getService(
             this,
             STOP_REQUEST,
-            Intent(this, DroidyService::class.java).setAction(ACTION_STOP),
+            Intent(this, AirDroidService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = if (Build.VERSION.SDK_INT >= 26) {
@@ -127,7 +127,7 @@ class DroidyService : Service() {
         }
         return builder
             .setSmallIcon(R.drawable.ic_download)
-            .setContentTitle("Droidy is listening")
+            .setContentTitle("AirDroid is listening")
             .setContentText("Background AirDrop receiver is active")
             .setContentIntent(content)
             .setCategory(Notification.CATEGORY_SERVICE)

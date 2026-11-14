@@ -6,8 +6,8 @@ Release builds are unsigned by default. Use a private keystore; never commit it.
 
 ```bash
 keytool -genkeypair -v \
-  -keystore "$HOME/.android/droidy-release.jks" \
-  -alias droidy \
+  -keystore "$HOME/.android/airdroid-release.jks" \
+  -alias airdroid \
   -keyalg RSA \
   -keysize 4096 \
   -validity 10000 \
@@ -41,10 +41,10 @@ scripts/sign-release.sh
 Or non-interactive via environment variables:
 
 ```bash
-export DROIDY_KEYSTORE="$HOME/.android/droidy-release.jks"
-export DROIDY_KEY_ALIAS=droidy
-export DROIDY_KEYSTORE_PASSWORD='...'
-export DROIDY_KEY_PASSWORD='...'
+export AIRDROID_KEYSTORE="$HOME/.android/airdroid-release.jks"
+export AIRDROID_KEY_ALIAS=airdroid
+export AIRDROID_KEYSTORE_PASSWORD='...'
+export AIRDROID_KEY_PASSWORD='...'
 
 scripts/sign-release.sh
 ```

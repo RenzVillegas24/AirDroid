@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.Manifest
 import android.app.Activity
@@ -43,9 +43,9 @@ class MainActivity : Activity() {
             "owly-k20-helper",
         )
         private const val APP_TMP = "/data/local/tmp/owly-app"
-        private const val RECEIVE_DIR = "/sdcard/Download/Droidy"
+        private const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         private const val PICK_FILE = 4101
-        private const val PREFS = "droidy"
+        private const val PREFS = "airdroid"
 
         private val PRIMARY = Color.rgb(0x67, 0x50, 0xA4)
         private val ON_PRIMARY = Color.WHITE
@@ -97,7 +97,7 @@ class MainActivity : Activity() {
     private var currentTab = Tab.SEND
     private var channel = 44
     private var bleArm = 0
-    private var deviceName = "Droidy K20"
+    private var deviceName = "AirDroid K20"
     private var scanning = false
     private var sending = false
     @Volatile private var receiverRunning = false
@@ -108,7 +108,7 @@ class MainActivity : Activity() {
         prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         channel = prefs.getInt("channel", 44)
         bleArm = prefs.getInt("bleArm", 0)
-        deviceName = prefs.getString("deviceName", "Droidy K20") ?: "Droidy K20"
+        deviceName = prefs.getString("deviceName", "AirDroid K20") ?: "AirDroid K20"
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -159,7 +159,7 @@ class MainActivity : Activity() {
         logFile = File(filesDir, "owly-radio.log")
         ble = BleAdvertiser(this)
 
-        append("Droidy K20\n")
+        append("AirDroid K20\n")
         append("AirDrop over AWDL · experience mode\n")
         append("Debug log: ${logFile.absolutePath}\n")
         showTab(Tab.SEND)
@@ -178,7 +178,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        titles.addView(text("Droidy", 32f, ON_SURFACE, Typeface.BOLD))
+        titles.addView(text("AirDroid", 32f, ON_SURFACE, Typeface.BOLD))
         titles.addView(text("AirDrop · over AWDL", 13f, ON_SURFACE_VARIANT, Typeface.NORMAL).apply {
             setPadding(0, dp(2), 0, 0)
         })
@@ -400,7 +400,7 @@ class MainActivity : Activity() {
         }
         identity.addView(deviceNameInput)
         identity.addView(actionButton("Save settings", Style.FILLED) {
-            deviceName = deviceNameInput.text.toString().ifBlank { "Droidy K20" }
+            deviceName = deviceNameInput.text.toString().ifBlank { "AirDroid K20" }
             prefs.edit().putInt("channel", channel).putInt("bleArm", bleArm)
                 .putString("deviceName", deviceName).apply()
             sendStatus.text = "Settings saved."
@@ -411,13 +411,13 @@ class MainActivity : Activity() {
         col.addView(sectionLabel("RECEIVER"))
         val receiver = card(TERTIARY_CONTAINER, ON_TERTIARY_CONTAINER)
         receiver.addView(text("Incoming storage", 21f, ON_TERTIARY_CONTAINER, Typeface.BOLD))
-        receiver.addView(text("$RECEIVE_DIR\nPort 8771 · mDNS service droidy-k20", 13f, ON_TERTIARY_CONTAINER, Typeface.NORMAL)
+        receiver.addView(text("$RECEIVE_DIR\nPort 8771 · mDNS service airdroid-k20", 13f, ON_TERTIARY_CONTAINER, Typeface.NORMAL)
             .apply { setPadding(0, dp(6), 0, dp(8)) })
         col.addView(receiver)
 
         col.addView(sectionLabel("ABOUT"))
         val about = card(SURFACE_VARIANT, ON_SURFACE)
-        about.addView(text("Droidy K20", 21f, ON_SURFACE, Typeface.BOLD))
+        about.addView(text("AirDroid K20", 21f, ON_SURFACE, Typeface.BOLD))
         about.addView(text("AirDrop over AWDL · internal WCN3990 radio\nSender and receiver UI", 13f, ON_SURFACE_VARIANT, Typeface.NORMAL)
             .apply { setPadding(0, dp(6), 0, 0) })
         col.addView(about)
@@ -801,7 +801,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun helperName(): String = deviceName.replace("'", "").ifBlank { "Droidy K20" }
+    private fun helperName(): String = deviceName.replace("'", "").ifBlank { "AirDroid K20" }
 
     private fun helperCommand(arguments: String): String =
         "pkill -x owly-k20-helper 2>/dev/null; sleep 1; $APP_TMP/owly-k20-helper $arguments"

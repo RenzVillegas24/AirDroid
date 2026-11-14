@@ -1,4 +1,4 @@
-# Droidy
+# AirDroid
 
 AirDrop over AWDL for the Redmi K20 Pro / Mi 9T Pro (`raphael`, WCN3990),
 built as a Jetpack Compose Android app with a Rust radio/AirDrop helper.
@@ -49,8 +49,8 @@ scope.
 - Foreground incoming-request dialog and background Accept/Decline
   notification.
 - Foreground service keeps the receiver/controller alive while backgrounded.
-- ADB control/log interface (`scripts/droidy-adb.sh`, `DroidyLog`,
-  `DroidyDebug`).
+- ADB control/log interface (`scripts/airdroid-adb.sh`, `AirDroidLog`,
+  `AirDroidDebug`).
 - Open/Share uses the received directory directly; no cache copy.
 
 Full bring-up logs, monitor/injection tools, captures, and boot-image
@@ -67,8 +67,8 @@ experiments/investigation-tools
 ```text
 android-app/       Android app and Rust helper source
 kernel/            Evolution-X kernel_xiaomi_raphael fork (git submodule)
-third_party/owly/  Droidy Owly fork with K20 radio fixes (git submodule)
-scripts/           build-app.sh and droidy-adb.sh
+third_party/owly/  AirDroid Owly fork with K20 radio fixes (git submodule)
+scripts/           build-app.sh and airdroid-adb.sh
 docs/              setup and ADB debugging instructions
 ```
 
@@ -93,8 +93,8 @@ Prerequisites:
 - `git`
 
 ```bash
-git clone https://github.com/RenzVillegas24/droidy.git
-cd droidy
+git clone https://github.com/RenzVillegas24/AirDroid.git
+cd airdroid
 git submodule update --init third_party/owly
 scripts/build-app.sh debug
 ```
@@ -123,7 +123,7 @@ See [docs/SETUP.md](docs/SETUP.md) for device setup and
 
 - Upstream base:
   [Evolution-X-Devices/kernel_xiaomi_raphael](https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael)
-- Droidy fork:
+- AirDroid fork:
   [RenzVillegas24/kernel_xiaomi_raphael](https://github.com/RenzVillegas24/kernel_xiaomi_raphael),
   branch `owly-k20`
 - Submodule: `kernel/`

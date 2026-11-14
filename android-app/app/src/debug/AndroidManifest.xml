@@ -5,7 +5,7 @@
             android:name=".DebugReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="io.moonbase.droidy.DEBUG" />
+                <action android:name="io.moonbase.airdroid.DEBUG" />
             </intent-filter>
         </receiver>
     </application>

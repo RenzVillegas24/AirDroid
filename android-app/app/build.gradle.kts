@@ -5,12 +5,12 @@ plugins {
 }
 
 android {
-    namespace = "io.moonbase.droidy"
+    namespace = "io.moonbase.airdroid"
     compileSdk = 36
     buildToolsVersion = "35.0.1"
 
     defaultConfig {
-        applicationId = "io.moonbase.droidy"
+        applicationId = "io.moonbase.airdroid"
         minSdk = 23
         targetSdk = 36
         versionCode = 8

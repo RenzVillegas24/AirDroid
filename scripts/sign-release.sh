@@ -14,8 +14,8 @@ if [[ ! -f "$UNSIGNED" ]]; then
   exit 1
 fi
 
-KEYSTORE="${DROIDY_KEYSTORE:-}"
-ALIAS="${DROIDY_KEY_ALIAS:-droidy}"
+KEYSTORE="${AIRDROID_KEYSTORE:-}"
+ALIAS="${AIRDROID_KEY_ALIAS:-airdroid}"
 
 if [[ -z "$KEYSTORE" ]]; then
   read -r -p "Release keystore path: " KEYSTORE
@@ -25,16 +25,16 @@ if [[ ! -f "$KEYSTORE" ]]; then
   exit 1
 fi
 
-if [[ -z "${DROIDY_KEYSTORE_PASSWORD:-}" ]]; then
-  read -r -s -p "Keystore password: " DROIDY_KEYSTORE_PASSWORD
+if [[ -z "${AIRDROID_KEYSTORE_PASSWORD:-}" ]]; then
+  read -r -s -p "Keystore password: " AIRDROID_KEYSTORE_PASSWORD
   echo
 fi
-if [[ -z "${DROIDY_KEY_PASSWORD:-}" ]]; then
-  read -r -s -p "Key password (blank = same as keystore): " DROIDY_KEY_PASSWORD
+if [[ -z "${AIRDROID_KEY_PASSWORD:-}" ]]; then
+  read -r -s -p "Key password (blank = same as keystore): " AIRDROID_KEY_PASSWORD
   echo
-  DROIDY_KEY_PASSWORD="${DROIDY_KEY_PASSWORD:-$DROIDY_KEYSTORE_PASSWORD}"
+  AIRDROID_KEY_PASSWORD="${AIRDROID_KEY_PASSWORD:-$AIRDROID_KEYSTORE_PASSWORD}"
 fi
-export DROIDY_KEYSTORE_PASSWORD DROIDY_KEY_PASSWORD
+export AIRDROID_KEYSTORE_PASSWORD AIRDROID_KEY_PASSWORD
 
 ZIPALIGN="${ZIPALIGN:-$(command -v zipalign || true)}"
 APKSIGNER="${APKSIGNER:-$(command -v apksigner || true)}"
@@ -56,15 +56,15 @@ if [[ ! -x "$ZIPALIGN" || ! -x "$APKSIGNER" ]]; then
   exit 1
 fi
 
-ALIGNED="$(mktemp "${TMPDIR:-/tmp}/droidy-aligned.XXXXXX.apk")"
+ALIGNED="$(mktemp "${TMPDIR:-/tmp}/airdroid-aligned.XXXXXX.apk")"
 trap 'rm -f "$ALIGNED"' EXIT
 
 "$ZIPALIGN" -p -f 4 "$UNSIGNED" "$ALIGNED"
 "$APKSIGNER" sign \
   --ks "$KEYSTORE" \
   --ks-key-alias "$ALIAS" \
-  --ks-pass env:DROIDY_KEYSTORE_PASSWORD \
-  --key-pass env:DROIDY_KEY_PASSWORD \
+  --ks-pass env:AIRDROID_KEYSTORE_PASSWORD \
+  --key-pass env:AIRDROID_KEY_PASSWORD \
   --out "$OUTPUT" \
   "$ALIGNED"
 

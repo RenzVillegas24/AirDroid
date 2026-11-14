@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.Manifest
 import android.content.Context
@@ -119,12 +119,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
-    private lateinit var controller: DroidyController
+    private lateinit var controller: AirDroidController
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        controller = DroidyControllerHolder.current
-            ?: DroidyController(applicationContext).also { DroidyControllerHolder.current = it }
+        controller = AirDroidControllerHolder.current
+            ?: AirDroidController(applicationContext).also { AirDroidControllerHolder.current = it }
         handleNotificationIntent(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
@@ -138,7 +138,7 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             val context = LocalContext.current
-            DroidyTheme(
+            AirDroidTheme(
                 themeMode = controller.settings.themeMode,
                 tintMode = controller.settings.tintMode,
             ) {
@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity() {
                     }
                     if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
                 }
-                DroidyApp(controller = controller, scope = scope)
+                AirDroidApp(controller = controller, scope = scope)
             }
         }
     }
@@ -188,9 +188,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         // While the foreground service is running it owns the controller, so
         // closing it here would stop the background receiver.
-        if (DroidyService.running) return
-        if (DroidyControllerHolder.current === controller) {
-            DroidyControllerHolder.current = null
+        if (AirDroidService.running) return
+        if (AirDroidControllerHolder.current === controller) {
+            AirDroidControllerHolder.current = null
         }
         controller.close()
     }
@@ -202,27 +202,27 @@ class MainActivity : ComponentActivity() {
      */
     private fun handleNotificationIntent(intent: Intent?) {
         if (intent == null) return
-        val cancelId = intent.getStringExtra(DroidyNotifications.EXTRA_CANCEL_TRANSFER)
+        val cancelId = intent.getStringExtra(AirDroidNotifications.EXTRA_CANCEL_TRANSFER)
         if (cancelId != null) {
             controller.cancelTransfer(cancelId)
-            intent.removeExtra(DroidyNotifications.EXTRA_CANCEL_TRANSFER)
+            intent.removeExtra(AirDroidNotifications.EXTRA_CANCEL_TRANSFER)
         }
-        val requestId = intent.getLongExtra(DroidyNotifications.EXTRA_REQUEST_ID, -1L)
+        val requestId = intent.getLongExtra(AirDroidNotifications.EXTRA_REQUEST_ID, -1L)
         if (requestId >= 0) {
-            val accept = intent.getBooleanExtra(DroidyNotifications.EXTRA_REQUEST_ACCEPT, false)
+            val accept = intent.getBooleanExtra(AirDroidNotifications.EXTRA_REQUEST_ACCEPT, false)
             controller.resolveIncomingFromNotification(requestId, accept)
-            intent.removeExtra(DroidyNotifications.EXTRA_REQUEST_ID)
-            intent.removeExtra(DroidyNotifications.EXTRA_REQUEST_ACCEPT)
+            intent.removeExtra(AirDroidNotifications.EXTRA_REQUEST_ID)
+            intent.removeExtra(AirDroidNotifications.EXTRA_REQUEST_ACCEPT)
         }
     }
 }
 
-private enum class DroidyTab(
+private enum class AirDroidTab(
     val label: String,
     val subtitle: String,
     @DrawableRes val icon: Int,
 ) {
-    HOME("Droidy", "Nearby AirDrop and received files", R.drawable.ic_sensors),
+    HOME("AirDroid", "Nearby AirDrop and received files", R.drawable.ic_sensors),
     LOGS("Logs", "Live radio and session output", R.drawable.ic_receipt_long),
     SETTINGS("Settings", "Radio, appearance, and receiver identity", R.drawable.ic_settings),
 }
@@ -244,8 +244,8 @@ private enum class HomeTab(val label: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
-    var tab by remember { mutableStateOf(DroidyTab.HOME) }
+private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
+    var tab by remember { mutableStateOf(AirDroidTab.HOME) }
     val topAppBarState = rememberTopAppBarState()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
     LaunchedEffect(tab) {
@@ -261,7 +261,7 @@ private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = { DroidyTopBar(tab, controller, scope, scrollBehavior) },
+            topBar = { AirDroidTopBar(tab, controller, scope, scrollBehavior) },
         ) { innerPadding ->
             Box(
                 modifier = Modifier
@@ -270,13 +270,13 @@ private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
                     .padding(innerPadding),
             ) {
                 when (tab) {
-                    DroidyTab.HOME -> HomeScreen(controller, scope)
-                    DroidyTab.LOGS -> LogsScreen(controller)
-                    DroidyTab.SETTINGS -> SettingsScreen(controller)
+                    AirDroidTab.HOME -> HomeScreen(controller, scope)
+                    AirDroidTab.LOGS -> LogsScreen(controller)
+                    AirDroidTab.SETTINGS -> SettingsScreen(controller)
                 }
             }
         }
-        DroidyFloatingToolbar(
+        AirDroidFloatingToolbar(
             selected = tab,
             onSelected = { tab = it },
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -287,9 +287,9 @@ private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DroidyTopBar(
-    tab: DroidyTab,
-    controller: DroidyController,
+private fun AirDroidTopBar(
+    tab: AirDroidTab,
+    controller: AirDroidController,
     scope: CoroutineScope,
     scrollBehavior: TopAppBarScrollBehavior,
 ) {
@@ -344,7 +344,7 @@ private fun DroidyTopBar(
                 )
             }
             when (tab) {
-                DroidyTab.HOME -> {
+                AirDroidTab.HOME -> {
                     FilledTonalButton(
                         onClick = {
                             scope.launch {
@@ -370,7 +370,7 @@ private fun DroidyTopBar(
                         Text(if (controller.scanning) "Stop" else "Scan")
                     }
                 }
-                DroidyTab.LOGS -> {
+                AirDroidTab.LOGS -> {
                     TextButton(onClick = { controller.clearLogs() }) {
                         Icon(
                             painter = painterResource(R.drawable.ic_delete),
@@ -381,7 +381,7 @@ private fun DroidyTopBar(
                         Text("Clear")
                     }
                 }
-                DroidyTab.SETTINGS -> Unit
+                AirDroidTab.SETTINGS -> Unit
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -390,9 +390,9 @@ private fun DroidyTopBar(
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun DroidyFloatingToolbar(
-    selected: DroidyTab,
-    onSelected: (DroidyTab) -> Unit,
+private fun AirDroidFloatingToolbar(
+    selected: AirDroidTab,
+    onSelected: (AirDroidTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -409,7 +409,7 @@ private fun DroidyFloatingToolbar(
             expandedShadowElevation = 6.dp,
             collapsedShadowElevation = 3.dp,
         ) {
-            DroidyTab.entries.forEach { tab ->
+            AirDroidTab.entries.forEach { tab ->
                 val isSelected = selected == tab
                 IconButton(
                     onClick = { onSelected(tab) },
@@ -442,7 +442,7 @@ private fun DroidyFloatingToolbar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(controller: DroidyController, scope: CoroutineScope) {
+private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var sheetPeer by remember { mutableStateOf<Peer?>(null) }
@@ -921,7 +921,7 @@ private fun formatClock(timestamp: Long): String =
     SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
 
 @Composable
-private fun IncomingRequestDialog(controller: DroidyController) {
+private fun IncomingRequestDialog(controller: AirDroidController) {
     val request = controller.incomingRequest ?: return
     val colors = MaterialTheme.colorScheme
     AlertDialog(
@@ -1090,7 +1090,7 @@ private suspend fun shareReceivedFile(context: Context, path: String) {
 }
 
 /**
- * FileProvider exposes both the app cache and Download/Droidy, so received
+ * FileProvider exposes both the app cache and Download/AirDroid, so received
  * files can be opened or shared without copying them first.
  */
 private fun shareableUri(context: Context, path: String): Uri? {
@@ -1134,7 +1134,7 @@ private fun zipDocumentTree(context: Context, treeUri: Uri): File? {
 }
 
 @Composable
-private fun SendScreen(controller: DroidyController, scope: CoroutineScope) {
+private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch { controller.pickFile(uri) }
     }
@@ -1321,7 +1321,7 @@ private fun PeerCard(peer: Peer, selected: Boolean, pinned: Boolean = false, onC
 }
 
 @Composable
-private fun KernelBanner(controller: DroidyController) {
+private fun KernelBanner(controller: AirDroidController) {
     val kernel = controller.kernel
     if (kernel.monitorReady) return
     val colors = MaterialTheme.colorScheme
@@ -1395,7 +1395,7 @@ private fun KernelBanner(controller: DroidyController) {
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun SendCard(
-    controller: DroidyController,
+    controller: AirDroidController,
     onChooseFile: () -> Unit,
     onSend: () -> Unit,
     onCancelSend: () -> Unit,
@@ -1570,7 +1570,7 @@ private fun SendCard(
 }
 
 @Composable
-private fun LogsScreen(controller: DroidyController) {
+private fun LogsScreen(controller: AirDroidController) {
     val colors = MaterialTheme.colorScheme
     val listState = rememberLazyListState()
     LaunchedEffect(controller.logs.size) {
@@ -1598,7 +1598,7 @@ private fun LogsScreen(controller: DroidyController) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsScreen(controller: DroidyController) {
+private fun SettingsScreen(controller: AirDroidController) {
     val colors = MaterialTheme.colorScheme
     val uriHandler = LocalUriHandler.current
     var channel by remember { mutableIntStateOf(controller.settings.channel) }
@@ -1852,9 +1852,9 @@ private fun SettingsScreen(controller: DroidyController) {
                         )
                         Text(
                             text = if (Build.VERSION.SDK_INT >= 31) {
-                                "Droidy palette or Android dynamic color"
+                                "AirDroid palette or Android dynamic color"
                             } else {
-                                "Droidy palette; system tint needs Android 12+"
+                                "AirDroid palette; system tint needs Android 12+"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant,
@@ -1886,7 +1886,7 @@ private fun SettingsScreen(controller: DroidyController) {
             ) {
                 ListItem(
                     headlineContent = { Text("Incoming storage") },
-                    supportingContent = { Text(DroidyController.RECEIVE_DIR) },
+                    supportingContent = { Text(AirDroidController.RECEIVE_DIR) },
                     leadingContent = {
                         Icon(
                             painter = painterResource(R.drawable.ic_folder),
@@ -2005,7 +2005,7 @@ private fun SettingsScreen(controller: DroidyController) {
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text(
-                        text = "Droidy",
+                        text = "AirDroid",
                         style = MaterialTheme.typography.titleLarge,
                         color = colors.onSurface,
                     )
@@ -2041,16 +2041,16 @@ private fun SettingsScreen(controller: DroidyController) {
                         color = colors.onSurfaceVariant,
                     )
                     Text(
-                        text = "RenzVillegas24/droidy",
+                        text = "RenzVillegas24/AirDroid",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.primary,
                         textDecoration = TextDecoration.Underline,
                         modifier = Modifier.clickable {
-                            uriHandler.openUri("https://github.com/RenzVillegas24/droidy")
+                            uriHandler.openUri("https://github.com/RenzVillegas24/AirDroid")
                         },
                     )
                     Text(
-                        text = "github.com/RenzVillegas24/droidy",
+                        text = "github.com/RenzVillegas24/AirDroid",
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.onSurfaceVariant,
                     )

@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.content.BroadcastReceiver
 import android.content.Context

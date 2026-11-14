@@ -6,8 +6,8 @@ bring-up history and boot-image tooling live on the investigation branches.
 ## 1. Clone and submodules
 
 ```bash
-git clone https://github.com/RenzVillegas24/droidy.git
-cd droidy
+git clone https://github.com/RenzVillegas24/AirDroid.git
+cd airdroid
 git submodule update --init third_party/owly
 ```
 
@@ -46,7 +46,7 @@ path is committed in `gradle.properties`.
 
 ```bash
 adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.moonbase.droidy/.MainActivity
+adb shell am start -n io.moonbase.airdroid/.MainActivity
 ```
 
 Grant KernelSU root when the first radio action asks for it.
@@ -59,7 +59,7 @@ The running kernel must support:
 - the hidden injection STA (`wlan_inj0`)
 - the monitor TX path used by Owly
 
-The Droidy kernel fork is pinned in `kernel/`:
+The AirDroid kernel fork is pinned in `kernel/`:
 
 ```text
 RenzVillegas24/kernel_xiaomi_raphael
@@ -116,15 +116,15 @@ Settings -> Radio mode -> Exit AirDrop mode
 ## 6. ADB control and logs
 
 ```bash
-scripts/droidy-adb.sh status
-scripts/droidy-adb.sh log
-scripts/droidy-adb.sh follow
+scripts/airdroid-adb.sh status
+scripts/airdroid-adb.sh log
+scripts/airdroid-adb.sh follow
 ```
 
 All app/helper output is mirrored to logcat:
 
 ```bash
-adb logcat -d -s DroidyLog:D '*:S'
+adb logcat -d -s AirDroidLog:D '*:S'
 ```
 
 See [ADB-DEBUG.md](raphael/ADB-DEBUG.md) for the full command set.

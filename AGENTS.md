@@ -25,7 +25,7 @@ production app or build.
 android-app/       Kotlin app + Rust helper
 kernel/            pinned Evolution-X kernel fork submodule
 third_party/owly/  pinned Owly fork submodule
-scripts/           build-app.sh, droidy-adb.sh
+scripts/           build-app.sh, airdroid-adb.sh
 docs/              SETUP.md, ADB-DEBUG.md, BASE-IMPROVEMENT.md
 ```
 
@@ -56,46 +56,46 @@ scripts/build-app.sh release
 Use the app control receiver, not screenshots, for routine debugging.
 
 ```bash
-scripts/droidy-adb.sh status
-scripts/droidy-adb.sh history
-scripts/droidy-adb.sh log
-scripts/droidy-adb.sh follow
+scripts/airdroid-adb.sh status
+scripts/airdroid-adb.sh history
+scripts/airdroid-adb.sh log
+scripts/airdroid-adb.sh follow
 ```
 
 Control commands:
 
 ```bash
-scripts/droidy-adb.sh scan
-scripts/droidy-adb.sh stop
-scripts/droidy-adb.sh accept
-scripts/droidy-adb.sh decline
-scripts/droidy-adb.sh send /sdcard/Download/file.bin <redacted-mac>
-scripts/droidy-adb.sh send-text "hello" <redacted-mac>
-scripts/droidy-adb.sh cancel <transfer-id>
-scripts/droidy-adb.sh pin <redacted-mac>
-scripts/droidy-adb.sh delete /sdcard/Download/Droidy/file
-scripts/droidy-adb.sh channel 6
-scripts/droidy-adb.sh name "Droidy K20"
-scripts/droidy-adb.sh enter
-scripts/droidy-adb.sh exit
+scripts/airdroid-adb.sh scan
+scripts/airdroid-adb.sh stop
+scripts/airdroid-adb.sh accept
+scripts/airdroid-adb.sh decline
+scripts/airdroid-adb.sh send /sdcard/Download/file.bin <redacted-mac>
+scripts/airdroid-adb.sh send-text "hello" <redacted-mac>
+scripts/airdroid-adb.sh cancel <transfer-id>
+scripts/airdroid-adb.sh pin <redacted-mac>
+scripts/airdroid-adb.sh delete /sdcard/Download/AirDroid/file
+scripts/airdroid-adb.sh channel 6
+scripts/airdroid-adb.sh name "AirDroid K20"
+scripts/airdroid-adb.sh enter
+scripts/airdroid-adb.sh exit
 ```
 
 Implementation details:
 
-- Receiver: `io.moonbase.droidy/.ControlReceiver`
+- Receiver: `io.moonbase.airdroid/.ControlReceiver`
 - Protection: `android.permission.DUMP` (adb shell has it)
 - It only works while the app process/controller is alive; the foreground
   service keeps it alive in AirDrop mode.
 - Logs are mirrored to logcat:
 
 ```bash
-adb logcat -d -s DroidyLog:D '*:S'
-adb logcat -d -s DroidyDebug:D '*:S'
+adb logcat -d -s AirDroidLog:D '*:S'
+adb logcat -d -s AirDroidDebug:D '*:S'
 ```
 
-- `DroidyLog` contains timestamped app/helper output.
-- `DroidyDebug` contains status, peers, active transfers, history, and errors.
-- Use `scripts/droidy-adb.sh log` or `follow` instead of screencap whenever
+- `AirDroidLog` contains timestamped app/helper output.
+- `AirDroidDebug` contains status, peers, active transfers, history, and errors.
+- Use `scripts/airdroid-adb.sh log` or `follow` instead of screencap whenever
   the information is available in logs.
 - Do not print real peer MACs in final user-facing summaries. Use
   `<redacted-mac>` in docs and commits.
@@ -105,8 +105,8 @@ adb logcat -d -s DroidyDebug:D '*:S'
 1. Build and install the app.
 2. Ask the user to open AirDrop only when a live iPhone test is ready.
 3. Enter AirDrop mode from Settings.
-4. Use `scripts/droidy-adb.sh status` to confirm peers/transfers.
-5. Use `scripts/droidy-adb.sh log` for timestamped progress.
+4. Use `scripts/airdroid-adb.sh status` to confirm peers/transfers.
+5. Use `scripts/airdroid-adb.sh log` for timestamped progress.
 6. For speed issues, compare progress timestamps and byte counts; identify
    gaps before changing code.
 7. After the test, exit AirDrop mode and restore Wi-Fi unless the user is

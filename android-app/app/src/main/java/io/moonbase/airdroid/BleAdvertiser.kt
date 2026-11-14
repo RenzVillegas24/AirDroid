@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager

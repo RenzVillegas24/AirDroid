@@ -1,4 +1,4 @@
-# Droidy K20
+# AirDroid K20
 
 Android AirDrop/AWDL app for the Redmi K20 Pro (`raphael`, WCN3990).
 
@@ -42,7 +42,7 @@ scripts/build-app.sh release
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.moonbase.droidy/.MainActivity
+adb shell am start -n io.moonbase.airdroid/.MainActivity
 ```
 
 Grant KernelSU root when the first radio action asks for it.
@@ -62,12 +62,12 @@ repository root and on the investigation branches.
 ## ADB debugging
 
 ```bash
-scripts/droidy-adb.sh status
-scripts/droidy-adb.sh log
-scripts/droidy-adb.sh follow
+scripts/airdroid-adb.sh status
+scripts/airdroid-adb.sh log
+scripts/airdroid-adb.sh follow
 ```
 
-All app/helper output is mirrored to logcat tag `DroidyLog`.
+All app/helper output is mirrored to logcat tag `AirDroidLog`.
 
 See `docs/raphael/ADB-DEBUG.md` for the full command set.
 

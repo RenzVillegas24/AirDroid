@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Droidy"
+rootProject.name = "AirDroid"
 include(":app")

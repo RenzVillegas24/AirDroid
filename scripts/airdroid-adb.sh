@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# ADB debug control for Droidy. All output is under logcat tags DroidyLog and
-# DroidyDebug. The receiver is protected by android.permission.DUMP.
+# ADB debug control for AirDroid. All output is under logcat tags AirDroidLog and
+# AirDroidDebug. The receiver is protected by android.permission.DUMP.
 set -euo pipefail
 
 ADB="${ADB:-adb}"
-PKG="io.moonbase.droidy"
+PKG="io.moonbase.airdroid"
 RECEIVER="$PKG/.ControlReceiver"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/droidy-adb.sh <command> [args]
+Usage: scripts/airdroid-adb.sh <command> [args]
 
   status                 print controller/peer/transfer state
   history                print received files and completed transfers
@@ -54,9 +54,9 @@ dump_current() {
   local pid
   pid="$(current_pid)"
   if [[ -n "$pid" ]]; then
-    "$ADB" logcat -d --pid="$pid" -s DroidyDebug:D DroidyLog:D '*:S'
+    "$ADB" logcat -d --pid="$pid" -s AirDroidDebug:D AirDroidLog:D '*:S'
   else
-    "$ADB" logcat -d -s DroidyDebug:D DroidyLog:D '*:S'
+    "$ADB" logcat -d -s AirDroidDebug:D AirDroidLog:D '*:S'
   fi
 }
 
@@ -64,22 +64,22 @@ case "$command" in
   status)
     broadcast -a "$PKG.debug.STATUS"
     sleep 0.3
-    dump_current | grep 'DroidyDebug' | tail -n 40
+    dump_current | grep 'AirDroidDebug' | tail -n 40
     ;;
   history)
     broadcast -a "$PKG.debug.HISTORY"
     sleep 0.3
-    dump_current | grep 'DroidyDebug' | tail -n 80
+    dump_current | grep 'AirDroidDebug' | tail -n 80
     ;;
   log)
-    dump_current | grep 'DroidyLog' | tail -n 200
+    dump_current | grep 'AirDroidLog' | tail -n 200
     ;;
   follow)
     pid="$(current_pid)"
     if [[ -n "$pid" ]]; then
-      "$ADB" logcat -v time --pid="$pid" -s DroidyLog:D '*:S'
+      "$ADB" logcat -v time --pid="$pid" -s AirDroidLog:D '*:S'
     else
-      "$ADB" logcat -v time -s DroidyLog:D '*:S'
+      "$ADB" logcat -v time -s AirDroidLog:D '*:S'
     fi
     ;;
   clear-log)

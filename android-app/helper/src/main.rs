@@ -58,14 +58,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let path = args.get(2).ok_or("usage: helper send <file> [mac] <channel>")?;
             let target = args.get(3).filter(|s| s.as_str() != "-");
             let channel = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
-            let name = args.get(5).cloned().unwrap_or_else(|| "Droidy K20".into());
+            let name = args.get(5).cloned().unwrap_or_else(|| "AirDroid K20".into());
             send(PathBuf::from(path), target.cloned(), channel, name).await
         }
         "session" => {
             let channel = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
-            let name = args.get(3).cloned().unwrap_or_else(|| "Droidy K20".into());
+            let name = args.get(3).cloned().unwrap_or_else(|| "AirDroid K20".into());
             let dir = PathBuf::from(
-                args.get(4).cloned().unwrap_or_else(|| "/sdcard/Download/Droidy".into()),
+                args.get(4).cloned().unwrap_or_else(|| "/sdcard/Download/AirDroid".into()),
             );
             let port = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(RECEIVER_PORT);
             session(channel, name, dir, port).await
@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let dir = PathBuf::from(args.get(2).ok_or("usage: helper receive <dir> <port> <channel>")?);
             let port = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(RECEIVER_PORT);
             let channel = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
-            let name = args.get(5).cloned().unwrap_or_else(|| "Droidy K20".into());
+            let name = args.get(5).cloned().unwrap_or_else(|| "AirDroid K20".into());
             receive(dir, port, channel, name).await
         }
         "help" | "--help" | "-h" => {
@@ -523,7 +523,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     }
 
     let radio = RadioConstraints { channel: Channel(channel), presence: Presence::Fixed };
-    let mut cfg = Config::new(addr, "droidy-k20", radio);
+    let mut cfg = Config::new(addr, "airdroid-k20", radio);
     cfg.rssi_threshold = Some(-85);
     cfg.max_frame = 2304;
     // The ACK/retry experiment, see `TX_NO_ACK_DEFAULT`.
@@ -813,7 +813,7 @@ async fn session(
     let actual_port = receiver.local_addr()?.port();
     let service = Service {
         instance: sender_id(addr),
-        host: "droidy-k20".into(),
+        host: "airdroid-k20".into(),
         port: actual_port,
         addr: local,
         flags: RECEIVER_FLAGS,
@@ -1231,7 +1231,7 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
     }));
     let service = Service {
         instance: sender_id(addr),
-        host: "droidy-k20".into(),
+        host: "airdroid-k20".into(),
         port: actual.port(),
         addr: local,
         flags: RECEIVER_FLAGS,

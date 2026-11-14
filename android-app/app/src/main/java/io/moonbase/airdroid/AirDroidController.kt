@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.bluetooth.BluetoothManager
 import android.content.Context
@@ -37,10 +37,10 @@ data class Peer(
     val rssi: Int,
 )
 
-data class DroidySettings(
+data class AirDroidSettings(
     val channel: Int = 44,
     val bleArm: Int = 0,
-    val deviceName: String = "Droidy K20",
+    val deviceName: String = "AirDroid K20",
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val tintMode: TintMode = TintMode.CUSTOM,
 )
@@ -190,10 +190,10 @@ data class KernelStatus(
  * Compose observes the state properties directly; helper output is appended on
  * the main thread so the UI and logs stay consistent.
  */
-class DroidyController(private val context: Context) {
+class AirDroidController(private val context: Context) {
     companion object {
         private const val APP_TMP = "/data/local/tmp/owly-app"
-        const val RECEIVE_DIR = "/sdcard/Download/Droidy"
+        const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
         private const val AUTO_CHANNEL_DWELL_MS = 2_500L
         private val AUTO_CHANNELS = intArrayOf(44, 6, 149)
@@ -206,7 +206,7 @@ class DroidyController(private val context: Context) {
         )
     }
 
-    private val prefs = context.getSharedPreferences("droidy", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("airdroid", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prepareMutex = Mutex()
     private val commandMutex = Mutex()
@@ -220,7 +220,7 @@ class DroidyController(private val context: Context) {
     private var requestCounter = 0
     private var sendCancelled = false
     private var sendGeneration = 0
-    private val notifications = DroidyNotifications(context)
+    private val notifications = AirDroidNotifications(context)
 
     var settings by mutableStateOf(loadSettings())
         private set
@@ -331,7 +331,7 @@ class DroidyController(private val context: Context) {
 
     init {
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        append("Droidy K20")
+        append("AirDroid K20")
         append("AirDrop over AWDL · Jetpack Compose · Material 3")
         append("Channel ${settings.channel} · BLE arm ${settings.bleArm}")
         append("Kernel ${kernel.release}")
@@ -440,8 +440,8 @@ class DroidyController(private val context: Context) {
         tintMode: TintMode = settings.tintMode,
     ) {
         val previous = settings
-        val cleanName = deviceName.trim().ifBlank { "Droidy K20" }
-        settings = DroidySettings(channel, bleArm, cleanName, themeMode, tintMode)
+        val cleanName = deviceName.trim().ifBlank { "AirDroid K20" }
+        settings = AirDroidSettings(channel, bleArm, cleanName, themeMode, tintMode)
         activeChannel = if (channel > 0) channel else 44
         prefs.edit()
             .putInt("channel", channel)
@@ -472,10 +472,10 @@ class DroidyController(private val context: Context) {
         }
     }
 
-    private fun loadSettings(): DroidySettings = DroidySettings(
+    private fun loadSettings(): AirDroidSettings = AirDroidSettings(
         channel = prefs.getInt("channel", 44),
         bleArm = prefs.getInt("bleArm", 0),
-        deviceName = prefs.getString("deviceName", "Droidy K20") ?: "Droidy K20",
+        deviceName = prefs.getString("deviceName", "AirDroid K20") ?: "AirDroid K20",
         themeMode = prefs.getString("themeMode", ThemeMode.SYSTEM.name)
             ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
             ?: ThemeMode.SYSTEM,
@@ -530,7 +530,7 @@ class DroidyController(private val context: Context) {
         peers = emptyList()
         selectedMac = null
         append("")
-        runCatching { DroidyService.start(context) }
+        runCatching { AirDroidService.start(context) }
         if (settings.channel == AUTO_CHANNEL) {
             scanAuto()
             return
@@ -542,7 +542,7 @@ class DroidyController(private val context: Context) {
             scanning = false
             status = "CHECK LOG"
             sendMessage = "Live scan could not start; check the log."
-            runCatching { DroidyService.stop(context) }
+            runCatching { AirDroidService.stop(context) }
             return
         }
         status = "SCANNING"
@@ -565,12 +565,12 @@ class DroidyController(private val context: Context) {
                     scanning = false
                     status = "CHECK LOG"
                     sendMessage = "Live scan could not start; check the log."
-                    runCatching { DroidyService.stop(context) }
+                    runCatching { AirDroidService.stop(context) }
                     return
                 }
                 if (!scanning) {
                     stopSession()
-                    runCatching { DroidyService.stop(context) }
+                    runCatching { AirDroidService.stop(context) }
                     return
                 }
                 append("Auto scan on channel $channel")
@@ -597,7 +597,7 @@ class DroidyController(private val context: Context) {
         append("Stopping live scan...")
         stopSession()
         scanning = false
-        runCatching { DroidyService.stop(context) }
+        runCatching { AirDroidService.stop(context) }
         status = when {
             peers.isEmpty() -> "NO PEERS"
             !kernel.monitorReady -> kernel.state.badge
@@ -612,7 +612,7 @@ class DroidyController(private val context: Context) {
             try {
                 val displayName = queryDisplayName(uri) ?: "airdrop-file"
                 val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
-                Log.i("DroidySend", "pickFile display=$displayName clean=$cleanName uri=$uri")
+                Log.i("AirDroidSend", "pickFile display=$displayName clean=$cleanName uri=$uri")
                 val out = File(context.cacheDir, "outgoing-${System.currentTimeMillis()}-$cleanName")
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(out).use { output -> input.copyTo(output) }
@@ -633,7 +633,7 @@ class DroidyController(private val context: Context) {
 
     suspend fun sendPicked() {
         val file = pickedFile ?: return
-        Log.i("DroidySend", "sendPicked file=${file.name} display=$pickedDisplayName")
+        Log.i("AirDroidSend", "sendPicked file=${file.name} display=$pickedDisplayName")
         sendFile(file.absolutePath, pickedDisplayName)
     }
 
@@ -673,7 +673,7 @@ class DroidyController(private val context: Context) {
         } else {
             candidateName
         }
-        Log.i("DroidySend", "sendFile display=$displayName shown=$shownName file=${file.name}")
+        Log.i("AirDroidSend", "sendFile display=$displayName shown=$shownName file=${file.name}")
         val generation = ++sendGeneration
         sendCancelled = false
         sendProgressBytes = 0
@@ -1014,7 +1014,7 @@ class DroidyController(private val context: Context) {
             if (!reboot) {
                 stopSession()
                 scanning = false
-                runCatching { DroidyService.stop(context) }
+                runCatching { AirDroidService.stop(context) }
             }
             val rc = execRoot(
                 label = "exit AirDrop mode",
@@ -2361,7 +2361,7 @@ class DroidyController(private val context: Context) {
             "$APP_TMP/owly-k20-helper $arguments"
 
     private fun helperName(): String =
-        settings.deviceName.replace("'", "").ifBlank { "Droidy K20" }
+        settings.deviceName.replace("'", "").ifBlank { "AirDroid K20" }
 
     private fun append(line: String) {
         if (line.isEmpty()) {
@@ -2370,7 +2370,7 @@ class DroidyController(private val context: Context) {
             val stamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
             val lines = line.split('\n').map { "$stamp  $it" }
             logs.addAll(lines)
-            lines.forEach { Log.i("DroidyLog", it) }
+            lines.forEach { Log.i("AirDroidLog", it) }
         }
         if (logs.size > 2500) logs.removeRange(0, logs.size - 2000)
     }
@@ -2417,8 +2417,8 @@ class DroidyController(private val context: Context) {
     }
 
     fun close() {
-        if (DroidyService.running) {
-            runCatching { DroidyService.stop(context) }
+        if (AirDroidService.running) {
+            runCatching { AirDroidService.stop(context) }
         }
         pendingRequest?.let { pending ->
             if (!pending.completion.isCompleted) pending.completion.complete(-1)

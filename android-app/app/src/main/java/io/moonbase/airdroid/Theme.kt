@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.app.Activity
 import android.os.Build
@@ -30,11 +30,11 @@ enum class ThemeMode(val label: String) {
 }
 
 enum class TintMode(val label: String) {
-    CUSTOM("Droidy"),
+    CUSTOM("AirDroid"),
     SYSTEM("System"),
 }
 
-private val DroidyDarkColors = darkColorScheme(
+private val AirDroidDarkColors = darkColorScheme(
     primary = Color(0xFFD0BCFF),
     onPrimary = Color(0xFF381E72),
     primaryContainer = Color(0xFF4F378B),
@@ -72,7 +72,7 @@ private val DroidyDarkColors = darkColorScheme(
     surfaceContainerHighest = Color(0xFF36343B),
 )
 
-private val DroidyLightColors = lightColorScheme(
+private val AirDroidLightColors = lightColorScheme(
     primary = Color(0xFF6750A4),
     onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFFEADDFF),
@@ -110,7 +110,7 @@ private val DroidyLightColors = lightColorScheme(
     surfaceContainerHighest = Color(0xFFE6E0E9),
 )
 
-private val DroidyTypography = Typography(
+private val AirDroidTypography = Typography(
     displaySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
@@ -194,7 +194,7 @@ private val DroidyTypography = Typography(
     ),
 )
 
-private val DroidyShapes = Shapes(
+private val AirDroidShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
@@ -203,7 +203,7 @@ private val DroidyShapes = Shapes(
 )
 
 @Composable
-fun DroidyTheme(
+fun AirDroidTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     tintMode: TintMode = TintMode.CUSTOM,
     content: @Composable () -> Unit,
@@ -219,8 +219,8 @@ fun DroidyTheme(
     val colorScheme = when {
         useDynamicTint && darkTheme -> dynamicDarkColorScheme(context)
         useDynamicTint -> dynamicLightColorScheme(context)
-        darkTheme -> DroidyDarkColors
-        else -> DroidyLightColors
+        darkTheme -> AirDroidDarkColors
+        else -> AirDroidLightColors
     }
     if (!view.isInEditMode) {
         SideEffect {
@@ -233,8 +233,8 @@ fun DroidyTheme(
     }
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = DroidyTypography,
-        shapes = DroidyShapes,
+        typography = AirDroidTypography,
+        shapes = AirDroidShapes,
         content = content,
     )
 }

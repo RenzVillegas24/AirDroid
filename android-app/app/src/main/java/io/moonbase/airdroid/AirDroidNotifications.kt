@@ -1,4 +1,4 @@
-package io.moonbase.droidy
+package io.moonbase.airdroid
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -16,20 +16,20 @@ import androidx.annotation.RequiresApi
  * the stable transfer ID. Discovery, receiver readiness, and channel search
  * never post here; only real transfers and real incoming `/Ask` requests do.
  */
-class DroidyNotifications(private val context: Context) {
+class AirDroidNotifications(private val context: Context) {
     companion object {
-        const val CHANNEL_TRANSFERS = "droidy_transfers"
-        const val CHANNEL_REQUESTS = "droidy_requests"
+        const val CHANNEL_TRANSFERS = "airdroid_transfers"
+        const val CHANNEL_REQUESTS = "airdroid_requests"
 
-        const val EXTRA_REQUEST_ID = "io.moonbase.droidy.extra.REQUEST_ID"
-        const val EXTRA_REQUEST_ACCEPT = "io.moonbase.droidy.extra.REQUEST_ACCEPT"
-        const val EXTRA_CANCEL_TRANSFER = "io.moonbase.droidy.extra.CANCEL_TRANSFER"
+        const val EXTRA_REQUEST_ID = "io.moonbase.airdroid.extra.REQUEST_ID"
+        const val EXTRA_REQUEST_ACCEPT = "io.moonbase.airdroid.extra.REQUEST_ACCEPT"
+        const val EXTRA_CANCEL_TRANSFER = "io.moonbase.airdroid.extra.CANCEL_TRANSFER"
 
-        const val ACTION_ACCEPT = "io.moonbase.droidy.action.ACCEPT"
-        const val ACTION_DECLINE = "io.moonbase.droidy.action.DECLINE"
-        const val ACTION_CANCEL = "io.moonbase.droidy.action.CANCEL"
+        const val ACTION_ACCEPT = "io.moonbase.airdroid.action.ACCEPT"
+        const val ACTION_DECLINE = "io.moonbase.airdroid.action.DECLINE"
+        const val ACTION_CANCEL = "io.moonbase.airdroid.action.CANCEL"
 
-        private const val GROUP_KEY = "io.moonbase.droidy.TRANSFERS"
+        private const val GROUP_KEY = "io.moonbase.airdroid.TRANSFERS"
         private const val SUMMARY_ID = 4000
         private const val REQUEST_ID = 4100
         private const val FIRST_TRANSFER_ID = 4200
@@ -106,7 +106,7 @@ class DroidyNotifications(private val context: Context) {
         val text = if (activeCount == 1) "1 active transfer" else "$activeCount active transfers"
         val builder = baseBuilder(
             CHANNEL_TRANSFERS,
-            "Droidy transfers",
+            "AirDroid transfers",
             text,
             R.drawable.ic_sensors,
         )
@@ -229,7 +229,7 @@ class DroidyNotifications(private val context: Context) {
                 TransferDirection.SENT -> "Send cancelled"
                 TransferDirection.RECEIVED -> "Receive cancelled"
             }
-            else -> "Droidy transfer"
+            else -> "AirDroid transfer"
         }
         val text = when {
             transfer.status == TransferStatus.COMPLETE &&

@@ -21,7 +21,7 @@
         android:supportsRtl="true">
 
         <service
-            android:name=".DroidyService"
+            android:name=".AirDroidService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:stopWithTask="false" />
