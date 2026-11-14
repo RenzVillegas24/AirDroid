@@ -123,8 +123,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        controller = DroidyController(applicationContext)
-        DroidyControllerHolder.current = controller
+        controller = DroidyControllerHolder.current
+            ?: DroidyController(applicationContext).also { DroidyControllerHolder.current = it }
         handleNotificationIntent(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
@@ -186,6 +186,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // While the foreground service is running it owns the controller, so
+        // closing it here would stop the background receiver.
+        if (DroidyService.running) return
         if (DroidyControllerHolder.current === controller) {
             DroidyControllerHolder.current = null
         }
