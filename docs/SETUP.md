@@ -89,8 +89,14 @@ of the production build and are not run by CI.
 
 ### Release signing
 
-`scripts/build-app.sh release` builds an **unsigned** release APK. Signing is
-not automated; use your release key with `apksigner` before distributing it.
+`scripts/build-app.sh release` builds an **unsigned** release APK. Sign it with
+a private keystore:
+
+```bash
+scripts/sign-release.sh
+```
+
+See [RELEASE.md](RELEASE.md) for keystore creation, signing, and verification.
 
 ## 5. Radio mode
 
