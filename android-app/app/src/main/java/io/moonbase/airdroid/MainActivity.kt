@@ -55,6 +55,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -2217,7 +2218,7 @@ private fun SettingsScreen(controller: AirDroidController) {
         }
         item { SectionLabel("RECEIVER") }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SettingsListGroup {
                 SettingsListItem(
                     icon = R.drawable.ic_folder,
                     headline = "Incoming storage",
@@ -2319,7 +2320,7 @@ private fun SettingsScreen(controller: AirDroidController) {
         }
         item { SectionLabel("ABOUT") }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SettingsListGroup {
                 SettingsListItem(
                     icon = R.drawable.ic_badge,
                     headline = "Developer",
@@ -2370,6 +2371,18 @@ private fun ModeButtonContent(
 }
 
 @Composable
+private fun SettingsListGroup(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp)),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        content()
+    }
+}
+
+@Composable
 private fun SettingsListItem(
     @DrawableRes icon: Int,
     headline: String,
@@ -2388,7 +2401,7 @@ private fun SettingsListItem(
                     Modifier
                 },
             ),
-        shape = MaterialTheme.shapes.medium,
+        shape = RoundedCornerShape(4.dp),
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
     ) {
         ListItem(
