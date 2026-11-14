@@ -39,7 +39,8 @@ data class Peer(
 
 data class AirDroidSettings(
     val channel: Int = 44,
-    val bleArm: Int = 0,
+    // V2 is the best wake arm for the K20/iPhone pair.
+    val bleArm: Int = 1,
     val deviceName: String = "AirDroid K20",
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val tintMode: TintMode = TintMode.CUSTOM,
@@ -196,7 +197,7 @@ class AirDroidController(private val context: Context) {
         const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
         private const val AUTO_CHANNEL_DWELL_MS = 2_500L
-        private val AUTO_CHANNELS = intArrayOf(44, 6, 149)
+        private val AUTO_CHANNELS = intArrayOf(44, 149, 6)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
@@ -474,7 +475,7 @@ class AirDroidController(private val context: Context) {
 
     private fun loadSettings(): AirDroidSettings = AirDroidSettings(
         channel = prefs.getInt("channel", 44),
-        bleArm = prefs.getInt("bleArm", 0),
+        bleArm = prefs.getInt("bleArm", 1),
         deviceName = prefs.getString("deviceName", "AirDroid K20") ?: "AirDroid K20",
         themeMode = prefs.getString("themeMode", ThemeMode.SYSTEM.name)
             ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
@@ -551,7 +552,10 @@ class AirDroidController(private val context: Context) {
     }
 
     private suspend fun scanAuto() {
-        val channels = listOf(lastAutoChannel) + AUTO_CHANNELS.filter { it != lastAutoChannel }
+        // Owly exclusive mode gets very few iPhone slots on 2.4 GHz channel 6.
+        // Prefer 5 GHz (44/149) and only fall back to 6 if no 5 GHz peer appears.
+        val preferred = if (lastAutoChannel == 6) 44 else lastAutoChannel
+        val channels = listOf(preferred) + AUTO_CHANNELS.filter { it != preferred }
         val order = channels.joinToString(" → ")
         sendMessage = "Auto scan: trying $order..."
         append("Auto channel scan: $order")
@@ -581,8 +585,10 @@ class AirDroidController(private val context: Context) {
                     delay(250)
                 }
                 if (peers.isNotEmpty()) {
-                    lastAutoChannel = channel
-                    prefs.edit().putInt("lastAutoChannel", channel).apply()
+                    if (channel != 6) {
+                        lastAutoChannel = channel
+                        prefs.edit().putInt("lastAutoChannel", channel).apply()
+                    }
                     status = "SCANNING"
                     sendMessage = "${peers.size} person(s) found on channel $channel."
                     append("Auto channel locked on $channel.")
