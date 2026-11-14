@@ -260,19 +260,29 @@ private fun DroidyTopBar(
             when (tab) {
                 DroidyTab.SEND -> {
                     FilledTonalButton(
-                        onClick = { scope.launch { controller.scan() } },
+                        onClick = {
+                            scope.launch {
+                                if (controller.scanning) {
+                                    controller.stopScanning()
+                                } else {
+                                    controller.scan()
+                                }
+                            }
+                        },
                         enabled = controller.kernel.monitorReady &&
                             !controller.sending && !controller.sendCancelling &&
                             !controller.receiverRunning,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_refresh),
+                            painter = painterResource(
+                                if (controller.scanning) R.drawable.ic_stop_circle else R.drawable.ic_refresh,
+                            ),
                             contentDescription = null,
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text(if (controller.scanning) "Scanning" else "Scan")
+                        Text(if (controller.scanning) "Stop" else "Scan")
                     }
                 }
                 DroidyTab.LOGS -> {
