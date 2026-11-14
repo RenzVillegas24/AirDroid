@@ -56,9 +56,9 @@ name.
 Every action can also be sent directly:
 
 ```bash
-adb shell am broadcast -n io.moonbase.droidy/.DebugReceiver \
+adb shell am broadcast -n io.moonbase.droidy/.ControlReceiver \
   -a io.moonbase.droidy.debug.STATUS
-adb shell am broadcast -n io.moonbase.droidy/.DebugReceiver \
+adb shell am broadcast -n io.moonbase.droidy/.ControlReceiver \
   -a io.moonbase.droidy.debug.SEND --es path /sdcard/Download/example.bin
 adb logcat -d -s DroidyLog:D '*:S'
 ```

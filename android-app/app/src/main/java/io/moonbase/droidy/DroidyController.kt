@@ -202,12 +202,6 @@ class DroidyController(private val context: Context) {
         private const val SEND_TIMEOUT_MS = 300_000L
         private val ASSETS = arrayOf(
             "owly-mode.sh",
-            "owly-nl80211-set-channel",
-            "owly-monitor-send-frame",
-            "owly-monitor-full",
-            "owly-monitor-probe",
-            "probe-owly.bin",
-            "awdl-mif-k20.bin",
             "owly-k20-helper",
         )
     }
