@@ -478,6 +478,12 @@ Live validation (2026-11-14):
   directory without a cache copy.
 - First send failed only because AirDrop had not been restarted; after the
   iPhone AirDrop restart the same send succeeded.
+- Fixed-channel TX scheduling patch removed the ~11.4 s send holes. A 20 MB
+  random upload reached 12.7 MB continuously before the test was stopped.
+- Receive progress is steady (~150 KB/s in the captured sample); receive speed
+  improvement remains a later phase.
+- ADB debug surface: `scripts/droidy-adb.sh` and `docs/raphael/ADB-DEBUG.md`;
+  all output is mirrored to `logcat` tag `DroidyLog`.
 
 Current limitations:
 
@@ -490,9 +496,11 @@ Current limitations:
   controller and auto-starts the session when the monitor kernel is ready, but
   an in-flight request cannot be recovered.
 - Transfer history is session-only by decision.
-- Precise sustained throughput measurement is still pending. Low Power Mode
-  and a locked iPhone screen throttle AWDL heavily; keep the iPhone unlocked
-  and Low Power Mode off during speed tests.
+- Precise sustained throughput measurement is still pending; the TX patch
+  removed the observed stalls but a full 20 MB run still needs a clean
+  measurement.
+- Low Power Mode and a locked iPhone screen throttle AWDL heavily; keep the
+  iPhone unlocked and Low Power Mode off during speed tests.
 - Completed cards show average upload/download speed.
-- The first `no_ack=true` live retest timed out before completion; a clean
-  measurement is still needed.
+- Receive throughput is still lower than the link's burst rate; improving it
+  is the next transfer phase.
