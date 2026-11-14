@@ -13,6 +13,7 @@ use std::io::{BufRead, BufReader};
 use std::net::SocketAddrV6;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -23,6 +24,7 @@ use owly_airdrop::driver::receiver::{
 use owly_airdrop::driver::sender::{Event, Payload, Sender};
 use owly_airdrop::driver::tls::Identity;
 use owly_airdrop::proto::messages::Offer;
+use owly_airdrop::proto::sender::Outcome;
 use owly_airdrop::proto::mdns::{
     BrowseEvent, Burst, Found, Service, RECEIVER_FLAGS, SUPPORTS_DVZIP,
 };
@@ -62,7 +64,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "session" => {
             let channel = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
             let name = args.get(3).cloned().unwrap_or_else(|| "Droidy K20".into());
-            session(channel, name).await
+            let dir = PathBuf::from(
+                args.get(4).cloned().unwrap_or_else(|| "/sdcard/Download/Droidy".into()),
+            );
+            let port = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(RECEIVER_PORT);
+            session(channel, name, dir, port).await
         }
         "receive" => {
             let dir = PathBuf::from(args.get(2).ok_or("usage: helper receive <dir> <port> <channel>")?);
@@ -88,31 +94,87 @@ fn channel_freq(channel: u8) -> Option<&'static str> {
     }
 }
 
-fn start_name_sniffer(names: Arc<Mutex<HashMap<String, String>>>) -> Option<Child> {
-    let mut child = Command::new("/data/local/tmp/owly-app/owly-monitor-full")
-        .arg(MONITOR)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let stdout = child.stdout.take()?;
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().flatten() {
-            let Some(mac) = line.split("sa=").nth(1) else { continue };
-            let mac = mac.split_whitespace().next().unwrap_or("").to_string();
-            let Some(hex) = line.split("bytes=").nth(1) else { continue };
-            let hex = hex.split_whitespace().next().unwrap_or("");
-            let Some(bytes) = decode_hex(hex) else { continue };
-            if let Some(name) = find_dnm(&bytes) {
-                let mut map = names.lock().unwrap();
-                if map.get(&mac) != Some(&name) {
-                    println!("AWDL name: {mac} = {name}");
-                    map.insert(mac, name);
+/// The monitor name sniffer: a separate `owly-monitor-full` process whose
+/// output is parsed for AWDL `dnm=` display names.
+///
+/// It is stopped during a transfer so it doesn't compete with the upload for
+/// CPU, and started again afterwards. Names already learned stay in the shared
+/// map, so stopping it loses nothing that was already known.
+struct NameSniffer {
+    names: Arc<Mutex<HashMap<String, String>>>,
+    child: Option<Child>,
+    paused: bool,
+}
+
+impl NameSniffer {
+    fn start(names: Arc<Mutex<HashMap<String, String>>>) -> Self {
+        let mut sniffer = NameSniffer {
+            names,
+            child: None,
+            paused: false,
+        };
+        sniffer.spawn();
+        sniffer
+    }
+
+    fn spawn(&mut self) {
+        let Ok(mut child) = Command::new("/data/local/tmp/owly-app/owly-monitor-full")
+            .arg(MONITOR)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            return;
+        };
+        let Some(stdout) = child.stdout.take() else {
+            return;
+        };
+        let names = Arc::clone(&self.names);
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().flatten() {
+                let Some(mac) = line.split("sa=").nth(1) else { continue };
+                let mac = mac.split_whitespace().next().unwrap_or("").to_string();
+                let Some(hex) = line.split("bytes=").nth(1) else { continue };
+                let hex = hex.split_whitespace().next().unwrap_or("");
+                let Some(bytes) = decode_hex(hex) else { continue };
+                if let Some(name) = find_dnm(&bytes) {
+                    let mut map = names.lock().unwrap();
+                    if map.get(&mac) != Some(&name) {
+                        println!("AWDL name: {mac} = {name}");
+                        map.insert(mac, name);
+                    }
                 }
             }
+        });
+        self.child = Some(child);
+    }
+
+    /// Stops the sniffer process while `paused`, restarts it otherwise.
+    /// Idempotent, so it is safe to call after every event.
+    fn set_paused(&mut self, paused: bool) {
+        if self.paused == paused {
+            return;
         }
-    });
-    Some(child)
+        self.paused = paused;
+        if paused {
+            self.stop();
+        } else {
+            self.spawn();
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for NameSniffer {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 fn decode_hex(text: &str) -> Option<Vec<u8>> {
@@ -350,6 +412,100 @@ fn emit_peer_updates(
     *known = current;
 }
 
+/// The file name shown to the user: the path's last component, or the whole
+/// path when it has none.
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Size of a file in bytes, or 0 for a directory or a path that doesn't exist.
+/// A send offers one file, so this is the card's total; the upload itself is
+/// compressed and reports its own total.
+fn file_total(path: &Path) -> u64 {
+    std::fs::metadata(path)
+        .ok()
+        .filter(|meta| meta.is_file())
+        .map_or(0, |meta| meta.len())
+}
+
+/// The top-level items an offer names, in order. URL shares have no files.
+fn offer_files(offer: &Offer) -> Vec<(String, Option<u64>)> {
+    match offer {
+        Offer::Files(files) => files
+            .iter()
+            .map(|file| (file.name.clone(), file.size))
+            .collect(),
+        Offer::Urls(_) => Vec::new(),
+    }
+}
+
+fn outcome_reason(outcome: &Outcome) -> String {
+    match outcome {
+        Outcome::Delivered => "delivered".into(),
+        Outcome::Declined => "declined".into(),
+        Outcome::Failed(reason) => reason.clone(),
+    }
+}
+
+/// Held by the send task: clears `send_active` when the task ends, including
+/// on a panic, so a send can't stay "active" forever.
+struct SendActive(Arc<AtomicBool>);
+
+impl Drop for SendActive {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// A receive that is still uploading, for transfer priority.
+struct ActiveReceive {
+    total: u64,
+    last_bytes: u64,
+    last_progress: Instant,
+}
+
+/// The receiver driver reports nothing when a connection dies after accept but
+/// before `/Upload` starts, so a receive with no staging growth for this long
+/// is dropped from the active set (its own idle timeout is 60 s). Without
+/// this, a vanished sender would pause discovery for the rest of the session.
+const RECEIVE_STALL_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Pauses or resumes background discovery for a transfer. Prints only on a
+/// change, so the UI can show "discovery paused" without log spam.
+fn update_transfer_pause(sniffer: &mut NameSniffer, paused: &mut bool, now: bool) {
+    if *paused == now {
+        return;
+    }
+    *paused = now;
+    sniffer.set_paused(now);
+    println!("DISCOVERY_PAUSED paused={now}");
+}
+
+/// ACK/retry experiment from the performance plan (Phase E).
+///
+/// `Presence::Fixed` defaults `no_ack` to `true`, so every unicast data frame
+/// is sent once and a lost one becomes a TCP retransmission. The hidden STA
+/// vdev behind this monitor can do normal ACK/retry, so the experiment turns
+/// `no_ack` off. `OWLY_TX_NO_ACK=1` (or `true`/`on`) and `OWLY_TX_NO_ACK=0`
+/// (or `false`/`off`) override it for an A/B measurement without a rebuild.
+///
+/// This is the only radio change in the experiment: rate, A-MSDU, Block Ack
+/// and the rest of `Config` keep their defaults.
+const TX_NO_ACK_DEFAULT: bool = false;
+
+fn tx_no_ack() -> bool {
+    match env::var("OWLY_TX_NO_ACK") {
+        Ok(value) => match value.trim() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => TX_NO_ACK_DEFAULT,
+        },
+        Err(_) => TX_NO_ACK_DEFAULT,
+    }
+}
+
 async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiver<Vec<PeerInfo>>), Box<dyn Error>> {
     if !std::path::Path::new("/dev/net/tun").exists()
         && !std::path::Path::new("/dev/tun").exists()
@@ -370,6 +526,9 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     let mut cfg = Config::new(addr, "droidy-k20", radio);
     cfg.rssi_threshold = Some(-85);
     cfg.max_frame = 2304;
+    // The ACK/retry experiment, see `TX_NO_ACK_DEFAULT`.
+    cfg.no_ack = tx_no_ack();
+    println!("RADIO_CONFIG no_ack={}", cfg.no_ack);
     let (peers_tx, peers_rx) = watch::channel(Vec::new());
     let native = Native::start(MONITOR, AWDL_IFACE, cfg, peers_tx)
         .map_err(|e| format!("could not start AWDL on {MONITOR}: {e}"))?;
@@ -388,7 +547,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
 async fn scan(seconds: u64, channel: u8) -> Result<(), Box<dyn Error>> {
     let (native, index, _addr, mut peers_rx) = start_radio(channel).await?;
     let names = Arc::new(Mutex::new(HashMap::new()));
-    let mut sniffer = start_name_sniffer(names.clone());
+    let mut sniffer = NameSniffer::start(names.clone());
     let mdns = Mdns::new(index);
     let mut browse = mdns.browse().await?;
     println!("SCAN_START seconds={seconds} channel={channel}");
@@ -417,10 +576,7 @@ async fn scan(seconds: u64, channel: u8) -> Result<(), Box<dyn Error>> {
     print_peers(&peers, &names);
     println!("PEER_COUNT {}", peers.len());
     drop(browse);
-    if let Some(child) = sniffer.as_mut() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    sniffer.stop();
     native.stop();
     Ok(())
 }
@@ -432,20 +588,48 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
     rustls::crypto::ring::default_provider().install_default().ok();
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
     let names = Arc::new(Mutex::new(HashMap::new()));
-    let mut sniffer = start_name_sniffer(names.clone());
+    let mut sniffer = NameSniffer::start(names.clone());
     let mdns = Mdns::new(index);
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
     let sender = Sender::new(sender_config)?;
     let mut known: HashMap<String, KnownPeer> = HashMap::new();
-    let result = find_and_send(&sender, index, &mut browse, &mut peers_rx, &names, &mut known, &path, target.as_deref()).await;
-    if let Some(child) = sniffer.as_mut() {
-        let _ = child.kill();
-        let _ = child.wait();
+    // One file per send, so the send ID is fixed for this command.
+    //
+    // New fields go before `id=` so the existing `total=`-last and
+    // `bytes=`-then-`total=` parsing in the app keeps working unchanged.
+    let source_total = file_total(&path);
+    println!(
+        "SEND_FILE_START source_total={source_total} id=send name={} total={source_total}",
+        display_name(&path)
+    );
+    let result = find_and_send(
+        &sender,
+        index,
+        &mut browse,
+        &mut peers_rx,
+        &names,
+        &mut known,
+        &path,
+        source_total,
+        target.as_deref(),
+        Some("send"),
+    )
+    .await;
+    match &result {
+        Ok(Outcome::Delivered) => println!(
+            "SEND_FILE_DONE source_total={source_total} id=send path={}",
+            path.display()
+        ),
+        Ok(outcome) => {
+            println!("SEND_FILE_ERR source_total={source_total} id=send reason={outcome:?}")
+        }
+        Err(e) => println!("SEND_FILE_ERR source_total={source_total} id=send reason={e}"),
     }
+    sniffer.stop();
     native.stop();
-    result
+    result.map(|_| ())
 }
 
 async fn find_and_send(
@@ -456,8 +640,10 @@ async fn find_and_send(
     names: &Arc<Mutex<HashMap<String, String>>>,
     known: &mut HashMap<String, KnownPeer>,
     path: &Path,
+    source_total: u64,
     target_mac: Option<&str>,
-) -> Result<(), Box<dyn Error>> {
+    report_id: Option<&str>,
+) -> Result<Outcome, Box<dyn Error>> {
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut mdns_found: Option<Found> = None;
     let mut attempt = 0u32;
@@ -547,35 +733,108 @@ async fn find_and_send(
     let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
     let send_future = sender.send(target, &payload, flags, Some(events_tx));
     tokio::pin!(send_future);
+    // Transfer priority: once the receiver is chosen, only the upload and its
+    // progress are handled. Peer updates and mDNS browse events would compete
+    // with it, so they are left for after the transfer (the session loop does
+    // the same for its own discovery).
+    let mut last_report: Option<Instant> = None;
     let outcome = loop {
         tokio::select! {
             event = events_rx.recv() => match event {
                 Some(Event::Accepted) => println!("receiver accepted; uploading..."),
-                Some(Event::Progress(p)) => if p.total > 0 { println!("progress {}/{} bytes", p.sent, p.total); },
+                Some(Event::Progress(p)) => {
+                    if p.total > 0 {
+                        println!("progress {}/{} bytes", p.sent, p.total);
+                        if let Some(id) = report_id {
+                            // One line per 64 KiB chunk would add stdout work
+                            // to a fast upload, so the per-file line is capped
+                            // at about ten a second (plus the final one).
+                            let due = last_report
+                                .map_or(true, |last| last.elapsed() >= Duration::from_millis(100));
+                            if due || p.sent >= p.total {
+                                last_report = Some(Instant::now());
+                                // `total` is the compressed `/Upload` body, not
+                                // the source file's size: the sender archives
+                                // and compresses the file before the offer.
+                                // `source_total` keeps the uncompressed size
+                                // alongside it, so the app can show both
+                                // without guessing.
+                                println!(
+                                    "SEND_FILE_PROGRESS source_total={source_total} upload_total={} id={id} bytes={} total={}",
+                                    p.total, p.sent, p.total
+                                );
+                            }
+                        }
+                    }
+                }
                 None => {}
             },
             result = &mut send_future => break result,
         }
     };
     match outcome {
-        Ok(outcome) => println!("DONE: {outcome:?}"),
-        Err(e) => return Err(format!("send failed: {e}").into()),
+        Ok(outcome) => {
+            println!("DONE: {outcome:?}");
+            Ok(outcome)
+        }
+        Err(e) => Err(format!("send failed: {e}").into()),
     }
-    Ok(())
 }
 
-async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
+async fn session(
+    channel: u8,
+    name: String,
+    receive_dir: PathBuf,
+    receive_port: u16,
+) -> Result<(), Box<dyn Error>> {
     rustls::crypto::ring::default_provider().install_default().ok();
+    std::fs::create_dir_all(&receive_dir)?;
+    std::fs::create_dir_all(STATE_DIR)?;
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
-    let mut live_peers = peers_rx.clone();
     let names = Arc::new(Mutex::new(HashMap::new()));
-    let mut sniffer = start_name_sniffer(names.clone());
-    let mdns = Mdns::new(index);
+    let mut sniffer = NameSniffer::start(names.clone());
+    let mdns = Mdns::new(index).with_burst(Some(Burst {
+        count: 64,
+        interval: Duration::from_micros(16_400),
+        pause: Duration::from_secs(3),
+    }));
+    let identity = Identity::load_or_generate(Path::new(STATE_DIR))?;
+    let mut receiver_config = ReceiverConfig::new(name.clone());
+    receiver_config.model_name = "Linux".into();
+    receiver_config.ask_timeout = Duration::from_secs(60);
+    let receiver_options = ReceiverOptions::new(receiver_config, receive_dir.clone());
+    let local = addr.link_local();
+    let (receiver, mut receiver_events) = Receiver::bind(
+        SocketAddrV6::new(local, receive_port, 0, index),
+        &identity,
+        receiver_options,
+    )
+    .await?;
+    let actual_port = receiver.local_addr()?.port();
+    let service = Service {
+        instance: sender_id(addr),
+        host: "droidy-k20".into(),
+        port: actual_port,
+        addr: local,
+        flags: RECEIVER_FLAGS,
+    };
+    let _registration = mdns.register(service).await?;
+    let _receiver_task = tokio::spawn(receiver.run());
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
-    let sender = Sender::new(sender_config)?;
+    let sender = Arc::new(Sender::new(sender_config)?);
+    let send_active = Arc::new(AtomicBool::new(false));
     let mut known: HashMap<String, KnownPeer> = HashMap::new();
+    let mut requests: HashMap<u64, Request> = HashMap::new();
+    // Accepted uploads that are still running. A non-empty map means a
+    // receive is active for transfer priority.
+    let mut active_receives: HashMap<u64, ActiveReceive> = HashMap::new();
+    let mut transfer_paused = false;
+    let mut progress_ticker = tokio::time::interval(Duration::from_millis(500));
+    progress_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut peer_ticker = tokio::time::interval(Duration::from_secs(1));
+    peer_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     std::thread::spawn(move || {
@@ -587,18 +846,79 @@ async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
     });
 
     println!("SESSION_READY channel={channel} mac={addr:?}");
+    println!(
+        "RECEIVE_READY addr={} port={} dir={}",
+        local,
+        actual_port,
+        receive_dir.display()
+    );
     let initial_peers = peers_rx.borrow().clone();
     let initial_names = names.lock().unwrap().clone();
     emit_peer_updates(&mut known, &initial_peers, &initial_names);
     loop {
         tokio::select! {
-            changed = live_peers.changed() => {
-                if changed.is_ok() {
-                    let peers = live_peers.borrow().clone();
+            // Transfer priority: peer updates are non-urgent, so they are
+            // dropped while a transfer runs. The watch keeps the latest
+            // snapshot, and the 1 s ticker emits it once the transfer ends.
+            changed = peers_rx.changed() => {
+                if changed.is_ok() && !transfer_paused {
+                    let peers = peers_rx.borrow().clone();
                     let names_snapshot = names.lock().unwrap().clone();
                     emit_peer_updates(&mut known, &peers, &names_snapshot);
+                    println!("AWDL peers now: {} {:?}", peers.len(), peers);
                 }
             }
+            // Receiver events stay high priority, including `/Ask` requests,
+            // so accept/decline keeps working while a send is active.
+            receiver_event = receiver_events.recv() => match receiver_event {
+                Some(ReceiverEvent::Discovered { peer, .. }) => {
+                    println!("RECEIVE_DISCOVER peer={peer}");
+                }
+                Some(ReceiverEvent::Request(request)) => {
+                    let id = request.id;
+                    let peer = request.peer;
+                    let (files, total, names) = offer_summary(&request.ask.offer);
+                    let sender = request.ask.sender_computer_name.clone();
+                    println!(
+                        "RECEIVE_REQUEST id={id} peer={peer} files={files} total={total} sender={sender}"
+                    );
+                    if !names.is_empty() {
+                        println!("RECEIVE_REQUEST_FILES id={id} names={names}");
+                    }
+                    requests.insert(id, request);
+                }
+                Some(ReceiverEvent::Urls { id, urls }) => {
+                    println!("RECEIVE_URLS id={id} urls={urls:?}");
+                }
+                Some(ReceiverEvent::Received { id, paths }) => {
+                    requests.remove(&id);
+                    active_receives.remove(&id);
+                    // `paths` is in the receiver's staging top-level order,
+                    // which is the order the upload archive listed the offered
+                    // items. That makes the position a stable index even when
+                    // a collision renames the final path.
+                    for (index, path) in paths.iter().enumerate() {
+                        println!("RECEIVED id={id} path={}", path.display());
+                        println!(
+                            "RECEIVE_FILE_DONE index={index} id={id} name={} path={}",
+                            display_name(path),
+                            path.display()
+                        );
+                    }
+                    println!("RECEIVE_DONE id={id}");
+                }
+                Some(ReceiverEvent::Failed { id, reason }) => {
+                    requests.remove(&id);
+                    active_receives.remove(&id);
+                    println!("RECEIVE_FAILED id={id} reason={reason}");
+                }
+                Some(ReceiverEvent::Withdrawn { id }) => {
+                    requests.remove(&id);
+                    active_receives.remove(&id);
+                    println!("RECEIVE_WITHDRAWN id={id}");
+                }
+                None => {}
+            },
             command = cmd_rx.recv() => {
                 let Some(line) = command else { break };
                 let mut parts = line.splitn(4, ' ');
@@ -639,71 +959,203 @@ async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
                         println!("SCAN_DONE {id}");
                     }
                     "send" => {
-                        let id = parts.next().unwrap_or("send");
-                        let mac = parts.next().unwrap_or("");
-                        let path = parts.next().unwrap_or("");
+                        let id = parts.next().unwrap_or("send").to_string();
+                        let mac = parts.next().unwrap_or("").to_string();
+                        let path = parts.next().unwrap_or("").to_string();
                         if mac.is_empty() || path.is_empty() {
                             println!("SEND_ERR {id} missing target or path");
                             continue;
                         }
-                        match find_and_send(
-                            &sender,
-                            index,
-                            &mut browse,
-                            &mut peers_rx,
-                            &names,
-                            &mut known,
-                            &PathBuf::from(path),
-                            Some(mac),
-                        ).await {
-                            Ok(()) => println!("SEND_OK {id}"),
-                            Err(e) => println!("SEND_ERR {id} {e}"),
+                        if send_active.swap(true, Ordering::SeqCst) {
+                            println!("SEND_ERR {id} send already active");
+                            continue;
+                        }
+                        // Resets `send_active` when the task ends, including on
+                        // a panic, so one stuck task can't block sends for good.
+                        let send_slot = SendActive(Arc::clone(&send_active));
+                        // One file per send task, so this card is the whole
+                        // transfer. The file size is the uncompressed size;
+                        // progress totals below are the compressed upload body.
+                        // New fields go before `id=` so the app's existing
+                        // `total=`-last parsing keeps working.
+                        let path = PathBuf::from(path);
+                        let source_total = file_total(&path);
+                        println!(
+                            "SEND_FILE_START source_total={source_total} id={id} name={} total={source_total}",
+                            display_name(&path)
+                        );
+                        let sender = Arc::clone(&sender);
+                        let mut send_peers = peers_rx.clone();
+                        let send_names = Arc::clone(&names);
+                        tokio::spawn(async move {
+                            let _send_slot = send_slot;
+                            let mdns = Mdns::new(index);
+                            let mut send_browse = match mdns.browse().await {
+                                Ok(browse) => browse,
+                                Err(e) => {
+                                    println!(
+                                        "SEND_FILE_ERR source_total={source_total} id={id} reason=mdns: {e}"
+                                    );
+                                    println!("SEND_ERR {id} mdns: {e}");
+                                    return;
+                                }
+                            };
+                            let mut send_known = HashMap::new();
+                            let result = find_and_send(
+                                sender.as_ref(),
+                                index,
+                                &mut send_browse,
+                                &mut send_peers,
+                                &send_names,
+                                &mut send_known,
+                                &path,
+                                source_total,
+                                Some(&mac),
+                                Some(&id),
+                            ).await;
+                            match result {
+                                Ok(Outcome::Delivered) => {
+                                    println!(
+                                        "SEND_FILE_DONE source_total={source_total} id={id} path={}",
+                                        path.display()
+                                    );
+                                    println!("SEND_OK {id}");
+                                }
+                                Ok(outcome) => {
+                                    let reason = outcome_reason(&outcome);
+                                    println!(
+                                        "SEND_FILE_ERR source_total={source_total} id={id} reason={reason}"
+                                    );
+                                    println!("SEND_ERR {id} {reason}");
+                                }
+                                Err(e) => {
+                                    println!(
+                                        "SEND_FILE_ERR source_total={source_total} id={id} reason={e}"
+                                    );
+                                    println!("SEND_ERR {id} {e}");
+                                }
+                            }
+                        });
+                    }
+                    "accept" => {
+                        let id = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
+                        match id.and_then(|id| requests.remove(&id).map(|request| (id, request))) {
+                            Some((id, request)) => {
+                                let total = offer_total(&request.ask.offer);
+                                let files = offer_files(&request.ask.offer);
+                                request.accept();
+                                // The receiver API has no per-file progress, so
+                                // start every offered file now and report only
+                                // aggregate bytes until each file lands. URL
+                                // shares have no files and no upload to track.
+                                if !files.is_empty() {
+                                    active_receives.insert(
+                                        id,
+                                        ActiveReceive {
+                                            total,
+                                            last_bytes: 0,
+                                            last_progress: Instant::now(),
+                                        },
+                                    );
+                                }
+                                println!("RECEIVE_ACCEPTED id={id} total={total}");
+                                for (index, (name, size)) in files.into_iter().enumerate() {
+                                    println!(
+                                        "RECEIVE_FILE_START index={index} id={id} name={name} total={}",
+                                        size.unwrap_or(0)
+                                    );
+                                }
+                            }
+                            None => println!("RECEIVE_ERROR unknown_request"),
+                        }
+                    }
+                    "decline" => {
+                        let id = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
+                        match id.and_then(|id| requests.remove(&id).map(|request| (id, request))) {
+                            Some((id, request)) => {
+                                request.decline();
+                                println!("RECEIVE_DECLINED id={id}");
+                            }
+                            None => println!("RECEIVE_ERROR unknown_request"),
                         }
                     }
                     "quit" => break,
                     other => println!("SESSION_ERROR unknown_command={other}"),
                 }
             }
+            // Transfer priority: mDNS browse output is non-urgent. During a
+            // transfer it is drained and dropped so the browse task doesn't
+            // block, and discovery resumes from the AWDL peer watch after.
             event = browse.events.recv() => match event {
+                None => break,
+                Some(_) if transfer_paused => {}
                 Some(BrowseEvent::Found(found)) => println!(
                     "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
                     found.instance, found.host, found.addr, found.port, found.flags
                 ),
                 Some(BrowseEvent::Lost(instance)) => println!("LOST instance={instance:?}"),
-                None => break,
             },
-            changed = peers_rx.changed() => {
-                if changed.is_ok() {
+            // Aggregate receive progress. The receiver library reports only
+            // `Received { paths }` at completion, so there is no per-file
+            // progress event to forward. Staging directories are randomly
+            // named and carry no request id, so with more than one accepted
+            // upload they cannot be attributed to a transfer; their layout can
+            // also differ from the offered names (wrapped files are flattened,
+            // sidecars are skipped). Emitting per-file progress from that would
+            // be a guess, so this stays aggregate and per-file start/done above
+            // are the only per-file signals.
+            _ = progress_ticker.tick(), if !active_receives.is_empty() => {
+                let (bytes, files) = staging_usage(&receive_dir);
+                let now = Instant::now();
+                let mut stalled = Vec::new();
+                for (id, state) in active_receives.iter_mut() {
+                    if bytes != state.last_bytes {
+                        state.last_bytes = bytes;
+                        state.last_progress = now;
+                    } else if state.last_progress.elapsed() >= RECEIVE_STALL_TIMEOUT {
+                        stalled.push(*id);
+                    }
+                }
+                for id in stalled {
+                    active_receives.remove(&id);
+                    println!("RECEIVE_FAILED id={id} reason=no upload progress");
+                }
+                if let Some((id, state)) = active_receives.iter().next() {
+                    println!(
+                        "RECEIVE_PROGRESS id={id} bytes={bytes} total={} files={files}",
+                        state.total
+                    );
+                }
+            },
+            _ = peer_ticker.tick() => {
+                if !transfer_paused {
                     let peers = peers_rx.borrow().clone();
                     let names_snapshot = names.lock().unwrap().clone();
                     emit_peer_updates(&mut known, &peers, &names_snapshot);
-                    println!("AWDL peers now: {} {:?}", peers.len(), peers);
                 }
-            },
-            _ = sleep(Duration::from_secs(1)) => {
-                let peers = peers_rx.borrow().clone();
-                let names_snapshot = names.lock().unwrap().clone();
-                emit_peer_updates(&mut known, &peers, &names_snapshot);
             }
         }
+        // The transfer state is send-task activity plus accepted uploads.
+        // Changing it stops or restarts the name sniffer and is announced so
+        // the UI can show that discovery is paused.
+        let paused_now = send_active.load(Ordering::SeqCst) || !active_receives.is_empty();
+        update_transfer_pause(&mut sniffer, &mut transfer_paused, paused_now);
     }
 
-    if let Some(child) = sniffer.as_mut() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    sniffer.stop();
     native.stop();
     println!("SESSION_STOPPED");
     Ok(())
 }
 
 fn offer_summary(offer: &Offer) -> (usize, u64, String) {
+    let total = offer_total(offer);
     match offer {
         Offer::Files(files) => {
-            let total = files.iter().filter_map(|file| file.size).sum();
+            // Every offered top-level name, in offer order. The app caps how
+            // many it displays; the helper must not hide files from it.
             let names = files
                 .iter()
-                .take(3)
                 .map(|file| file.name.clone())
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -711,14 +1163,17 @@ fn offer_summary(offer: &Offer) -> (usize, u64, String) {
         }
         Offer::Urls(urls) => (
             urls.len(),
-            0,
-            urls.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
+            total,
+            urls.iter().cloned().collect::<Vec<_>>().join(", "),
         ),
     }
 }
 
 fn offer_total(offer: &Offer) -> u64 {
-    offer_summary(offer).1
+    match offer {
+        Offer::Files(files) => files.iter().filter_map(|file| file.size).sum(),
+        Offer::Urls(_) => 0,
+    }
 }
 
 /// Bytes and files currently staged for an upload. Staging directories are
@@ -819,8 +1274,15 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
                 Some(ReceiverEvent::Received { id, paths }) => {
                     requests.remove(&id);
                     active.remove(&id);
-                    for path in &paths {
+                    // Same order as `RECEIVE_FILE_START`: the receiver returns
+                    // staging top-level paths in upload archive order.
+                    for (index, path) in paths.iter().enumerate() {
                         println!("RECEIVED id={id} path={}", path.display());
+                        println!(
+                            "RECEIVE_FILE_DONE index={index} id={id} name={} path={}",
+                            display_name(path),
+                            path.display()
+                        );
                     }
                     println!("RECEIVE_DONE id={id}");
                 }
@@ -845,9 +1307,18 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
                     ("accept", Some(id)) => match requests.remove(&id) {
                         Some(request) => {
                             let total = offer_total(&request.ask.offer);
-                            active.insert(id, total);
+                            let files = offer_files(&request.ask.offer);
+                            if !files.is_empty() {
+                                active.insert(id, total);
+                            }
                             request.accept();
                             println!("RECEIVE_ACCEPTED id={id} total={total}");
+                            for (index, (name, size)) in files.into_iter().enumerate() {
+                                println!(
+                                    "RECEIVE_FILE_START index={index} id={id} name={name} total={}",
+                                    size.unwrap_or(0)
+                                );
+                            }
                         }
                         None => println!("RECEIVE_ERROR id={id} unknown_request"),
                     },
