@@ -1,16 +1,23 @@
-# Shared radio helpers
+# Production scripts
 
-These scripts are shared monitor/AWDL experiments used across the two devices.
+- `build-app.sh` — build the Rust helper from `third_party/owly`, copy it into
+  `android-app/assets/`, and build the APK.
+- `droidy-adb.sh` — ADB control/log interface for the running app.
 
-- `monitor-recv.c`, `monitor-ack.c`, `monitor-send-frame.c` — raw monitor tools
-- `nl80211-*.c`, `nl80211-*.sh` — channel/interface/mgmt-frame experiments
-- `inject-probe.c`, `inject-probe.py` — probe injection helpers
-- `awdl-capture.sh`, `awdl-pcap.sh`, `monitor-test.sh` — capture helpers
-- `adb-root.sh`, `dmesg-log.sh` — device diagnostics
+The app bundles only:
 
-Device-specific scripts live in:
+```text
+owly-mode.sh
+owly-k20-helper
+```
 
-- `../workspaces/chenfeng/scripts/`
-- `../workspaces/raphael/scripts/`
+`owly-mode.sh` is tracked in `android-app/app/src/main/assets/`.
 
-Compiled aarch64 helpers are in `../workspaces/shared/bin/`.
+Monitor/injection C tools, capture helpers, and bring-up shell experiments are
+kept on the investigation branches:
+
+```text
+investigation/exclusive
+investigation/shared
+experiments/investigation-tools
+```
