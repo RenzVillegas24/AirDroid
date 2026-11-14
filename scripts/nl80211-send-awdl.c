@@ -138,10 +138,13 @@ static int send_cmd(int nl, int family, int seq, int cmd, int ifindex,
     req.g.version = 0;
     if (cmd == NL80211_CMD_REGISTER_FRAME) {
         uint16_t ft = 0x00d0;
-        uint8_t match = 0xd0;
+        static const uint8_t match[] = {
+            0x7f, 0x00, 0x17, 0xf2, 0x08, /* AWDL vendor action, Apple OUI */
+        };
         addattr32(&req.n, sizeof(req), NL80211_ATTR_IFINDEX, ifindex);
         addattr_l(&req.n, sizeof(req), NL80211_ATTR_FRAME_TYPE, &ft, 2);
-        addattr_l(&req.n, sizeof(req), NL80211_ATTR_FRAME_MATCH, &match, 1);
+        addattr_l(&req.n, sizeof(req), NL80211_ATTR_FRAME_MATCH,
+                  match, sizeof(match));
     } else {
         addattr32(&req.n, sizeof(req), NL80211_ATTR_IFINDEX, ifindex);
         addattr32(&req.n, sizeof(req), NL80211_ATTR_WIPHY_FREQ, g_freq);
