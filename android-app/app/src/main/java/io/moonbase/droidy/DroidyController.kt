@@ -349,6 +349,13 @@ class DroidyController(private val context: Context) {
         selectedMac = peer.mac
     }
 
+    /** Selects a peer by runtime MAC for the ADB debug interface. */
+    fun selectPeerByMac(mac: String): Boolean {
+        val peer = peers.firstOrNull { it.mac.equals(mac, ignoreCase = true) } ?: return false
+        selectPeer(peer)
+        return true
+    }
+
     fun isPinned(mac: String): Boolean = pinnedPeers.contains(mac.lowercase())
 
     fun togglePinned(mac: String) {
@@ -2089,12 +2096,12 @@ class DroidyController(private val context: Context) {
         when {
             line.startsWith("SEND_FILE_START ") -> {
                 val helperId = eventId(line)
-                val name = between(line, "name=", " total=")
                 val total = after(line, "total=").toLongOrNull() ?: 0L
                 val transferId = resolveSendTransferId(helperId) ?: return
                 updateTransfer(transferId) { item ->
+                    // `name=` is the cache basename, not the user's source
+                    // filename; keep the name chosen by the picker.
                     item.copy(
-                        fileName = name.ifBlank { item.fileName },
                         totalBytes = if (total > 0) total else item.totalBytes,
                     )
                 }
@@ -2367,7 +2374,9 @@ class DroidyController(private val context: Context) {
             logs.add("")
         } else {
             val stamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
-            logs.addAll(line.split('\n').map { "$stamp  $it" })
+            val lines = line.split('\n').map { "$stamp  $it" }
+            logs.addAll(lines)
+            lines.forEach { Log.i("DroidyLog", it) }
         }
         if (logs.size > 2500) logs.removeRange(0, logs.size - 2000)
     }

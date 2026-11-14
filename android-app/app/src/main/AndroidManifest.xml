@@ -27,6 +27,11 @@
             android:stopWithTask="false" />
 
         <receiver
+            android:name=".DebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
+        <receiver
             android:name=".TransferActionReceiver"
             android:exported="false" />
 
