@@ -1544,7 +1544,7 @@ private fun SettingsScreen(controller: DroidyController) {
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text(
-                        text = "Droidy K20",
+                        text = "Droidy",
                         style = MaterialTheme.typography.titleLarge,
                         color = colors.onSurface,
                     )
