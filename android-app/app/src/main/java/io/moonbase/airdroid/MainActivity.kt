@@ -2337,8 +2337,6 @@ private fun SettingsScreen(controller: AirDroidController) {
                         color = colors.primary,
                     )
                     Spacer(Modifier.height(12.dp))
-                    HorizontalDivider(color = colors.outlineVariant)
-                    Spacer(Modifier.height(10.dp))
                     Text(
                         text = "DEVELOPER",
                         style = MaterialTheme.typography.labelSmall,
