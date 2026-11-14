@@ -6,7 +6,7 @@ import android.content.Intent
 import java.util.concurrent.TimeUnit
 
 /**
- * Applies the AirDrop-mode boot flag after Android has finished booting.
+ * Applies the Transfer-mode boot flag after Android has finished booting.
  *
  * KernelSU's service.d scripts are not executed on this K20 build, so the
  * reboot-enter path uses a normal BOOT_COMPLETED receiver with root instead.
@@ -18,7 +18,7 @@ class BootReceiver : BroadcastReceiver() {
         Thread {
             try {
                 val command = """
-                    FLAG=/data/adb/owly-airdrop-mode
+                    FLAG=/data/adb/owly-transfer-mode
                     CON_MODE=/sys/module/wlan/parameters/con_mode
                     LOG=/data/local/tmp/owly-mode-boot.log
                     [ -e "${'$'}FLAG" ] || exit 0

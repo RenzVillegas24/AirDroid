@@ -66,6 +66,6 @@ adb logcat -d -s AirDroidLog:D '*:S'
 ## Notes
 
 - The receiver only works while the app process/controller is alive. The
-  foreground service keeps it alive in the background during AirDrop mode.
+  foreground service keeps it alive in the background during Transfer mode.
 - Debug broadcasts are a local development surface; remove them before a
   public release if the threat model changes.

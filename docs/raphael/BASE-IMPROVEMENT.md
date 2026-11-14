@@ -37,7 +37,7 @@ connect. The improved base must:
 - Android Wi-Fi connects normally;
 - no `wlan0` monitor and no `wlan_inj*`.
 
-### AirDrop mode
+### Transfer mode
 
 Two entry paths:
 
@@ -46,7 +46,7 @@ Two entry paths:
    `/sys/module/wlan/parameters/con_mode`, bring `wlan0` up. The reverse
    sequence returns to Wi-Fi without rebooting.
 2. **Boot flag**:
-   write `/data/adb/owly-airdrop-mode`, reboot; the app's `BOOT_COMPLETED`
+   write `/data/adb/owly-transfer-mode`, reboot; the app's `BOOT_COMPLETED`
    receiver disables Wi-Fi and writes `con_mode=4`. Exit removes the flag and
    reboots. KernelSU `service.d` scripts were tested and do not run on this
    K20 build.
@@ -64,7 +64,7 @@ reboot.
 ## Base data path
 
 ```text
-AirDrop mode
+Transfer mode
   wlan0            global monitor, fixed channel 44
   wlan_inj0        hidden STA vdev, WMI TX tag only
   awdl0            TAP data interface
@@ -80,7 +80,7 @@ used as the AWDL identity.
 - `pack-base-mission.sh` — packs the base monitor+hidden-STA kernel without
   `wlan.con_mode=4`; kept on the investigation branches.
 - `android-app/app/src/main/java/io/moonbase/airdroid/BootReceiver.kt` — applies
-  the AirDrop-mode flag after boot.
+  the Transfer-mode flag after boot.
 - `android-app/app/src/main/assets/owly-mode.sh` — packaged copy of the mode
   switcher installed by the app.
 - `android-app/helper/src/main.rs` — reads the monitor MAC for the AWDL

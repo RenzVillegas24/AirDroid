@@ -934,10 +934,10 @@ class AirDroidController(private val context: Context) {
     private fun requireMonitorKernel(): Boolean {
         if (kernel.monitorReady) return true
         status = kernel.state.badge
-        sendMessage = "Enter AirDrop mode to use the radio."
+        sendMessage = "Enter Transfer mode to use the radio."
         append("")
         append("Radio action blocked: ${kernel.detail}")
-        append("Use Enter AirDrop mode; if the live switch fails, use Reboot into AirDrop mode.")
+        append("Use Enter Transfer mode; if the live switch fails, use Reboot into Transfer mode.")
         return false
     }
 
@@ -974,17 +974,17 @@ class AirDroidController(private val context: Context) {
         }
     }
 
-    fun enterAirDropMode(reboot: Boolean = false) {
+    fun enterTransferMode(reboot: Boolean = false) {
         if (modeSwitching || sending) return
         scope.launch {
             modeSwitching = true
-            status = if (reboot) "REBOOTING" else "ENTERING AIRDROP"
+            status = if (reboot) "REBOOTING" else "ENTERING TRANSFER"
             val action = if (reboot) "reboot-enter" else "enter"
             modeAction = action
             append("")
-            append(if (reboot) "Rebooting into AirDrop mode..." else "Entering AirDrop mode...")
+            append(if (reboot) "Rebooting into Transfer mode..." else "Entering Transfer mode...")
             val rc = execRoot(
-                label = "enter AirDrop mode",
+                label = "enter Transfer mode",
                 command = "$APP_TMP/owly-mode.sh $action",
             )
             modeAction = null
@@ -992,32 +992,32 @@ class AirDroidController(private val context: Context) {
             if (reboot && rc == 0) return@launch
             if (rc == 0) {
                 refreshKernelStatus()
-                append("AirDrop mode: ${kernel.detail}")
+                append("Transfer mode: ${kernel.detail}")
                 scan()
             } else {
                 status = "WIFI MODE"
-                sendMessage = "Could not enter AirDrop mode. Try again."
-                append("Enter AirDrop mode failed; check the log and try again.")
+                sendMessage = "Could not enter Transfer mode. Try again."
+                append("Enter Transfer mode failed; check the log and try again.")
             }
         }
     }
 
-    fun exitAirDropMode(reboot: Boolean = false) {
+    fun exitTransferMode(reboot: Boolean = false) {
         if (modeSwitching || sending) return
         scope.launch {
             modeSwitching = true
-            status = if (reboot) "REBOOTING" else "LEAVING AIRDROP"
+            status = if (reboot) "REBOOTING" else "LEAVING TRANSFER"
             val action = if (reboot) "reboot-exit" else "exit"
             modeAction = action
             append("")
-            append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving AirDrop mode...")
+            append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving Transfer mode...")
             if (!reboot) {
                 stopSession()
                 scanning = false
                 runCatching { AirDroidService.stop(context) }
             }
             val rc = execRoot(
-                label = "exit AirDrop mode",
+                label = "exit Transfer mode",
                 command = "$APP_TMP/owly-mode.sh $action",
             )
             modeAction = null
@@ -1027,9 +1027,9 @@ class AirDroidController(private val context: Context) {
                 refreshKernelStatus()
                 append("Wi-Fi mode: ${kernel.detail}")
             } else {
-                status = "AIRDROP"
+                status = "TRANSFER"
                 sendMessage = "Could not restore Wi-Fi. Reboot to Wi-Fi mode."
-                append("Exit AirDrop mode failed; reboot to restore Wi-Fi.")
+                append("Exit Transfer mode failed; reboot to restore Wi-Fi.")
             }
         }
     }

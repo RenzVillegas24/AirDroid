@@ -53,11 +53,11 @@ repository root and on the investigation branches.
 
 ## Use
 
-1. Open **Settings → Radio mode → Enter AirDrop mode**.
+1. Open **Settings → Radio mode → Enter Transfer mode**.
 2. Open AirDrop on the iPhone when a live test is intended.
 3. Select a nearby peer to send a file or text.
 4. Incoming offers show a foreground dialog or a background notification.
-5. **Settings → Radio mode → Exit AirDrop mode** restores Wi-Fi.
+5. **Settings → Radio mode → Exit Transfer mode** restores Wi-Fi.
 
 ## ADB debugging
 
