@@ -16,6 +16,52 @@ built as a Jetpack Compose Android app with a Rust radio/AirDrop helper.
 The K20's internal WCN3990 radio is the target. External USB Wi-Fi is out of
 scope.
 
+## Investigation results
+
+### K20 Pro / WCN3990
+
+- Monitor mode works with `wlan.con_mode=4`; `wlan0` reports type `803`.
+- The hidden injection STA (`wlan_inj*`) is created by the kernel patch and
+  its address is read at runtime. It is not hardcoded.
+- Injected probe requests, AWDL PSF/MIF frames, and peer discovery were
+  verified with monitor captures.
+- The first controlled upload succeeded against an Arch Owly receiver on
+  5 GHz channel 44.
+- The first iPhone AirDrop transfer succeeded with the same setup, using the
+  driver-provided hidden-STA address and the AWDL Service Response name.
+- Live Wi-Fi ↔ AirDrop switching works after the invalid-vdev and cached-vdev
+  teardown fixes; normal boot stays on Wi-Fi.
+- The fixed-channel TX scheduler in the Owly fork removed the observed
+  ~11.4-second transmit holes. A 20 MB random upload then reached 12.7 MB
+  continuously before the test was stopped.
+- Receive progress was steady in the captured sample (~150 KB/s); receive
+  throughput optimization is still pending.
+
+### Civi / `chenfeng`
+
+- The internal QCA6750 path is blocked by signed WPSS firmware and monitor-TX
+  behavior.
+- The K20 Pro remains the working production target.
+
+### Android app
+
+- Unified Home with Sent/Received tabs and per-file transfer cards.
+- Foreground incoming-request dialog and background Accept/Decline
+  notification.
+- Foreground service keeps the receiver/controller alive while backgrounded.
+- ADB control/log interface (`scripts/droidy-adb.sh`, `DroidyLog`,
+  `DroidyDebug`).
+- Open/Share uses the received directory directly; no cache copy.
+
+Full bring-up logs, monitor/injection tools, captures, and boot-image
+experiments are preserved on:
+
+```text
+investigation/exclusive
+investigation/shared
+experiments/investigation-tools
+```
+
 ## Production layout
 
 ```text
