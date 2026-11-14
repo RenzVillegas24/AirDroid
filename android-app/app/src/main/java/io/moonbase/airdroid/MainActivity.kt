@@ -105,6 +105,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -467,6 +468,7 @@ private fun AirDroidFloatingToolbar(
         var pressed by remember { mutableStateOf(false) }
         var hoveredIndex by remember { mutableIntStateOf(selectedIndex) }
         var fingerX by remember { mutableFloatStateOf(0f) }
+        var dragDelta by remember { mutableStateOf(Offset.Zero) }
         val density = LocalDensity.current
         val fingerOffset = with(density) {
             (fingerX.toDp() - itemSize / 2).coerceIn(
@@ -477,20 +479,59 @@ private fun AirDroidFloatingToolbar(
         val indicatorOffset by animateDpAsState(
             targetValue = if (pressed) fingerOffset else itemSize * selectedIndex,
             animationSpec = if (pressed) {
-                tween(durationMillis = 45)
+                spring(dampingRatio = 0.95f, stiffness = 1800f)
             } else {
-                spring(dampingRatio = 0.82f, stiffness = 420f)
+                spring(dampingRatio = 0.82f, stiffness = 260f)
             },
             label = "toolbar selection",
         )
         val toolbarScale by animateFloatAsState(
             targetValue = if (pressed) 1.045f else 1f,
-            animationSpec = spring(dampingRatio = 0.78f, stiffness = 360f),
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
             label = "toolbar scale",
+        )
+        val highlightScale by animateFloatAsState(
+            targetValue = if (pressed) 1.07f else 1f,
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 700f),
+            label = "highlight scale",
+        )
+        val barShiftX by animateDpAsState(
+            targetValue = if (pressed) {
+                with(density) {
+                    (dragDelta.x.toDp() * 0.06f).coerceIn((-6).dp, 6.dp)
+                }
+            } else {
+                0.dp
+            },
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
+            label = "toolbar x",
+        )
+        val barShiftY by animateDpAsState(
+            targetValue = if (pressed) {
+                with(density) {
+                    (dragDelta.y.toDp() * 0.06f).coerceIn((-4).dp, 4.dp)
+                }
+            } else {
+                0.dp
+            },
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
+            label = "toolbar y",
+        )
+        val barRotation by animateFloatAsState(
+            targetValue = if (pressed) {
+                (dragDelta.x / density.density * 0.02f).coerceIn(-2f, 2f)
+            } else {
+                0f
+            },
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
+            label = "toolbar tilt",
         )
         HorizontalFloatingToolbar(
             expanded = true,
             modifier = Modifier.graphicsLayer {
+                translationX = barShiftX.toPx()
+                translationY = barShiftY.toPx()
+                rotationZ = barRotation
                 scaleX = toolbarScale
                 scaleY = toolbarScale
             },
@@ -510,7 +551,9 @@ private fun AirDroidFloatingToolbar(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         fun indexAt(x: Float): Int =
                             (x / itemSize.toPx()).toInt().coerceIn(0, TOOLBAR_TABS.lastIndex)
+                        val downPosition = down.position
                         fingerX = down.position.x
+                        dragDelta = Offset.Zero
                         hoveredIndex = indexAt(down.position.x)
                         pressed = true
                         var released = false
@@ -521,12 +564,14 @@ private fun AirDroidFloatingToolbar(
                                 released = true
                             } else {
                                 fingerX = change.position.x
+                                dragDelta = change.position - downPosition
                                 hoveredIndex = indexAt(change.position.x)
                                 released = !change.pressed
                                 change.consume()
                             }
                         }
                         pressed = false
+                        dragDelta = Offset.Zero
                         onSelected(TOOLBAR_TABS[hoveredIndex])
                     }
                 },
@@ -535,6 +580,10 @@ private fun AirDroidFloatingToolbar(
                     modifier = Modifier
                         .offset(x = indicatorOffset)
                         .size(itemSize)
+                        .graphicsLayer {
+                            scaleX = highlightScale
+                            scaleY = highlightScale
+                        }
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary),
                 )
@@ -547,7 +596,7 @@ private fun AirDroidFloatingToolbar(
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                            animationSpec = tween(durationMillis = 120),
+                            animationSpec = tween(durationMillis = 90, easing = FastOutSlowInEasing),
                             label = "toolbar icon tint",
                         )
                         Box(
