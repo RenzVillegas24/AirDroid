@@ -204,6 +204,7 @@ class AirDroidController(private val context: Context) {
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
         private val ASSETS = arrayOf(
             "owly-mode.sh",
+            "owly-watchdog.sh",
             "owly-k20-helper",
         )
     }
@@ -2397,6 +2398,23 @@ class AirDroidController(private val context: Context) {
             command = "echo $pid > $MONITOR_OWNER_PATH",
             requirePrepared = false,
         )
+        if (pid > 0) {
+            execRoot(
+                label = "start Wi-Fi watchdog",
+                command = "old=$(cat /data/local/tmp/owly-watchdog.pid 2>/dev/null); " +
+                    "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
+                    "setsid $APP_TMP/owly-watchdog.sh $pid >/dev/null 2>&1 < /dev/null &",
+                requirePrepared = false,
+            )
+        } else {
+            execRoot(
+                label = "stop Wi-Fi watchdog",
+                command = "old=$(cat /data/local/tmp/owly-watchdog.pid 2>/dev/null); " +
+                    "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
+                    "rm -f /data/local/tmp/owly-watchdog.pid; true",
+                requirePrepared = false,
+            )
+        }
     }
 
     private fun restoreWifiOnCloseBlocking() {
