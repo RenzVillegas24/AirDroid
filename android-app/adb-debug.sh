@@ -3,7 +3,8 @@
 # Usage: printf '%s' 'id; uname -a' | ./adb-debug.sh
 set -euo pipefail
 SERIAL="${ADB_SERIAL:?set ADB_SERIAL}"
-TOKEN="droidy-local-debug"
+TOKEN="$(adb -s "$SERIAL" shell run-as io.moonbase.droidy cat files/debug-token 2>/dev/null | tr -d '\r')"
+[ -n "$TOKEN" ] || { echo "debug token missing; launch the debug app once" >&2; exit 1; }
 TIMEOUT="${TIMEOUT:-30}"
 WAIT="${WAIT:-3}"
 CMD="$(cat)"

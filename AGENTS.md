@@ -21,6 +21,13 @@ response, peer-discovery, or other live-iPhone test is needed.**
 - Treat any captured iPhone AWDL frames as RX-only evidence unless AirDrop
   was explicitly confirmed open for that specific run.
 
+## Privacy/hardcoding rule
+
+Never commit MAC addresses, BSSIDs, SSIDs, serial numbers, IP addresses,
+tokens, or other device-specific identifiers. Use placeholders such as
+`<redacted-mac>` and `<redacted-bssid>` in docs. Read device values at runtime;
+do not hardcode them in app or helper code.
+
 ## Safety/restore rule
 
 After monitor/P2P/driver experiments, restore the stock driver and working

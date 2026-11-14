@@ -129,8 +129,10 @@ printf '%s' 'id; uname -a; cat /sys/module/wlan/parameters/con_mode' \
   | ./adb-debug.sh
 ```
 
-The receiver requires the local token in `DebugReceiver.kt` and is intended
-only for debug builds. Set `ADB_SERIAL` explicitly before using `adb-debug.sh`.
+The receiver is included only in debug builds. It generates a random
+per-install token under the app's private files directory; `adb-debug.sh` and
+`adb-ble.sh` read that token with `run-as`. Set `ADB_SERIAL` explicitly before
+using them.
 
 Useful radio checks:
 
