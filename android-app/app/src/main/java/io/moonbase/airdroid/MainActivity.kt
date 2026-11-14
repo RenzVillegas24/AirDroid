@@ -132,6 +132,7 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import androidx.core.content.ContextCompat
@@ -286,18 +287,19 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
         tab = TOOLBAR_TABS[pagerState.currentPage]
     }
     var pageJob by remember { mutableStateOf<Job?>(null) }
-    var toolbarTransition by remember { mutableStateOf(false) }
+    var tapTarget by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
         if (!pagerState.isScrollInProgress &&
-            pagerState.currentPage == TOOLBAR_TABS.indexOf(tab)
+            tapTarget != null &&
+            pagerState.currentPage == tapTarget
         ) {
-            toolbarTransition = false
+            tapTarget = null
         }
     }
     fun selectTab(next: AirDroidTab) {
         val target = TOOLBAR_TABS.indexOf(next)
         if (target == pagerState.currentPage && pagerState.currentPageOffsetFraction == 0f) return
-        toolbarTransition = true
+        tapTarget = target
         tab = next
         pageJob?.cancel()
         pageJob = scope.launch {
@@ -340,8 +342,7 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
         AirDroidFloatingToolbar(
             selected = tab,
             pagerPosition = pagerState.currentPage + pagerState.currentPageOffsetFraction,
-            pagerScrolling = pagerState.isScrollInProgress,
-            toolbarTransition = toolbarTransition,
+            tapTarget = tapTarget,
             onSelected = ::selectTab,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
@@ -480,8 +481,7 @@ private fun TopBarPage(
 private fun AirDroidFloatingToolbar(
     selected: AirDroidTab,
     pagerPosition: Float,
-    pagerScrolling: Boolean,
-    toolbarTransition: Boolean,
+    tapTarget: Int?,
     onSelected: (AirDroidTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -513,8 +513,6 @@ private fun AirDroidFloatingToolbar(
                 itemSize * hoveredIndex
             }
         }
-        val indicator = remember { Animatable(0f) }
-        val selectedTargetPx = with(density) { (itemSize * selectedIndex).toPx() }
         val pagerTargetPx = with(density) {
             (itemSize * pagerPosition.coerceIn(0f, TOOLBAR_TABS.lastIndex.toFloat())).toPx()
         }
@@ -530,31 +528,29 @@ private fun AirDroidFloatingToolbar(
                 (itemSize * hoveredIndex).toPx()
             }
         }
-        LaunchedEffect(
-            pressed,
-            selectedIndex,
-            directTargetPx,
-            pagerTargetPx,
-            pagerScrolling,
-            toolbarTransition,
-        ) {
-            when {
-                pressed -> indicator.animateTo(
-                    targetValue = directTargetPx,
-                    animationSpec = spring(dampingRatio = 0.95f, stiffness = 900f),
-                )
-                toolbarTransition -> indicator.animateTo(
-                    targetValue = selectedTargetPx,
-                    animationSpec = spring(dampingRatio = 0.9f, stiffness = 650f),
-                )
-                pagerScrolling -> indicator.snapTo(pagerTargetPx)
-                else -> indicator.animateTo(
-                    targetValue = selectedTargetPx,
-                    animationSpec = spring(dampingRatio = 0.9f, stiffness = 650f),
-                )
-            }
+        val tapTargetPx = tapTarget?.let { target ->
+            with(density) { (itemSize * target).toPx() }
         }
-        val indicatorOffset = with(density) { indicator.value.toDp() }
+        val targetIndicatorPx = when {
+            pressed -> directTargetPx
+            tapTargetPx != null -> tapTargetPx
+            else -> pagerTargetPx
+        }
+        val animatedIndicatorPx by animateFloatAsState(
+            targetValue = targetIndicatorPx,
+            animationSpec = when {
+                pressed -> spring(dampingRatio = 0.95f, stiffness = 1200f)
+                tapTargetPx != null -> spring(dampingRatio = 0.9f, stiffness = 650f)
+                else -> spring(dampingRatio = 0.95f, stiffness = 1200f)
+            },
+            label = "toolbar selection",
+        )
+        val indicatorOffset = with(density) { animatedIndicatorPx.toDp() }
+        val highlightedIndex = with(density) {
+            ((animatedIndicatorPx + itemSize.toPx() / 2) / itemSize.toPx())
+                .roundToInt()
+                .coerceIn(0, TOOLBAR_TABS.lastIndex)
+        }
         val indicatorYOffset = if (pressed && dragMoved) {
             with(density) {
                 ((fingerY.toDp() - itemSize / 2) * 0.08f).coerceIn((-2.5).dp, 2.5.dp)
@@ -684,14 +680,14 @@ private fun AirDroidFloatingToolbar(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     for ((index, tab) in TOOLBAR_TABS.withIndex()) {
-                        val isHighlighted = if (pressed) hoveredIndex == index else selected == tab
+                        val isHighlighted = index == highlightedIndex
                         val tint by animateColorAsState(
                             targetValue = if (isHighlighted) {
                                 MaterialTheme.colorScheme.onPrimary
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                            animationSpec = tween(durationMillis = 90, easing = FastOutSlowInEasing),
+                            animationSpec = tween(durationMillis = 70, easing = FastOutSlowInEasing),
                             label = "toolbar icon tint",
                         )
                         Box(
