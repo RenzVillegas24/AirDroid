@@ -139,7 +139,7 @@ fn find_dnm(bytes: &[u8]) -> Option<String> {
         let declared_end = start
             .checked_sub(1)
             .and_then(|i| bytes.get(i))
-            .map(|len| start.saturating_sub(1).saturating_add(*len as usize))
+            .map(|len| start.saturating_add(*len as usize))
             .unwrap_or(value_start);
         let end = declared_end.max(value_start).min(bytes.len());
         if end > value_start {

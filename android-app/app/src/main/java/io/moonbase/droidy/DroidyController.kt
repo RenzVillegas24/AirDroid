@@ -109,21 +109,21 @@ data class KernelStatus(
         if (effectiveMode == 4) {
             return copy(
                 state = MonitorState.MONITOR,
-                detail = "Root confirmed con_mode=4: monitor + hidden STA is active.",
+                detail = "AirDrop mode is active.",
                 verifiedBy = "root",
             )
         }
         if (effectiveMode == 0) {
             return copy(
                 state = MonitorState.STOCK,
-                detail = "Root confirmed con_mode=0. Normal Wi-Fi mode.",
+                detail = "Wi-Fi mode is active.",
                 verifiedBy = "root",
             )
         }
         if (cmdline.isNotBlank() || conMode != null) {
             return copy(
                 state = MonitorState.STOCK,
-                detail = "Root confirmed no monitor con_mode=4. Normal Wi-Fi mode.",
+                detail = "Wi-Fi mode is active.",
                 verifiedBy = "root",
             )
         }
@@ -162,19 +162,19 @@ data class KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.UNVERIFIED,
-                    detail = "Patched monitor-capable kernel. Reading con_mode with root...",
+                    detail = "Checking radio mode...",
                 )
                 release in STOCK_RELEASES -> KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.STOCK,
-                    detail = "Normal Wi-Fi boot. Android Wi-Fi is active.",
+                    detail = "Wi-Fi mode is active.",
                 )
                 else -> KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.UNVERIFIED,
-                    detail = "Unknown kernel build. Verify the boot command line with root before using the radio.",
+                    detail = "Unsupported kernel. Verify with root to use the radio.",
                 )
             }
         }
