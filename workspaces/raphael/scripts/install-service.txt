@@ -1,2 +1,0 @@
-uid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0
--rwxr-xr-x 1 root root 817 2026-11-13 00:39 /data/adb/service.d/owly-boot-test.sh
