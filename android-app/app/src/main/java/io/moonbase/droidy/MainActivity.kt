@@ -1595,17 +1595,43 @@ private fun SettingsScreen(controller: DroidyController) {
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        text = "TARGET",
+                        text = "VERSION",
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.onSurfaceVariant,
                     )
                     Text(
-                        text = "Xiaomi K20 Pro · raphael · WCN3990",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${BuildConfig.BUILD_TYPE}",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurface,
                     )
                     Text(
-                        text = "io.moonbase.droidy · 1.1-compose",
+                        text = BuildConfig.APPLICATION_ID,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "DEVICE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurface,
+                    )
+                    Text(
+                        text = "Android ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Kernel ${controller.kernel.release}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Radio · WCN3990 · monitor + hidden STA",
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.onSurfaceVariant,
                     )
