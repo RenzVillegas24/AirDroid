@@ -2,9 +2,12 @@
 
 ## Project context
 
-Owly/AirDrop port for Xiaomi 14 Civi (`chenfeng`, QCA6750). Work is documented
-in `docs/INVESTIGATION-LOG.md` and `docs/INTERNAL-RADIO-METHODS.md`. The
-internal radio is the target; external USB Wi-Fi is ruled out.
+Owly/AirDrop port for the Redmi K20 Pro / Mi 9T Pro (`raphael`, WCN3990). The
+production tree is the app, helper, pinned kernel/Owly submodules, build script,
+and setup/ADB docs. Monitor/injection bring-up work lives on the investigation
+branches (`investigation/exclusive`, `investigation/shared`,
+`experiments/investigation-tools`). The internal radio is the target; external
+USB Wi-Fi is ruled out.
 
 ## AirDrop testing rule
 

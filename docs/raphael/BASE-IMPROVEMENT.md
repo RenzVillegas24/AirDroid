@@ -75,10 +75,10 @@ used as the AWDL identity.
 
 ## Files
 
-- `scripts/owly-mode.sh` — `status`, `enter`, `exit`, `reboot-enter`,
-  `reboot-exit`.
-- `workspaces/raphael/scripts/pack-base-mission.sh` — packs the base
-  monitor+hidden-STA kernel without `wlan.con_mode=4`.
+- `android-app/app/src/main/assets/owly-mode.sh` — `status`, `enter`, `exit`,
+  `reboot-enter`, `reboot-exit`.
+- `pack-base-mission.sh` — packs the base monitor+hidden-STA kernel without
+  `wlan.con_mode=4`; kept on the investigation branches.
 - `android-app/app/src/main/java/io/moonbase/droidy/BootReceiver.kt` — applies
   the AirDrop-mode flag after boot.
 - `android-app/app/src/main/assets/owly-mode.sh` — packaged copy of the mode
