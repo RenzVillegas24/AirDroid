@@ -2292,6 +2292,9 @@ private fun SettingsScreen(controller: AirDroidController) {
                     headline = "Developer",
                     supporting = "RenzVillegas24",
                     avatarRes = R.drawable.dev_avatar,
+                    onClick = {
+                        uriHandler.openUri("https://github.com/RenzVillegas24?tab=repositories")
+                    },
                 )
                 SettingsListItem(
                     icon = R.drawable.ic_computer,
