@@ -1962,7 +1962,7 @@ private fun SettingsScreen(controller: AirDroidController) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 240.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { SectionLabel("IDENTITY") }
         item {
@@ -2173,7 +2173,10 @@ private fun SettingsScreen(controller: AirDroidController) {
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(18.dp))
+            }
+        }
+        item {
+            SettingsCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         painter = painterResource(R.drawable.ic_tune),
@@ -2275,7 +2278,10 @@ private fun SettingsScreen(controller: AirDroidController) {
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(18.dp))
+            }
+        }
+        item {
+            SettingsCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         painter = painterResource(R.drawable.ic_bluetooth),
@@ -2313,103 +2319,28 @@ private fun SettingsScreen(controller: AirDroidController) {
         }
         item { SectionLabel("ABOUT") }
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "AirDroid",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = colors.onSurface,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "AirDrop over AWDL · internal WCN3990 radio",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "Jetpack Compose · Material 3",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.primary,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = "DEVELOPER",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "RenzVillegas24",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = colors.onSurface,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = "GITHUB REPOSITORY",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "RenzVillegas24/AirDroid",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.primary,
-                        textDecoration = TextDecoration.Underline,
-                        modifier = Modifier.clickable {
-                            uriHandler.openUri("https://github.com/RenzVillegas24/AirDroid")
-                        },
-                    )
-                    Text(
-                        text = "github.com/RenzVillegas24/AirDroid",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = "VERSION",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${BuildConfig.BUILD_TYPE}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurface,
-                    )
-                    Text(
-                        text = BuildConfig.APPLICATION_ID,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = "DEVICE",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurface,
-                    )
-                    Text(
-                        text = "Android ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "Kernel ${controller.kernel.release}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "Radio · WCN3990 · monitor + hidden STA",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsListItem(
+                    icon = R.drawable.ic_badge,
+                    headline = "Developer",
+                    supporting = "RenzVillegas24",
+                )
+                SettingsListItem(
+                    icon = R.drawable.ic_computer,
+                    headline = "GitHub repository",
+                    supporting = "RenzVillegas24/AirDroid",
+                    onClick = { uriHandler.openUri("https://github.com/RenzVillegas24/AirDroid") },
+                )
+                SettingsListItem(
+                    icon = R.drawable.ic_memory,
+                    headline = "Version",
+                    supporting = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${BuildConfig.BUILD_TYPE}\n${BuildConfig.APPLICATION_ID}",
+                )
+                SettingsListItem(
+                    icon = R.drawable.ic_smartphone,
+                    headline = "Device",
+                    supporting = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nKernel ${controller.kernel.release}\nRadio · WCN3990 · monitor + hidden STA",
+                )
             }
         }
     }
@@ -2444,11 +2375,20 @@ private fun SettingsListItem(
     headline: String,
     supporting: String,
     trailing: String? = null,
+    onClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(onClick = onClick)
+                } else {
+                    Modifier
+                },
+            ),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
     ) {
         ListItem(
@@ -2499,7 +2439,7 @@ private fun SettingsListItem(
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
