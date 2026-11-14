@@ -68,6 +68,7 @@ data class IncomingRequest(
     val sender: String,
     val fileCount: Int,
     val totalBytes: Long,
+    val names: List<String> = emptyList(),
 )
 
 /** One in-flight scan/send command, matched by the helper's request id. */
@@ -279,6 +280,28 @@ class DroidyController(private val context: Context) {
     var pickedFile by mutableStateOf<File?>(null)
         private set
 
+    /** True while MainActivity is started; controls dialog vs notification. */
+    var appForeground by mutableStateOf(false)
+        private set
+
+    /** Live per-file transfers (WAITING/OFFERED/ACCEPTED/TRANSFERRING). */
+    var activeTransfers by mutableStateOf<List<TransferItem>>(emptyList())
+        private set
+
+    /** Terminal per-file transfers (COMPLETE/FAILED/CANCELLED). */
+    var completedTransfers by mutableStateOf<List<TransferItem>>(emptyList())
+        private set
+
+    private var activeSendTransferId: String? = null
+    private var sendTransferCounter = 0
+    private var receiveFileCounter = 0
+    private var incomingRequestNames: List<String> = emptyList()
+    private var lastIncomingPeerName: String = ""
+    private val transferRequestIds = mutableMapOf<String, String>()
+    private val helperFileTransferIds = mutableMapOf<String, String>()
+    private val helperSendFileIds = mutableMapOf<String, String>()
+    private val originalTransferTotals = mutableMapOf<String, Long>()
+
     val logs = mutableStateListOf<String>()
     val receivedFiles = mutableStateListOf<String>()
 
@@ -332,6 +355,57 @@ class DroidyController(private val context: Context) {
             pinnedPeers + key
         }
         prefs.edit().putStringSet("pinnedPeers", pinnedPeers).apply()
+    }
+
+    /**
+     * MainActivity calls this from onStart/onStop. A pending incoming request
+     * is shown as a dialog in the foreground and as a high-priority
+     * notification in the background.
+     */
+    fun setForeground(foreground: Boolean) {
+        if (appForeground == foreground) return
+        appForeground = foreground
+        if (foreground) {
+            notifications.cancelIncomingRequest()
+        } else if (!receiveDecisionPending) {
+            incomingRequest?.let { notifications.showIncomingRequest(it) }
+        }
+    }
+
+    /** Cancels an active outgoing transfer (used by cards and notifications). */
+    fun cancelTransfer(id: String) {
+        val transfer = findTransfer(id) ?: return
+        if (!transfer.canCancel) return
+        if (activeSendTransferId == id) {
+            cancelSend()
+        } else {
+            finishTransfer(id, TransferStatus.CANCELLED, error = "Cancelled")
+        }
+    }
+
+    /** Deletes a completed received file and its history entry. */
+    fun deleteReceivedFile(path: String) {
+        val file = File(path)
+        if (file.exists()) file.delete()
+        receivedFiles.remove(path)
+        val removed = completedTransfers.filter {
+            it.direction == TransferDirection.RECEIVED && it.localPath == path
+        }
+        completedTransfers = completedTransfers.filterNot {
+            it.direction == TransferDirection.RECEIVED && it.localPath == path
+        }
+        removed.forEach { notifications.cancelTransfer(it.id) }
+        notifications.updateTransferSummary(visibleActiveTransferCount())
+    }
+
+    /** Applies Accept/Decline from a request notification action. */
+    fun resolveIncomingFromNotification(requestId: Long, accept: Boolean) {
+        val request = incomingRequest
+        if (request == null || request.id != requestId) {
+            notifications.cancelIncomingRequest()
+            return
+        }
+        if (accept) acceptIncoming() else declineIncoming()
     }
 
     fun clearPickedFile() {
@@ -578,6 +652,7 @@ class DroidyController(private val context: Context) {
             return
         }
         val cleanPath = path.replace('\n', ' ').replace('\r', ' ')
+        val file = File(cleanPath)
         val generation = ++sendGeneration
         sendCancelled = false
         sendProgressBytes = 0
@@ -585,16 +660,32 @@ class DroidyController(private val context: Context) {
         sending = true
         sendCancelling = false
         status = "SENDING"
-        sendMessage = "Sending ${File(cleanPath).name} to ${target.displayName()}..."
-        notifications.updateSend(null, sendMessage, indeterminate = true)
+        sendMessage = "Sending ${file.name} to ${target.displayName()}..."
+        val transfer = TransferItem(
+            id = "tx-${System.currentTimeMillis()}-${++sendTransferCounter}",
+            direction = TransferDirection.SENT,
+            peerName = target.displayName(),
+            fileName = file.name,
+            totalBytes = file.length().coerceAtLeast(0),
+            transferredBytes = 0,
+            status = TransferStatus.WAITING,
+            localPath = cleanPath,
+            startedAt = System.currentTimeMillis(),
+        )
+        activeSendTransferId = transfer.id
+        originalTransferTotals[transfer.id] = file.length().coerceAtLeast(0)
+        upsertTransfer(transfer)
         val rc = runSessionCommand(
             kind = "send",
             timeoutMs = SEND_TIMEOUT_MS,
+            requestId = transfer.id,
             command = { id -> "send $id ${target.mac} $cleanPath" },
         ) { line -> handleSendProgress(line) }
 
         if (generation != sendGeneration) return
         if (sendCancelled) {
+            finishTransfer(transfer.id, TransferStatus.CANCELLED, error = "Cancelled")
+            activeSendTransferId = null
             stopSession()
             sending = false
             sendCancelling = false
@@ -602,7 +693,6 @@ class DroidyController(private val context: Context) {
             sendProgressTotal = 0
             sendMessage = "Send cancelled."
             status = if (kernel.monitorReady) "READY" else kernel.state.badge
-            notifications.cancelSend()
             return
         }
 
@@ -614,18 +704,23 @@ class DroidyController(private val context: Context) {
             "CHECK LOG"
         }
         if (rc == 0) {
-            sendMessage = "Delivered ${File(cleanPath).name}."
-            notifications.completeSend(sendMessage)
+            finishTransfer(transfer.id, TransferStatus.COMPLETE)
+            sendMessage = "Delivered ${file.name}."
         } else {
             if (sendMessage.startsWith("Sending ")) {
                 sendMessage = "Send did not complete; check the log."
             }
-            notifications.failSend(sendMessage)
+            finishTransfer(transfer.id, TransferStatus.FAILED, error = sendMessage)
         }
+        activeSendTransferId = null
     }
 
     private fun handleSendProgress(line: String) {
-        val match = Regex("""progress\s+(\d+)/(\d+)""").find(line)
+        val match = if (line.startsWith("progress ")) {
+            Regex("""progress\s+(\d+)/(\d+)""").find(line)
+        } else {
+            null
+        }
         if (match != null) {
             val sent = match.groupValues[1].toLongOrNull() ?: return
             val total = match.groupValues[2].toLongOrNull() ?: 0L
@@ -641,16 +736,58 @@ class DroidyController(private val context: Context) {
             } else {
                 "Sending ${sent.readableBytes()}"
             }
-            notifications.updateSend(percent, sendMessage, indeterminate = percent == null)
+            activeSendTransferId?.let { id ->
+                updateTransfer(id) { item ->
+                    item.copy(
+                        transferredBytes = sent,
+                        totalBytes = if (total > 0) total else item.totalBytes,
+                        status = if (item.status == TransferStatus.WAITING ||
+                            item.status == TransferStatus.OFFERED
+                        ) {
+                            TransferStatus.TRANSFERRING
+                        } else {
+                            item.status
+                        },
+                    )
+                }
+            }
             return
         }
-        if (line.startsWith("receiver answered") ||
-            line.startsWith("receiver accepted") ||
-            line.startsWith("DONE") ||
-            line.startsWith("send failed")
-        ) {
+        if (line.startsWith("receiver answered")) {
             sendMessage = line.trim()
-            notifications.updateSend(null, sendMessage, indeterminate = true)
+            activeSendTransferId?.let { id ->
+                updateTransfer(id) { item ->
+                    if (item.status == TransferStatus.WAITING) {
+                        item.copy(status = TransferStatus.OFFERED)
+                    } else {
+                        item
+                    }
+                }
+            }
+            return
+        }
+        if (line.startsWith("receiver accepted")) {
+            sendMessage = line.trim()
+            activeSendTransferId?.let { id ->
+                updateTransfer(id) { item ->
+                    if (item.status.isActive && item.status != TransferStatus.TRANSFERRING) {
+                        item.copy(status = TransferStatus.ACCEPTED)
+                    } else {
+                        item
+                    }
+                }
+            }
+            return
+        }
+        if (line.startsWith("DONE")) {
+            sendMessage = line.trim()
+            return
+        }
+        if (line.startsWith("send failed")) {
+            sendMessage = line.trim()
+            activeSendTransferId?.let { id ->
+                finishTransfer(id, TransferStatus.FAILED, error = line.trim())
+            }
         }
     }
 
@@ -664,7 +801,10 @@ class DroidyController(private val context: Context) {
         sendProgressTotal = 0
         sendMessage = "Cancelling send..."
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        notifications.cancelSend()
+        activeSendTransferId?.let { id ->
+            finishTransfer(id, TransferStatus.CANCELLED, error = "Cancelled")
+        }
+        activeSendTransferId = null
         append("")
         append("Send cancelled; stopping the helper session...")
         scope.launch {
@@ -689,19 +829,18 @@ class DroidyController(private val context: Context) {
         receiverStarting = true
         receiverStopping = false
         incomingRequest = null
+        incomingRequestNames = emptyList()
         receiveDecisionPending = false
         receiveTransferring = false
         receiveProgressBytes = 0
         receiveProgressTotal = 0
         status = "RECEIVING"
         receiveMessage = "Announcing on AWDL · waiting for a sender"
-        notifications.updateReceive(null, receiveMessage, indeterminate = true)
         val session = sessionMutex.withLock { ensureSessionLocked() }
         if (session == null) {
             receiverStarting = false
             status = "CHECK LOG"
             receiveMessage = "Receiver could not start."
-            notifications.cancelReceive()
             return
         }
         receiverRunning = true
@@ -714,10 +853,11 @@ class DroidyController(private val context: Context) {
         receiverStopping = true
         receiveMessage = "Stopping receiver..."
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        notifications.cancelReceive()
+        notifications.cancelIncomingRequest()
         stopSession()
         scanning = false
         incomingRequest = null
+        incomingRequestNames = emptyList()
         receiveDecisionPending = false
         receiveTransferring = false
         receiveProgressBytes = 0
@@ -726,6 +866,16 @@ class DroidyController(private val context: Context) {
         receiverRunning = false
         receiverStopping = false
         receiveMessage = "Receiver stopped"
+        removePendingIncomingOffers()
+        activeTransfers
+            .filter { it.direction == TransferDirection.RECEIVED }
+            .forEach { transfer ->
+                finishTransfer(
+                    transfer.id,
+                    TransferStatus.CANCELLED,
+                    error = "Receiver stopped",
+                )
+            }
         append("[receiver stopped]")
     }
 
@@ -740,7 +890,7 @@ class DroidyController(private val context: Context) {
         receiveDecisionPending = true
         receiveMessage = "Accepting request from ${request.sender.ifBlank { "the sender" }}..."
         status = "INCOMING"
-        notifications.updateReceive(null, receiveMessage, indeterminate = true)
+        notifications.cancelIncomingRequest()
     }
 
     fun declineIncoming() {
@@ -753,7 +903,7 @@ class DroidyController(private val context: Context) {
         receiveDecisionPending = true
         receiveMessage = "Declining request from ${request.sender.ifBlank { "the sender" }}..."
         status = "INCOMING"
-        notifications.updateReceive(null, receiveMessage, indeterminate = true)
+        notifications.cancelIncomingRequest()
     }
 
     private fun requireMonitorKernel(): Boolean {
@@ -920,121 +1070,714 @@ class DroidyController(private val context: Context) {
             line.startsWith("RECEIVE_READY") -> {
                 receiverRunning = true
                 receiverStarting = false
+                receiverStopping = false
                 status = "RECEIVING"
                 receiveMessage = "Receiver ready · waiting for a sender"
-                notifications.updateReceive(null, receiveMessage, indeterminate = true)
+                // Deliberately silent: readiness and discovery must not notify.
             }
-            line.startsWith("RECEIVE_REQUEST ") -> {
-                val id = between(line, "id=", " peer=").toLongOrNull() ?: return
-                val peer = between(line, "peer=", " files=")
-                val fileCount = between(line, "files=", " total=").toIntOrNull() ?: 0
-                val total = between(line, "total=", " sender=").toLongOrNull() ?: 0L
-                val sender = line.substringAfter("sender=", "").trim()
-                incomingRequest = IncomingRequest(id, peer, sender, fileCount, total)
-                receiveDecisionPending = false
-                receiveTransferring = false
-                receiveProgressBytes = 0
-                receiveProgressTotal = total
-                status = "INCOMING"
-                receiveMessage = "Incoming request from ${sender.ifBlank { peer }}"
-                notifications.updateReceive(null, receiveMessage, indeterminate = true)
-            }
-            line.startsWith("RECEIVE_REQUEST_FILES ") -> {}
-            line.startsWith("RECEIVE_ACCEPTED") -> {
-                val id = between(line, "id=", " total=").toLongOrNull()
-                    ?: line.substringAfter("id=", "").substringBefore(' ').toLongOrNull()
-                val total = between(line, "total=", "").toLongOrNull() ?: 0L
-                if (incomingRequest == null || id == null || incomingRequest?.id == id) {
-                    incomingRequest = null
-                }
-                receiveDecisionPending = false
-                receiveTransferring = true
-                receiveProgressBytes = 0
-                if (total > 0) receiveProgressTotal = total
-                status = "RECEIVING"
-                receiveMessage = "Accepted · receiving file..."
-                notifications.updateReceive(null, receiveMessage, indeterminate = true)
-            }
-            line.startsWith("RECEIVE_DECLINED") -> {
-                incomingRequest = null
-                receiveDecisionPending = false
-                receiveTransferring = false
-                receiveProgressBytes = 0
-                receiveProgressTotal = 0
-                status = "RECEIVING"
-                receiveMessage = "Request declined · waiting for a sender"
-                notifications.updateReceive(null, receiveMessage, indeterminate = true)
-            }
-            line.startsWith("RECEIVE_WITHDRAWN") -> {
-                incomingRequest = null
-                receiveDecisionPending = false
-                receiveTransferring = false
-                receiveProgressBytes = 0
-                receiveProgressTotal = 0
-                status = "RECEIVING"
-                receiveMessage = "Request withdrawn · waiting for a sender"
-                notifications.updateReceive(null, receiveMessage, indeterminate = true)
-            }
-            line.startsWith("RECEIVE_PROGRESS") -> {
-                val bytes = between(line, "bytes=", " total=").toLongOrNull() ?: 0L
-                val total = between(line, "total=", " files=").toLongOrNull() ?: 0L
-                receiveProgressBytes = bytes
-                if (total > 0) receiveProgressTotal = total
-                receiveTransferring = true
-                status = "RECEIVING"
-                val percent = if (receiveProgressTotal > 0) {
-                    ((bytes * 100) / receiveProgressTotal).toInt().coerceIn(0, 100)
-                } else {
-                    null
-                }
-                receiveMessage = if (percent != null) {
-                    "Receiving $percent% · ${bytes.readableBytes()} / ${receiveProgressTotal.readableBytes()}"
-                } else {
-                    "Receiving ${bytes.readableBytes()}"
-                }
-                notifications.updateReceive(percent, receiveMessage, indeterminate = percent == null)
-            }
+            line.startsWith("RECEIVE_REQUEST ") -> handleIncomingRequest(line)
+            line.startsWith("RECEIVE_REQUEST_FILES ") -> handleIncomingRequestFiles(line)
+            line.startsWith("RECEIVE_ACCEPTED") -> handleIncomingAccepted(line)
+            line.startsWith("RECEIVE_DECLINED") -> handleIncomingDeclined()
+            line.startsWith("RECEIVE_WITHDRAWN") -> handleIncomingWithdrawn()
+            line.startsWith("RECEIVE_FILE_START ") -> handleReceiveFileStart(line)
+            line.startsWith("RECEIVE_FILE_PROGRESS ") -> handleReceiveFileProgress(line)
+            line.startsWith("RECEIVE_FILE_DONE ") -> handleReceiveFileDone(line)
+            line.startsWith("RECEIVE_PROGRESS") -> handleReceiveAggregateProgress(line)
             line.startsWith("RECEIVE_URLS") -> {
                 receiveTransferring = true
                 status = "RECEIVING"
                 receiveMessage = "Preparing upload..."
-                notifications.updateReceive(null, receiveMessage, indeterminate = true)
             }
-            line.startsWith("RECEIVED ") -> {
-                val path = line.substringAfter("path=").trim()
-                if (path.isNotBlank()) {
-                    receivedFiles.add(0, path)
-                    receiveMessage = "Received ${File(path).name}"
-                    status = "RECEIVED"
-                }
+            line.startsWith("RECEIVED ") -> handleReceivedFile(line)
+            line.startsWith("RECEIVE_DONE") -> handleReceiveDone(line)
+            line.startsWith("RECEIVE_FAILED") -> handleReceiveFailed(
+                line,
+                line.substringAfter("reason=", line).trim(),
+            )
+            line.startsWith("RECEIVE_ERROR") -> handleReceiveFailed(line, line.trim())
+            line.startsWith("RECEIVE_STOPPED") -> {
+                receiverRunning = false
+                receiverStarting = false
+                receiverStopping = false
+                receiveMessage = "Receiver stopped"
                 incomingRequest = null
+                incomingRequestNames = emptyList()
                 receiveDecisionPending = false
                 receiveTransferring = false
-                receiveProgressBytes = receiveProgressTotal
-                notifications.completeReceive(receiveMessage)
-            }
-            line.startsWith("RECEIVE_FAILED") -> {
-                val reason = line.substringAfter("reason=", line).trim()
-                incomingRequest = null
-                receiveDecisionPending = false
-                receiveTransferring = false
-                receiveProgressBytes = 0
-                receiveProgressTotal = 0
-                status = "RECEIVE ERROR"
-                receiveMessage = "Receive failed: $reason"
-                notifications.failReceive(receiveMessage)
-            }
-            line.startsWith("RECEIVE_ERROR") -> {
-                incomingRequest = null
-                receiveDecisionPending = false
-                receiveTransferring = false
-                receiveProgressBytes = 0
-                receiveProgressTotal = 0
-                status = "RECEIVE ERROR"
-                receiveMessage = line
-                notifications.failReceive(receiveMessage)
+                notifications.cancelIncomingRequest()
+                removePendingIncomingOffers()
+                activeTransfers
+                    .filter { it.direction == TransferDirection.RECEIVED }
+                    .forEach { transfer ->
+                        finishTransfer(
+                            transfer.id,
+                            TransferStatus.FAILED,
+                            error = "Receiver stopped",
+                        )
+                    }
+                status = if (kernel.monitorReady) "READY" else kernel.state.badge
             }
         }
+    }
+
+    private fun handleIncomingRequest(line: String) {
+        val id = eventId(line).toLongOrNull() ?: return
+        val peer = between(line, "peer=", " files=")
+        val fileCount = between(line, "files=", " total=").toIntOrNull() ?: 0
+        val total = between(line, "total=", " sender=").toLongOrNull() ?: 0L
+        val sender = line.substringAfter("sender=", "").trim()
+        val request = IncomingRequest(id, peer, sender, fileCount, total)
+        val peerName = sender.ifBlank { peer }
+        lastIncomingPeerName = peerName
+        incomingRequest = request
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        receiveProgressBytes = 0
+        receiveProgressTotal = total
+        status = "INCOMING"
+        receiveMessage = "Incoming request from ${sender.ifBlank { peer }}"
+
+        // Replace any older offer that can no longer be answered.
+        removePendingIncomingOffers()
+        val transferId = "rx-$id"
+        transferRequestIds[transferId] = id.toString()
+        upsertTransfer(
+            TransferItem(
+                id = transferId,
+                direction = TransferDirection.RECEIVED,
+                peerName = peerName.ifBlank { "AirDrop" },
+                fileName = when {
+                    fileCount == 1 -> "Incoming file"
+                    fileCount > 1 -> "$fileCount incoming files"
+                    else -> "Incoming files"
+                },
+                totalBytes = total,
+                transferredBytes = 0,
+                status = TransferStatus.OFFERED,
+                startedAt = System.currentTimeMillis(),
+            ),
+            notify = false,
+        )
+        if (appForeground) {
+            notifications.cancelIncomingRequest()
+        } else {
+            notifications.showIncomingRequest(request)
+        }
+    }
+
+    private fun handleIncomingRequestFiles(line: String) {
+        val id = eventId(line).toLongOrNull() ?: return
+        val names = parseNames(line.substringAfter("names=", ""))
+        if (names.isEmpty()) return
+        incomingRequestNames = names
+        incomingRequest = incomingRequest?.let { request ->
+            if (request.id == id) request.copy(names = names) else request
+        }
+        if (!appForeground && !receiveDecisionPending) {
+            incomingRequest?.let { notifications.showIncomingRequest(it) }
+        }
+
+        val requestKey = id.toString()
+        val items = transfersForRequest(requestKey).filter { it.status.isActive }
+        if (items.isEmpty()) return
+        val placeholder = items.firstOrNull { it.id == "rx-$id" } ?: items.firstOrNull()
+        val fileCount = maxOf(names.size, incomingRequest?.fileCount ?: 0)
+        if (fileCount <= 1) {
+            placeholder?.let { item ->
+                updateTransfer(item.id) { it.copy(fileName = names.first()) }
+            }
+            return
+        }
+
+        val total = incomingRequest?.totalBytes ?: placeholder?.totalBytes ?: 0L
+        val perFile = if (total > 0) total / fileCount else 0L
+        val remainder = if (total > 0) total - perFile * fileCount else 0L
+        val startedAt = placeholder?.startedAt ?: System.currentTimeMillis()
+        val status = placeholder?.status?.takeIf { it != TransferStatus.OFFERED }
+            ?: TransferStatus.OFFERED
+        val peerName = placeholder?.peerName ?: incomingPeerName()
+
+        val oldIds = items.map { it.id }.toSet()
+        activeTransfers = activeTransfers.filterNot { it.id in oldIds }
+        completedTransfers = completedTransfers.filterNot { it.id in oldIds }
+        oldIds.forEach { oldId ->
+            transferRequestIds.remove(oldId)
+            notifications.cancelTransfer(oldId)
+        }
+
+        repeat(fileCount) { index ->
+            val transferId = "rx-$id-$index"
+            transferRequestIds[transferId] = requestKey
+            upsertTransfer(
+                TransferItem(
+                    id = transferId,
+                    direction = TransferDirection.RECEIVED,
+                    peerName = peerName.ifBlank { "AirDrop" },
+                    fileName = names.getOrNull(index) ?: "File ${index + 1}",
+                    totalBytes = perFile + if (index == fileCount - 1) remainder else 0L,
+                    transferredBytes = 0,
+                    status = status,
+                    startedAt = startedAt,
+                ),
+                notify = false,
+            )
+        }
+    }
+
+    private fun handleIncomingAccepted(line: String) {
+        val id = eventId(line).toLongOrNull()
+        val total = after(line, "total=").toLongOrNull() ?: 0L
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = true
+        receiveProgressBytes = 0
+        if (total > 0) receiveProgressTotal = total
+        status = "RECEIVING"
+        receiveMessage = "Accepted · receiving file..."
+        notifications.cancelIncomingRequest()
+
+        if (id != null) {
+            val requestKey = id.toString()
+            val items = transfersForRequest(requestKey).filter { it.status.isActive }
+            if (items.isEmpty()) {
+                val transferId = "rx-$id"
+                transferRequestIds[transferId] = requestKey
+                upsertTransfer(
+                    TransferItem(
+                        id = transferId,
+                        direction = TransferDirection.RECEIVED,
+                        peerName = incomingPeerName(),
+                        fileName = "Incoming file",
+                        totalBytes = total,
+                        transferredBytes = 0,
+                        status = TransferStatus.ACCEPTED,
+                        startedAt = System.currentTimeMillis(),
+                    ),
+                    notify = false,
+                )
+            } else {
+                items.forEach { item ->
+                    updateTransfer(item.id, notify = false) {
+                        it.copy(
+                            status = TransferStatus.ACCEPTED,
+                            totalBytes = if (it.totalBytes > 0) it.totalBytes else total,
+                        )
+                    }
+                }
+            }
+        } else {
+            activeTransfers
+                .filter {
+                    it.direction == TransferDirection.RECEIVED &&
+                        it.status == TransferStatus.OFFERED
+                }
+                .forEach { item ->
+                    updateTransfer(item.id, notify = false) {
+                        it.copy(status = TransferStatus.ACCEPTED)
+                    }
+                }
+        }
+    }
+
+    private fun handleIncomingDeclined() {
+        val requestKey = incomingRequest?.id?.toString()
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        receiveProgressBytes = 0
+        receiveProgressTotal = 0
+        status = "RECEIVING"
+        receiveMessage = "Request declined · waiting for a sender"
+        notifications.cancelIncomingRequest()
+        if (requestKey != null) {
+            removeTransfersForRequest(requestKey)
+        } else {
+            removePendingIncomingOffers()
+        }
+    }
+
+    private fun handleIncomingWithdrawn() {
+        val requestKey = incomingRequest?.id?.toString()
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        receiveProgressBytes = 0
+        receiveProgressTotal = 0
+        status = "RECEIVING"
+        receiveMessage = "Request withdrawn · waiting for a sender"
+        notifications.cancelIncomingRequest()
+        if (requestKey != null) {
+            removeTransfersForRequest(requestKey)
+        } else {
+            removePendingIncomingOffers()
+        }
+    }
+
+    private fun handleReceiveFileStart(line: String) {
+        val helperId = eventId(line)
+        val name = between(line, "name=", " total=")
+        val total = after(line, "total=").toLongOrNull() ?: 0L
+        val transferId = resolveReceiveFileTransferId(helperId, name) ?: return
+        if (total > 0) originalTransferTotals[transferId] = total
+        updateTransfer(transferId) { item ->
+            item.copy(
+                fileName = name.ifBlank { item.fileName },
+                totalBytes = if (total > 0) total else item.totalBytes,
+                status = if (item.status == TransferStatus.OFFERED) {
+                    TransferStatus.ACCEPTED
+                } else {
+                    item.status
+                },
+            )
+        }
+    }
+
+    private fun handleReceiveFileProgress(line: String) {
+        val helperId = eventId(line)
+        val name = between(line, "name=", " bytes=")
+        val bytes = between(line, "bytes=", " total=").toLongOrNull() ?: 0L
+        val total = after(line, "total=").toLongOrNull() ?: 0L
+        val transferId = resolveReceiveFileTransferId(helperId, name) ?: return
+        updateTransfer(transferId) { item ->
+            item.copy(
+                fileName = name.ifBlank { item.fileName },
+                transferredBytes = bytes,
+                totalBytes = if (total > 0) total else item.totalBytes,
+                status = TransferStatus.TRANSFERRING,
+            )
+        }
+        receiveProgressBytes = activeTransfers
+            .filter { it.direction == TransferDirection.RECEIVED }
+            .sumOf { it.transferredBytes }
+        if (receiveProgressTotal <= 0) {
+            receiveProgressTotal = activeTransfers
+                .filter { it.direction == TransferDirection.RECEIVED }
+                .sumOf { it.totalBytes }
+        }
+    }
+
+    private fun handleReceiveFileDone(line: String) {
+        val helperId = eventId(line)
+        val name = between(line, "name=", " path=")
+        val path = line.substringAfter("path=", "").trim()
+        val transferId = resolveReceiveFileTransferId(helperId, name) ?: return
+        val fileName = name.ifBlank { if (path.isNotBlank()) File(path).name else "" }
+        finishTransfer(
+            transferId,
+            TransferStatus.COMPLETE,
+            localPath = path.ifBlank { null },
+            fileName = fileName.ifBlank { null },
+        )
+        if (path.isNotBlank()) addReceivedPath(path)
+    }
+
+    private fun handleReceiveAggregateProgress(line: String) {
+        val id = eventId(line).toLongOrNull()
+        val bytes = between(line, "bytes=", " total=").toLongOrNull() ?: 0L
+        val total = between(line, "total=", " files=").toLongOrNull() ?: 0L
+        receiveProgressBytes = bytes
+        if (total > 0) receiveProgressTotal = total
+        receiveTransferring = true
+        status = "RECEIVING"
+        val percent = if (receiveProgressTotal > 0) {
+            ((bytes * 100) / receiveProgressTotal).toInt().coerceIn(0, 100)
+        } else {
+            null
+        }
+        receiveMessage = if (percent != null) {
+            "Receiving $percent% · ${bytes.readableBytes()} / ${receiveProgressTotal.readableBytes()}"
+        } else {
+            "Receiving ${bytes.readableBytes()}"
+        }
+        updateIncomingAggregateProgress(id, bytes, total)
+    }
+
+    private fun handleReceivedFile(line: String) {
+        val id = eventId(line).toLongOrNull()
+        val requestKey = id?.toString() ?: incomingRequest?.id?.toString()
+        val path = line.substringAfter("path=", "").trim()
+        if (path.isNotBlank()) {
+            addReceivedPath(path)
+            receiveMessage = "Received ${File(path).name}"
+            status = "RECEIVED"
+        }
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        receiveProgressBytes = receiveProgressTotal
+        notifications.cancelIncomingRequest()
+
+        if (path.isNotBlank()) {
+            val fileName = File(path).name
+            val candidates = if (requestKey != null) transfersForRequest(requestKey) else emptyList()
+            val match = candidates.firstOrNull { it.fileName == fileName }
+                ?: candidates.firstOrNull { it.localPath == path }
+                ?: candidates.firstOrNull { it.status.isActive }
+            if (match != null) {
+                finishTransfer(
+                    match.id,
+                    TransferStatus.COMPLETE,
+                    localPath = path,
+                    fileName = fileName,
+                )
+            } else {
+                val transferId = "rx-${requestKey ?: "file"}-${++receiveFileCounter}"
+                if (requestKey != null) transferRequestIds[transferId] = requestKey
+                upsertTransfer(
+                    TransferItem(
+                        id = transferId,
+                        direction = TransferDirection.RECEIVED,
+                        peerName = incomingPeerName(),
+                        fileName = fileName,
+                        totalBytes = File(path).length().coerceAtLeast(0),
+                        transferredBytes = File(path).length().coerceAtLeast(0),
+                        status = TransferStatus.COMPLETE,
+                        localPath = path,
+                        startedAt = System.currentTimeMillis(),
+                        completedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun handleReceiveDone(line: String) {
+        val id = eventId(line).toLongOrNull()
+        val requestKey = id?.toString() ?: incomingRequest?.id?.toString()
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        notifications.cancelIncomingRequest()
+        if (requestKey != null) {
+            transfersForRequest(requestKey)
+                .filter { it.status.isActive }
+                .forEach { item ->
+                    finishTransfer(item.id, TransferStatus.COMPLETE)
+                }
+        }
+        if (status != "RECEIVED") status = "RECEIVING"
+        receiveMessage = "Transfer complete · waiting for a sender"
+        receiveProgressBytes = receiveProgressTotal
+    }
+
+    private fun handleReceiveFailed(line: String, reason: String) {
+        val id = eventId(line).toLongOrNull()
+        val requestKey = id?.toString() ?: incomingRequest?.id?.toString()
+        val items = if (requestKey != null) {
+            transfersForRequest(requestKey).filter { it.status.isActive }
+        } else {
+            emptyList()
+        }
+        val wasAccepted = receiveTransferring ||
+            items.any { it.status == TransferStatus.ACCEPTED || it.status == TransferStatus.TRANSFERRING }
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        receiveProgressBytes = 0
+        receiveProgressTotal = 0
+        status = "RECEIVE ERROR"
+        receiveMessage = if (reason.startsWith("Receive failed")) reason else "Receive failed: $reason"
+        notifications.cancelIncomingRequest()
+        if (requestKey != null) {
+            if (wasAccepted) {
+                items.forEach { item ->
+                    finishTransfer(item.id, TransferStatus.FAILED, error = reason)
+                }
+            } else {
+                removeTransfersForRequest(requestKey)
+            }
+        }
+    }
+
+    private fun updateIncomingAggregateProgress(id: Long?, bytes: Long, total: Long) {
+        val requestKey = id?.toString() ?: incomingRequest?.id?.toString()
+        val items = if (requestKey != null) {
+            transfersForRequest(requestKey).filter {
+                it.status == TransferStatus.OFFERED ||
+                    it.status == TransferStatus.ACCEPTED ||
+                    it.status == TransferStatus.TRANSFERRING
+            }
+        } else {
+            emptyList()
+        }
+        if (items.isEmpty()) return
+        if (items.size == 1) {
+            val item = items.first()
+            updateTransfer(item.id) {
+                it.copy(
+                    transferredBytes = bytes,
+                    totalBytes = if (total > 0) total else it.totalBytes,
+                    status = TransferStatus.TRANSFERRING,
+                )
+            }
+            return
+        }
+        var remaining = bytes
+        items.sortedBy { it.startedAt }.forEach { item ->
+            val cap = if (item.totalBytes > 0) item.totalBytes else Long.MAX_VALUE
+            val take = remaining.coerceAtMost(cap)
+            updateTransfer(item.id) {
+                it.copy(
+                    transferredBytes = take,
+                    status = TransferStatus.TRANSFERRING,
+                )
+            }
+            remaining -= take
+        }
+    }
+
+    private fun resolveReceiveFileTransferId(helperId: String, name: String): String? {
+        val cleanName = name.trim()
+        val known = activeTransfers + completedTransfers
+        // The helper uses the request id for every per-file event, so a
+        // request id must be resolved by file name each time. Only genuinely
+        // per-file helper ids may be cached.
+        val isRequestId = helperId.isNotBlank() && (
+            incomingRequest?.id?.toString() == helperId ||
+                known.any { transferRequestIds[it.id] == helperId }
+            )
+        if (helperId.isNotBlank() && !isRequestId) {
+            helperFileTransferIds[helperId]?.let { return it }
+        }
+        val requestKey = helperId.takeIf { it.isNotBlank() }
+            ?: incomingRequest?.id?.toString()
+        val candidates = if (requestKey != null) {
+            transfersForRequest(requestKey)
+        } else {
+            known.filter { it.direction == TransferDirection.RECEIVED }
+        }
+        val exact = candidates.firstOrNull {
+            it.direction == TransferDirection.RECEIVED && it.status.isActive &&
+                cleanName.isNotBlank() && it.fileName == cleanName
+        } ?: candidates.firstOrNull {
+            it.direction == TransferDirection.RECEIVED &&
+                cleanName.isNotBlank() && it.fileName == cleanName
+        }
+        if (exact != null) {
+            if (helperId.isNotBlank() && !isRequestId) {
+                helperFileTransferIds[helperId] = exact.id
+            }
+            return exact.id
+        }
+        if (cleanName.isBlank()) {
+            val single = candidates.filter {
+                it.direction == TransferDirection.RECEIVED && it.status.isActive
+            }.singleOrNull()
+            if (single != null) {
+                if (helperId.isNotBlank() && !isRequestId) {
+                    helperFileTransferIds[helperId] = single.id
+                }
+                return single.id
+            }
+        }
+        val placeholder = candidates.firstOrNull {
+            it.direction == TransferDirection.RECEIVED && it.status.isActive &&
+                isGenericIncomingName(it.fileName)
+        }
+        if (placeholder != null) {
+            if (helperId.isNotBlank() && !isRequestId) {
+                helperFileTransferIds[helperId] = placeholder.id
+            }
+            return placeholder.id
+        }
+        val activeSingle = candidates.filter {
+            it.direction == TransferDirection.RECEIVED && it.status.isActive
+        }.singleOrNull()
+        if (activeSingle != null) {
+            if (helperId.isNotBlank() && !isRequestId) {
+                helperFileTransferIds[helperId] = activeSingle.id
+            }
+            return activeSingle.id
+        }
+
+        // A helper may emit file events with per-file IDs before names are
+        // known. Match a global name first, then create a new row.
+        val globalExact = known.firstOrNull {
+            it.direction == TransferDirection.RECEIVED &&
+                cleanName.isNotBlank() && it.fileName == cleanName
+        }
+        if (globalExact != null) {
+            if (helperId.isNotBlank() && !isRequestId) {
+                helperFileTransferIds[helperId] = globalExact.id
+            }
+            return globalExact.id
+        }
+        val globalPlaceholder = known.firstOrNull {
+            it.direction == TransferDirection.RECEIVED && it.status.isActive &&
+                isGenericIncomingName(it.fileName)
+        }
+        if (globalPlaceholder != null) {
+            if (helperId.isNotBlank() && !isRequestId) {
+                helperFileTransferIds[helperId] = globalPlaceholder.id
+            }
+            return globalPlaceholder.id
+        }
+
+        val transferId = "rx-${requestKey ?: "file"}-${++receiveFileCounter}"
+        if (requestKey != null) transferRequestIds[transferId] = requestKey
+        if (helperId.isNotBlank() && !isRequestId) {
+            helperFileTransferIds[helperId] = transferId
+        }
+        val baseStart = candidates.firstOrNull { it.status.isActive }?.startedAt
+            ?: candidates.firstOrNull()?.startedAt
+            ?: System.currentTimeMillis()
+        upsertTransfer(
+            TransferItem(
+                id = transferId,
+                direction = TransferDirection.RECEIVED,
+                peerName = incomingPeerName(),
+                fileName = cleanName.ifBlank { "Incoming file" },
+                totalBytes = 0,
+                transferredBytes = 0,
+                status = TransferStatus.ACCEPTED,
+                startedAt = baseStart,
+            ),
+            notify = false,
+        )
+        return transferId
+    }
+
+    private fun parseNames(raw: String): List<String> {
+        val cleaned = raw.trim().removePrefix("[").removeSuffix("]")
+        if (cleaned.isBlank()) return emptyList()
+        return cleaned.split(',')
+            .map { it.trim().trim('"', '\'', '[', ']') }
+            .filter { it.isNotBlank() }
+            .take(50)
+    }
+
+    private fun isGenericIncomingName(name: String): Boolean =
+        name.startsWith("Incoming") ||
+            name.endsWith("incoming files") ||
+            name.matches(Regex("""File \d+"""))
+
+    private fun addReceivedPath(path: String) {
+        receivedFiles.remove(path)
+        receivedFiles.add(0, path)
+    }
+
+    private fun incomingPeerName(): String {
+        val request = incomingRequest
+        if (request != null) {
+            val name = request.sender.ifBlank { request.peer }
+            if (name.isNotBlank()) return name
+        }
+        return lastIncomingPeerName.ifBlank { "AirDrop" }
+    }
+
+    private fun transfersForRequest(requestKey: String): List<TransferItem> =
+        (activeTransfers + completedTransfers).filter {
+            transferRequestIds[it.id] == requestKey
+        }
+
+    private fun removeTransfersForRequest(requestKey: String) {
+        val ids = transfersForRequest(requestKey).map { it.id }.toSet()
+        if (ids.isEmpty()) return
+        activeTransfers = activeTransfers.filterNot { it.id in ids }
+        completedTransfers = completedTransfers.filterNot { it.id in ids }
+        ids.forEach { id ->
+            transferRequestIds.remove(id)
+            originalTransferTotals.remove(id)
+            notifications.cancelTransfer(id)
+        }
+        notifications.updateTransferSummary(visibleActiveTransferCount())
+    }
+
+    private fun removePendingIncomingOffers() {
+        val ids = activeTransfers
+            .filter { it.direction == TransferDirection.RECEIVED && it.status == TransferStatus.OFFERED }
+            .map { it.id }
+            .toSet()
+        if (ids.isEmpty()) return
+        activeTransfers = activeTransfers.filterNot { it.id in ids }
+        ids.forEach { id ->
+            transferRequestIds.remove(id)
+            originalTransferTotals.remove(id)
+            notifications.cancelTransfer(id)
+        }
+        notifications.updateTransferSummary(visibleActiveTransferCount())
+    }
+
+    private fun findTransfer(id: String): TransferItem? =
+        activeTransfers.firstOrNull { it.id == id }
+            ?: completedTransfers.firstOrNull { it.id == id }
+
+    private fun upsertTransfer(item: TransferItem, notify: Boolean = true) {
+        val active = activeTransfers.filterNot { it.id == item.id }.toMutableList()
+        val completed = completedTransfers.filterNot { it.id == item.id }.toMutableList()
+        if (item.status.isActive) {
+            active.add(item)
+            active.sortWith(
+                compareByDescending<TransferItem> { it.startedAt }.thenBy { it.id },
+            )
+        } else {
+            completed.add(0, item)
+            if (completed.size > 100) {
+                completed.subList(100, completed.size).clear()
+            }
+        }
+        activeTransfers = active
+        completedTransfers = completed
+        if (notify) notifications.updateTransfer(item)
+        notifications.updateTransferSummary(visibleActiveTransferCount())
+    }
+
+    private fun updateTransfer(
+        id: String,
+        notify: Boolean = true,
+        transform: (TransferItem) -> TransferItem,
+    ): TransferItem? {
+        val current = findTransfer(id) ?: return null
+        val next = transform(current)
+        if (next == current) return current
+        upsertTransfer(next, notify)
+        return next
+    }
+
+    private fun finishTransfer(
+        id: String,
+        status: TransferStatus,
+        error: String? = null,
+        localPath: String? = null,
+        fileName: String? = null,
+        notify: Boolean = true,
+    ): TransferItem? {
+        val current = findTransfer(id) ?: return null
+        val originalTotal = if (status == TransferStatus.COMPLETE) {
+            originalTransferTotals[id]
+        } else {
+            null
+        }
+        val finalTotal = originalTotal?.takeIf { it > 0 } ?: current.totalBytes
+        val next = current.copy(
+            status = status,
+            error = error ?: current.error,
+            localPath = localPath ?: current.localPath,
+            fileName = fileName?.takeIf { it.isNotBlank() } ?: current.fileName,
+            totalBytes = finalTotal,
+            transferredBytes = if (status == TransferStatus.COMPLETE) {
+                if (finalTotal > 0) finalTotal else current.transferredBytes
+            } else {
+                current.transferredBytes
+            },
+            completedAt = current.completedAt ?: System.currentTimeMillis(),
+        )
+        if (status.isTerminal) originalTransferTotals.remove(id)
+        if (next == current) return current
+        upsertTransfer(next, notify)
+        return next
+    }
+
+    private fun visibleActiveTransferCount(): Int = activeTransfers.count {
+        it.direction == TransferDirection.SENT || it.status != TransferStatus.OFFERED
     }
 
     /** Starts the receive helper process; caller holds [receiveMutex]. */
@@ -1092,7 +1835,17 @@ class DroidyController(private val context: Context) {
             status = if (kernel.monitorReady) "READY" else kernel.state.badge
         }
         receiveMessage = "Receiver stopped"
-        notifications.cancelReceive()
+        notifications.cancelIncomingRequest()
+        removePendingIncomingOffers()
+        activeTransfers
+            .filter { it.direction == TransferDirection.RECEIVED }
+            .forEach { transfer ->
+                finishTransfer(
+                    transfer.id,
+                    TransferStatus.FAILED,
+                    error = "Receiver stopped",
+                )
+            }
         append("[receiver stopped]")
     }
 
@@ -1169,6 +1922,7 @@ class DroidyController(private val context: Context) {
     private suspend fun runSessionCommand(
         kind: String,
         timeoutMs: Long,
+        requestId: String? = null,
         command: (String) -> String,
         onLine: (String) -> Unit = {},
     ): Int = commandMutex.withLock {
@@ -1178,7 +1932,7 @@ class DroidyController(private val context: Context) {
             sessionMutex.withLock { stopSessionLocked(session) }
             return@withLock -1
         }
-        val id = "$kind-${++requestCounter}"
+        val id = requestId ?: "$kind-${++requestCounter}"
         val pending = PendingRequest(id, kind, onLine)
         pendingRequest = pending
         val written = try {
@@ -1272,6 +2026,7 @@ class DroidyController(private val context: Context) {
                 line.startsWith("AWDL name:") -> handlePeerLine(line)
             line.startsWith("RECEIVE_") || line.startsWith("RECEIVED ") ->
                 handleReceiveStateLine(line)
+            line.startsWith("SEND_FILE_") -> handleSendFileEvent(line)
         }
 
         val pending = pendingRequest ?: return
@@ -1280,13 +2035,91 @@ class DroidyController(private val context: Context) {
         if (tokens.size < 2 || tokens[1] != pending.id) return
         when (tokens[0]) {
             "SCAN_DONE" -> if (pending.kind == "scan") finishPending(pending, 0)
-            "SEND_OK" -> if (pending.kind == "send") finishPending(pending, 0)
+            "SEND_OK" -> if (pending.kind == "send") {
+                activeSendTransferId?.let { id ->
+                    finishTransfer(id, TransferStatus.COMPLETE)
+                }
+                finishPending(pending, 0)
+            }
             "SEND_ERR" -> if (pending.kind == "send") {
                 val message = if (tokens.size >= 3) tokens[2].trim() else ""
                 if (message.isNotBlank()) sendMessage = message
+                activeSendTransferId?.let { id ->
+                    finishTransfer(
+                        id,
+                        TransferStatus.FAILED,
+                        error = message.ifBlank { "Send failed" },
+                    )
+                }
                 finishPending(pending, -1)
             }
         }
+    }
+
+    private fun handleSendFileEvent(line: String) {
+        when {
+            line.startsWith("SEND_FILE_START ") -> {
+                val helperId = eventId(line)
+                val name = between(line, "name=", " total=")
+                val total = after(line, "total=").toLongOrNull() ?: 0L
+                val transferId = resolveSendTransferId(helperId) ?: return
+                updateTransfer(transferId) { item ->
+                    item.copy(
+                        fileName = name.ifBlank { item.fileName },
+                        totalBytes = if (total > 0) total else item.totalBytes,
+                    )
+                }
+            }
+            line.startsWith("SEND_FILE_PROGRESS ") -> {
+                val helperId = eventId(line)
+                val bytes = between(line, "bytes=", " total=").toLongOrNull() ?: 0L
+                val total = after(line, "total=").toLongOrNull() ?: 0L
+                val transferId = resolveSendTransferId(helperId) ?: return
+                sendProgressBytes = bytes
+                if (total > 0) sendProgressTotal = total
+                updateTransfer(transferId) { item ->
+                    item.copy(
+                        transferredBytes = bytes,
+                        totalBytes = if (total > 0) total else item.totalBytes,
+                        status = TransferStatus.TRANSFERRING,
+                    )
+                }
+            }
+            line.startsWith("SEND_FILE_DONE ") -> {
+                val helperId = eventId(line)
+                val path = line.substringAfter("path=", "").trim()
+                val transferId = resolveSendTransferId(helperId) ?: return
+                finishTransfer(
+                    transferId,
+                    TransferStatus.COMPLETE,
+                    localPath = path.ifBlank { null },
+                )
+            }
+            line.startsWith("SEND_FILE_ERR ") -> {
+                val helperId = eventId(line)
+                val reason = line.substringAfter("reason=", "Send failed").trim()
+                val transferId = resolveSendTransferId(helperId) ?: return
+                finishTransfer(
+                    transferId,
+                    TransferStatus.FAILED,
+                    error = reason.ifBlank { "Send failed" },
+                )
+            }
+        }
+    }
+
+    private fun resolveSendTransferId(helperId: String): String? {
+        if (helperId.isNotBlank()) {
+            helperSendFileIds[helperId]?.let { return it }
+            findTransfer(helperId)?.let { transfer ->
+                if (transfer.direction == TransferDirection.SENT) return transfer.id
+            }
+        }
+        val active = activeSendTransferId?.takeIf { id ->
+            findTransfer(id)?.status?.isActive == true
+        } ?: return null
+        if (helperId.isNotBlank()) helperSendFileIds[helperId] = active
+        return active
     }
 
     private fun handleSessionEnded(session: HelperSession) {
@@ -1309,6 +2142,32 @@ class DroidyController(private val context: Context) {
         receiverRunning = false
         receiverStarting = false
         receiverStopping = false
+        activeSendTransferId?.let { id ->
+            finishTransfer(
+                id,
+                TransferStatus.FAILED,
+                error = "Helper session ended during send",
+            )
+        }
+        activeSendTransferId = null
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        receiveProgressBytes = 0
+        receiveProgressTotal = 0
+        receiveMessage = "Receiver stopped"
+        notifications.cancelIncomingRequest()
+        removePendingIncomingOffers()
+        activeTransfers
+            .filter { it.direction == TransferDirection.RECEIVED }
+            .forEach { transfer ->
+                finishTransfer(
+                    transfer.id,
+                    TransferStatus.FAILED,
+                    error = "Receiver stopped",
+                )
+            }
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
     }
 
@@ -1500,6 +2359,22 @@ class DroidyController(private val context: Context) {
         return if (b < 0) text.substring(from).trim() else text.substring(from, b).trim()
     }
 
+    /** Returns everything after [marker], for fields at the end of a line. */
+    private fun after(text: String, marker: String): String {
+        val index = text.indexOf(marker)
+        if (index < 0) return ""
+        return text.substring(index + marker.length).trim()
+    }
+
+    /** Reads `id=<value>` up to the next space, independent of field order. */
+    private fun eventId(text: String): String {
+        val start = text.indexOf("id=")
+        if (start < 0) return ""
+        val from = start + 3
+        val end = text.indexOf(' ', from)
+        return if (end < 0) text.substring(from).trim() else text.substring(from, end).trim()
+    }
+
     fun close() {
         pendingRequest?.let { pending ->
             if (!pending.completion.isCompleted) pending.completion.complete(-1)
@@ -1548,8 +2423,10 @@ class DroidyController(private val context: Context) {
             } catch (_: Exception) {
             }
         }
-        notifications.cancelSend()
-        notifications.cancelReceive()
+        activeSendTransferId = null
+        incomingRequestNames = emptyList()
+        notifications.cancelAllTransfers()
+        notifications.cancelIncomingRequest()
         ble.stop()
         scope.cancel()
         try {

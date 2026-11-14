@@ -2,10 +2,13 @@ package io.moonbase.droidy
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.webkit.MimeTypeMap
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -39,9 +42,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -74,7 +77,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -104,6 +106,9 @@ import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import java.io.BufferedOutputStream
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import androidx.core.content.ContextCompat
@@ -114,8 +119,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    private lateinit var controller: DroidyController
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        controller = DroidyController(applicationContext)
+        handleNotificationIntent(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
                 android.graphics.Color.TRANSPARENT,
@@ -128,7 +137,6 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             val context = LocalContext.current
-            val controller = remember { DroidyController(context.applicationContext) }
             DroidyTheme(
                 themeMode = controller.settings.themeMode,
                 tintMode = controller.settings.tintMode,
@@ -154,11 +162,50 @@ class MainActivity : ComponentActivity() {
                     }
                     if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
                 }
-                DisposableEffect(Unit) {
-                    onDispose { controller.close() }
-                }
                 DroidyApp(controller = controller, scope = scope)
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        controller.setForeground(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        controller.setForeground(false)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNotificationIntent(intent)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        controller.close()
+    }
+
+    /**
+     * Notification actions open MainActivity (there is no background service
+     * or receiver to answer Accept/Decline directly). The extras are applied
+     * once the controller state is available and then cleared.
+     */
+    private fun handleNotificationIntent(intent: Intent?) {
+        if (intent == null) return
+        val cancelId = intent.getStringExtra(DroidyNotifications.EXTRA_CANCEL_TRANSFER)
+        if (cancelId != null) {
+            controller.cancelTransfer(cancelId)
+            intent.removeExtra(DroidyNotifications.EXTRA_CANCEL_TRANSFER)
+        }
+        val requestId = intent.getLongExtra(DroidyNotifications.EXTRA_REQUEST_ID, -1L)
+        if (requestId >= 0) {
+            val accept = intent.getBooleanExtra(DroidyNotifications.EXTRA_REQUEST_ACCEPT, false)
+            controller.resolveIncomingFromNotification(requestId, accept)
+            intent.removeExtra(DroidyNotifications.EXTRA_REQUEST_ID)
+            intent.removeExtra(DroidyNotifications.EXTRA_REQUEST_ACCEPT)
         }
     }
 }
@@ -181,6 +228,11 @@ private enum class PeerAction(val label: String, @DrawableRes val icon: Int) {
     CAMERA("Camera", R.drawable.ic_smartphone),
     AUDIO("Audio", R.drawable.ic_send),
     PASTE("Paste", R.drawable.ic_description),
+}
+
+private enum class HomeTab(val label: String) {
+    SENT("Sent"),
+    RECEIVED("Received"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -222,6 +274,7 @@ private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
             onSelected = { tab = it },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+        IncomingRequestDialog(controller)
     }
 }
 
@@ -440,10 +493,23 @@ private fun HomeScreen(controller: DroidyController, scope: CoroutineScope) {
         }
     }
 
+    var homeTab by remember { mutableStateOf(HomeTab.SENT) }
     val peers = controller.peers.sortedWith(
         compareByDescending<Peer> { controller.isPinned(it.mac) }
             .thenByDescending { it.rssi },
     )
+    val sentActive = controller.activeTransfers.filter {
+        it.direction == TransferDirection.SENT
+    }
+    val sentDone = controller.completedTransfers.filter {
+        it.direction == TransferDirection.SENT
+    }
+    val receivedActive = controller.activeTransfers.filter {
+        it.direction == TransferDirection.RECEIVED
+    }
+    val receivedDone = controller.completedTransfers.filter {
+        it.direction == TransferDirection.RECEIVED
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -473,14 +539,74 @@ private fun HomeScreen(controller: DroidyController, scope: CoroutineScope) {
                 }
             }
         }
-        controller.incomingRequest?.let { request ->
-            item { IncomingRequestCard(controller, request) }
+        item {
+            HomeTabs(
+                selected = homeTab,
+                sentCount = sentActive.size + sentDone.size,
+                receivedCount = receivedActive.size + receivedDone.size,
+                onSelected = { homeTab = it },
+            )
         }
-        item { SectionLabel("RECEIVED") }
-        if (controller.receivedFiles.isEmpty()) {
-            item { EmptyReceivedCard() }
-        } else {
-            items(controller.receivedFiles) { path -> ReceivedFileCard(path) }
+        when (homeTab) {
+            HomeTab.SENT -> {
+                if (sentActive.isNotEmpty()) {
+                    item { SectionLabel("SENDING") }
+                    items(sentActive, key = { it.id }) { transfer ->
+                        TransferCard(
+                            transfer = transfer,
+                            onCancel = { controller.cancelTransfer(transfer.id) },
+                        )
+                    }
+                }
+                if (sentDone.isNotEmpty()) {
+                    item { SectionLabel("SENT") }
+                    items(sentDone, key = { it.id }) { transfer ->
+                        TransferCard(transfer)
+                    }
+                }
+                if (sentActive.isEmpty() && sentDone.isEmpty()) {
+                    item {
+                        EmptyTransfersCard(
+                            title = "Nothing sent yet",
+                            subtitle = "Tap a nearby phone to send a file.",
+                        )
+                    }
+                }
+            }
+            HomeTab.RECEIVED -> {
+                if (receivedActive.isNotEmpty()) {
+                    item { SectionLabel("RECEIVING") }
+                    items(receivedActive, key = { it.id }) { transfer ->
+                        TransferCard(transfer)
+                    }
+                }
+                if (receivedDone.isNotEmpty()) {
+                    item { SectionLabel("RECEIVED") }
+                    items(receivedDone, key = { it.id }) { transfer ->
+                        TransferCard(
+                            transfer = transfer,
+                            onOpen = {
+                                transfer.localPath?.let { path ->
+                                    scope.launch { openReceivedFile(context, path) }
+                                }
+                            },
+                            onShare = {
+                                transfer.localPath?.let { path ->
+                                    scope.launch { shareReceivedFile(context, path) }
+                                }
+                            },
+                            onDelete = {
+                                transfer.localPath?.let { path ->
+                                    controller.deleteReceivedFile(path)
+                                }
+                            },
+                        )
+                    }
+                }
+                if (receivedActive.isEmpty() && receivedDone.isEmpty()) {
+                    item { EmptyReceivedCard() }
+                }
+            }
         }
     }
 
@@ -492,73 +618,6 @@ private fun HomeScreen(controller: DroidyController, scope: CoroutineScope) {
             onTogglePin = { controller.togglePinned(peer.mac) },
             onAction = { action -> beginAction(peer, action) },
         )
-    }
-}
-
-@Composable
-private fun HomeReceiverCard(controller: DroidyController, scope: CoroutineScope) {
-    val colors = MaterialTheme.colorScheme
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = colors.secondaryContainer),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_download),
-                    contentDescription = null,
-                    tint = colors.onSecondaryContainer,
-                    modifier = Modifier.size(24.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Receive mode",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = colors.onSecondaryContainer,
-                    )
-                    Text(
-                        text = controller.receiveMessage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSecondaryContainer.copy(alpha = 0.78f),
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = { scope.launch { controller.startReceiving() } },
-                    enabled = controller.kernel.monitorReady && !controller.receiverRunning &&
-                        !controller.sending && !controller.sendCancelling,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_download),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Start")
-                }
-                OutlinedButton(
-                    onClick = { scope.launch { controller.stopReceiving() } },
-                    enabled = controller.receiverRunning && !controller.receiverStarting &&
-                        !controller.receiverStopping,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_stop_circle),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (controller.receiverStopping) "Stopping..." else "Stop")
-                }
-            }
-        }
     }
 }
 
@@ -595,6 +654,329 @@ private fun EmptyReceivedCard() {
             }
         }
     }
+}
+
+@Composable
+private fun EmptyTransfersCard(title: String, subtitle: String) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_send),
+                contentDescription = null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier.size(26.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.onSurface,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeTabs(
+    selected: HomeTab,
+    sentCount: Int,
+    receivedCount: Int,
+    onSelected: (HomeTab) -> Unit,
+) {
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        HomeTab.entries.forEachIndexed { index, tab ->
+            val count = when (tab) {
+                HomeTab.SENT -> sentCount
+                HomeTab.RECEIVED -> receivedCount
+            }
+            SegmentedButton(
+                selected = selected == tab,
+                onClick = { onSelected(tab) },
+                shape = SegmentedButtonDefaults.itemShape(index, HomeTab.entries.size),
+                label = { Text("${tab.label} ($count)") },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun TransferCard(
+    transfer: TransferItem,
+    onCancel: (() -> Unit)? = null,
+    onOpen: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+) {
+    val colors = MaterialTheme.colorScheme
+    val sent = transfer.direction == TransferDirection.SENT
+    val icon = when {
+        transfer.status == TransferStatus.COMPLETE && sent -> R.drawable.ic_check_circle
+        sent -> R.drawable.ic_send
+        else -> R.drawable.ic_download
+    }
+    val iconContainer = if (sent) colors.primaryContainer else colors.tertiaryContainer
+    val iconTint = if (sent) colors.onPrimaryContainer else colors.onTertiaryContainer
+    val statusColor = when (transfer.status) {
+        TransferStatus.FAILED, TransferStatus.CANCELLED -> colors.error
+        else -> colors.onSurfaceVariant
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, top = 12.dp, end = 6.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = iconContainer,
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(icon),
+                            contentDescription = null,
+                            tint = iconTint,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = transfer.fileName,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = if (sent) {
+                            "→ ${transfer.peerName.ifBlank { "AirDrop" }}"
+                        } else {
+                            "from ${transfer.peerName.ifBlank { "AirDrop" }}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (transfer.canCancel && onCancel != null) {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_stop_circle),
+                            contentDescription = "Cancel send",
+                            tint = colors.error,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.width(8.dp))
+                }
+            }
+            if (transfer.status.isActive) {
+                val percent = transfer.progressPercent
+                if (percent != null &&
+                    (transfer.status == TransferStatus.TRANSFERRING ||
+                        transfer.transferredBytes > 0)
+                ) {
+                    LinearProgressIndicator(
+                        progress = { percent / 100f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 8.dp)
+                            .height(4.dp),
+                        trackColor = colors.surfaceContainerHighest,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 8.dp)
+                            .height(4.dp),
+                        trackColor = colors.surfaceContainerHighest,
+                    )
+                }
+            }
+            Text(
+                text = transferStatusLine(transfer),
+                style = MaterialTheme.typography.bodySmall,
+                color = statusColor,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            if (transfer.status == TransferStatus.COMPLETE &&
+                transfer.direction == TransferDirection.RECEIVED &&
+                transfer.localPath != null &&
+                (onOpen != null || onShare != null || onDelete != null)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    onOpen?.let {
+                        TextButton(
+                            onClick = it,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                        ) { Text("Open") }
+                    }
+                    onShare?.let {
+                        TextButton(
+                            onClick = it,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                        ) { Text("Share") }
+                    }
+                    onDelete?.let {
+                        TextButton(
+                            onClick = it,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                        ) { Text("Delete", color = colors.error) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun transferStatusLine(transfer: TransferItem): String = when (transfer.status) {
+    TransferStatus.WAITING -> "Waiting for receiver"
+    TransferStatus.OFFERED -> if (transfer.direction == TransferDirection.SENT) {
+        "Waiting for acceptance"
+    } else {
+        "Waiting for your response"
+    }
+    TransferStatus.ACCEPTED -> if (transfer.direction == TransferDirection.SENT) {
+        "Accepted · starting upload"
+    } else {
+        "Accepted · starting download"
+    }
+    TransferStatus.TRANSFERRING -> buildString {
+        transfer.progressPercent?.let { append("$it% · ") }
+        append(transfer.transferredBytes.readableBytes())
+        if (transfer.totalBytes > 0) {
+            append(" / ")
+            append(transfer.totalBytes.readableBytes())
+        }
+    }
+    TransferStatus.COMPLETE -> buildString {
+        append(if (transfer.direction == TransferDirection.SENT) "Delivered" else "Received")
+        if (transfer.totalBytes > 0) {
+            append(" · ")
+            append(transfer.totalBytes.readableBytes())
+        }
+        transfer.completedAt?.let {
+            append(" · ")
+            append(formatClock(it))
+        }
+    }
+    TransferStatus.FAILED -> transfer.error
+        ?.takeIf { it.isNotBlank() }
+        ?.let { error ->
+            if (error.startsWith("Failed", ignoreCase = true)) error else "Failed · $error"
+        }
+        ?: "Failed"
+    TransferStatus.CANCELLED -> transfer.error
+        ?.takeIf { it.isNotBlank() && !it.equals("Cancelled", ignoreCase = true) }
+        ?.let { "Cancelled · $it" }
+        ?: "Cancelled"
+}
+
+private fun formatClock(timestamp: Long): String =
+    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
+
+@Composable
+private fun IncomingRequestDialog(controller: DroidyController) {
+    val request = controller.incomingRequest ?: return
+    val colors = MaterialTheme.colorScheme
+    AlertDialog(
+        onDismissRequest = { },
+        icon = {
+            Icon(
+                painter = painterResource(R.drawable.ic_download),
+                contentDescription = null,
+            )
+        },
+        title = { Text("Incoming AirDrop") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${request.sender.ifBlank { request.peer }} wants to send:")
+                Text(
+                    text = buildString {
+                        append(
+                            if (request.fileCount == 1) {
+                                "1 file"
+                            } else {
+                                "${request.fileCount} files"
+                            },
+                        )
+                        if (request.totalBytes > 0) {
+                            append(" · ")
+                            append(request.totalBytes.readableBytes())
+                        }
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.onSurface,
+                )
+                if (request.names.isNotEmpty()) {
+                    Text(
+                        text = request.names.take(3).joinToString("\n"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    if (request.names.size > 3) {
+                        Text(
+                            text = "+${request.names.size - 3} more",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (controller.receiveDecisionPending) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { controller.acceptIncoming() },
+                enabled = !controller.receiveDecisionPending,
+            ) {
+                Text("Accept")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = { controller.declineIncoming() },
+                enabled = !controller.receiveDecisionPending,
+            ) {
+                Text("Decline")
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -662,6 +1044,68 @@ private fun PeerActionsSheet(
             }
         }
     }
+}
+
+private suspend fun openReceivedFile(context: Context, path: String) {
+    val uri = shareableUri(context, path) ?: return
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mimeTypeFor(path))
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    withContext(Dispatchers.Main) {
+        try {
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private suspend fun shareReceivedFile(context: Context, path: String) {
+    val uri = shareableUri(context, path) ?: return
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeTypeFor(path)
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    withContext(Dispatchers.Main) {
+        try {
+            context.startActivity(Intent.createChooser(intent, "Share ${File(path).name}"))
+        } catch (_: Exception) {
+            Toast.makeText(context, "No app can share this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+/**
+ * The FileProvider only exposes the app cache. Received files live in
+ * Download/Droidy, so copy them into cache before handing out a content URI.
+ */
+private suspend fun shareableUri(context: Context, path: String): Uri? =
+    withContext(Dispatchers.IO) {
+        val file = File(path)
+        if (!file.exists()) return@withContext null
+        val source = try {
+            if (file.canonicalPath.startsWith(context.cacheDir.canonicalPath)) {
+                file
+            } else {
+                val out = File(context.cacheDir, "shared-${System.currentTimeMillis()}-${file.name}")
+                file.copyTo(out, overwrite = true)
+                out
+            }
+        } catch (_: Exception) {
+            return@withContext null
+        }
+        try {
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", source)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+private fun mimeTypeFor(path: String): String {
+    val extension = File(path).extension.lowercase(Locale.US)
+    return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "*/*"
 }
 
 private fun zipDocumentTree(context: Context, treeUri: Uri): File? {
@@ -1119,323 +1563,6 @@ private fun SendCard(
                     text = controller.sendMessage,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onPrimaryContainer.copy(alpha = 0.78f),
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun ReceiveScreen(controller: DroidyController, scope: CoroutineScope) {
-    val colors = MaterialTheme.colorScheme
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        if (!controller.kernel.monitorReady) {
-            item { KernelBanner(controller) }
-        }
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.extraLarge,
-                colors = CardDefaults.cardColors(containerColor = colors.secondaryContainer),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = colors.primary,
-                        modifier = Modifier.size(64.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_download),
-                                contentDescription = null,
-                                tint = colors.onPrimary,
-                                modifier = Modifier.size(32.dp),
-                            )
-                        }
-                    }
-                    Text(
-                        text = "Receive mode",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = colors.onSecondaryContainer,
-                    )
-                    Text(
-                        text = "The receiver announces this phone over AWDL. " +
-                            "Files are saved to ${DroidyController.RECEIVE_DIR}.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSecondaryContainer.copy(alpha = 0.78f),
-                    )
-                    Text(
-                        text = controller.receiveMessage,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = colors.onSecondaryContainer,
-                    )
-                    if (controller.receiverRunning) {
-                        val percent = controller.receiveProgressPercent
-                        if (controller.receiveTransferring && percent != null) {
-                            LinearProgressIndicator(
-                                progress = { percent / 100f },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            LoadingIndicator(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .align(Alignment.CenterHorizontally),
-                                color = colors.primary,
-                            )
-                        }
-                        if (controller.receiveTransferring) {
-                            Text(
-                                text = if (percent != null) {
-                                    "$percent% · " +
-                                        "${controller.receiveProgressBytes.readableBytes()} / " +
-                                        controller.receiveProgressTotal.readableBytes()
-                                } else {
-                                    "Received ${controller.receiveProgressBytes.readableBytes()} so far"
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = colors.onSecondaryContainer.copy(alpha = 0.8f),
-                            )
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = { scope.launch { controller.startReceiving() } },
-                            enabled = controller.kernel.monitorReady && !controller.receiverRunning &&
-                                !controller.sending && !controller.sendCancelling,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_download),
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("Start")
-                        }
-                        OutlinedButton(
-                            onClick = { scope.launch { controller.stopReceiving() } },
-                            enabled = controller.receiverRunning && !controller.receiverStarting &&
-                                !controller.receiverStopping,
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(1.dp, colors.onSecondaryContainer.copy(alpha = 0.3f)),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = colors.onSecondaryContainer,
-                            ),
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_stop_circle),
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (controller.receiverStopping) "Stopping..." else "Stop")
-                        }
-                    }
-                }
-            }
-        }
-        val incoming = controller.incomingRequest
-        if (incoming != null) {
-            item { IncomingRequestCard(controller, incoming) }
-        }
-        item { SectionLabel("RECEIVED FILES") }
-        if (controller.receivedFiles.isEmpty()) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.large,
-                    colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(18.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_folder),
-                            contentDescription = null,
-                            tint = colors.onSurfaceVariant,
-                            modifier = Modifier.size(26.dp),
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = "Nothing received yet",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = colors.onSurface,
-                            )
-                            Text(
-                                text = "Start the receiver and send from AirDrop.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-        } else {
-            items(controller.receivedFiles) { path ->
-                ReceivedFileCard(path)
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun IncomingRequestCard(controller: DroidyController, request: IncomingRequest) {
-    val colors = MaterialTheme.colorScheme
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = colors.tertiaryContainer),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = CircleShape,
-                    color = colors.tertiary,
-                    modifier = Modifier.size(52.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_smartphone),
-                            contentDescription = null,
-                            tint = colors.onTertiary,
-                            modifier = Modifier.size(27.dp),
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Incoming file",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colors.onTertiaryContainer,
-                    )
-                    Text(
-                        text = "From ${request.sender.ifBlank { request.peer }}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onTertiaryContainer.copy(alpha = 0.8f),
-                    )
-                }
-            }
-            Text(
-                text = buildString {
-                    append(if (request.fileCount == 1) "1 file" else "${request.fileCount} files")
-                    if (request.totalBytes > 0) {
-                        append(" · ")
-                        append(request.totalBytes.readableBytes())
-                    }
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = colors.onTertiaryContainer.copy(alpha = 0.85f),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = { controller.acceptIncoming() },
-                    enabled = !controller.receiveDecisionPending,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_check_circle),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Accept")
-                }
-                OutlinedButton(
-                    onClick = { controller.declineIncoming() },
-                    enabled = !controller.receiveDecisionPending,
-                    modifier = Modifier.weight(1f),
-                    border = BorderStroke(1.dp, colors.onTertiaryContainer.copy(alpha = 0.35f)),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = colors.onTertiaryContainer,
-                    ),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_delete),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Decline")
-                }
-            }
-            if (controller.receiveDecisionPending) {
-                LoadingIndicator(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .align(Alignment.CenterHorizontally),
-                    color = colors.primary,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReceivedFileCard(path: String) {
-    val file = File(path)
-    val colors = MaterialTheme.colorScheme
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = colors.tertiaryContainer,
-                modifier = Modifier.size(44.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_description),
-                        contentDescription = null,
-                        tint = colors.onTertiaryContainer,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = file.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = colors.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = path,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
