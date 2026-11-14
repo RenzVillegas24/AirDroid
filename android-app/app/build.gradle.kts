@@ -5,20 +5,21 @@ plugins {
 }
 
 android {
-    namespace = "io.github.owlyradio"
+    namespace = "io.moonbase.droidy"
     compileSdk = 36
     buildToolsVersion = "35.0.1"
 
     defaultConfig {
-        applicationId = "io.github.owlyradio"
+        applicationId = "io.moonbase.droidy"
         minSdk = 23
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.1-compose"
+        versionCode = 4
+        versionName = "1.2.0"
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -32,7 +33,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            assets.srcDirs("../assets")
+            assets.srcDirs("../assets", "src/main/assets")
         }
     }
 

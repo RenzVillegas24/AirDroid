@@ -1,4 +1,4 @@
-package io.github.owlyradio
+package io.moonbase.droidy
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Base64
 import android.util.Log
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -15,20 +16,29 @@ import java.util.concurrent.TimeUnit
  * does not work. This receiver runs commands as the app (which can invoke
  * `su`) and publishes their output to /data/local/tmp/droidy-debug.txt.
  *
- * The receiver is exported so `adb shell am broadcast` can reach it, but it
- * requires the local debug token below and is only useful with root access.
+ * The receiver is exported so `adb shell am broadcast` can reach it. It is
+ * debug-only and requires a per-install token stored in the app's private
+ * files directory; no token is hardcoded in source.
  */
 class DebugReceiver : BroadcastReceiver() {
     companion object {
-        const val ACTION = "io.github.owlyradio.DEBUG"
-        const val TOKEN = "droidy-local-debug"
+        const val ACTION = "io.moonbase.droidy.DEBUG"
         const val OUTPUT = "/data/local/tmp/droidy-debug.txt"
         @Volatile private var debugBle: BleAdvertiser? = null
+
+        private fun debugToken(context: Context): String {
+            val tokenFile = File(context.filesDir, "debug-token")
+            if (!tokenFile.exists()) {
+                tokenFile.parentFile?.mkdirs()
+                tokenFile.writeText(UUID.randomUUID().toString())
+            }
+            return tokenFile.readText().trim()
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION) return
-        if (intent.getStringExtra("token") != TOKEN) return
+        if (intent.getStringExtra("token") != debugToken(context)) return
         if (intent.getBooleanExtra("ble", false)) {
             val advertiser = debugBle ?: BleAdvertiser(context).also { debugBle = it }
             val arm = intent.getIntExtra("arm", 0)
