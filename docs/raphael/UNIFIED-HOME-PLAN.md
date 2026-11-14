@@ -464,9 +464,10 @@ Current limitations:
 
 - Owly's receiver API has no true per-file progress; receive cards use
   aggregate progress distributed across files.
-- Notification Accept/Decline/Cancel actions open `MainActivity`; they depend on
-  the app process/controller state being alive.
-- Transfer history is session-only.
-- Received Open/Share currently copies large files into the app cache because
-  the FileProvider only exposes `cache-path`.
+- Notification Accept/Decline/Cancel actions use a broadcast receiver while the
+  app process/controller is alive. A cold process falls back to opening
+  `MainActivity`.
+- Transfer history is session-only by decision.
+- Received Open/Share uses the FileProvider `external-path` for
+  `Download/Droidy` directly; no cache copy.
 - Live 20 MB performance validation is still pending.
