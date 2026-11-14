@@ -473,7 +473,6 @@ private fun HomeScreen(controller: DroidyController, scope: CoroutineScope) {
                 }
             }
         }
-        item { HomeReceiverCard(controller, scope) }
         controller.incomingRequest?.let { request ->
             item { IncomingRequestCard(controller, request) }
         }
@@ -589,7 +588,7 @@ private fun EmptyReceivedCard() {
                     color = colors.onSurface,
                 )
                 Text(
-                    text = "Start Receive mode and send from AirDrop.",
+                    text = "Incoming AirDrop files will appear here.",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )

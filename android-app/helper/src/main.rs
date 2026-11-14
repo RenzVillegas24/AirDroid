@@ -13,6 +13,7 @@ use std::io::{BufRead, BufReader};
 use std::net::SocketAddrV6;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -626,7 +627,8 @@ async fn session(
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
-    let sender = Sender::new(sender_config)?;
+    let sender = Arc::new(Sender::new(sender_config)?);
+    let send_active = Arc::new(AtomicBool::new(false));
     let mut known: HashMap<String, KnownPeer> = HashMap::new();
     let mut requests: HashMap<u64, Request> = HashMap::new();
 
@@ -735,26 +737,48 @@ async fn session(
                         println!("SCAN_DONE {id}");
                     }
                     "send" => {
-                        let id = parts.next().unwrap_or("send");
-                        let mac = parts.next().unwrap_or("");
-                        let path = parts.next().unwrap_or("");
+                        let id = parts.next().unwrap_or("send").to_string();
+                        let mac = parts.next().unwrap_or("").to_string();
+                        let path = parts.next().unwrap_or("").to_string();
                         if mac.is_empty() || path.is_empty() {
                             println!("SEND_ERR {id} missing target or path");
                             continue;
                         }
-                        match find_and_send(
-                            &sender,
-                            index,
-                            &mut browse,
-                            &mut peers_rx,
-                            &names,
-                            &mut known,
-                            &PathBuf::from(path),
-                            Some(mac),
-                        ).await {
-                            Ok(()) => println!("SEND_OK {id}"),
-                            Err(e) => println!("SEND_ERR {id} {e}"),
+                        if send_active.swap(true, Ordering::SeqCst) {
+                            println!("SEND_ERR {id} send already active");
+                            continue;
                         }
+                        let sender = Arc::clone(&sender);
+                        let mut send_peers = peers_rx.clone();
+                        let send_names = Arc::clone(&names);
+                        let send_active = Arc::clone(&send_active);
+                        tokio::spawn(async move {
+                            let mdns = Mdns::new(index);
+                            let mut send_browse = match mdns.browse().await {
+                                Ok(browse) => browse,
+                                Err(e) => {
+                                    println!("SEND_ERR {id} mdns: {e}");
+                                    send_active.store(false, Ordering::SeqCst);
+                                    return;
+                                }
+                            };
+                            let mut send_known = HashMap::new();
+                            let result = find_and_send(
+                                sender.as_ref(),
+                                index,
+                                &mut send_browse,
+                                &mut send_peers,
+                                &send_names,
+                                &mut send_known,
+                                &PathBuf::from(path),
+                                Some(&mac),
+                            ).await;
+                            match result {
+                                Ok(()) => println!("SEND_OK {id}"),
+                                Err(e) => println!("SEND_ERR {id} {e}"),
+                            }
+                            send_active.store(false, Ordering::SeqCst);
+                        });
                     }
                     "accept" => {
                         let id = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
