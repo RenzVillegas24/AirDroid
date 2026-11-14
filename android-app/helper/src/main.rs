@@ -139,7 +139,7 @@ fn find_dnm(bytes: &[u8]) -> Option<String> {
         let declared_end = start
             .checked_sub(1)
             .and_then(|i| bytes.get(i))
-            .map(|len| start.saturating_sub(1).saturating_add(*len as usize))
+            .map(|len| start.saturating_add(*len as usize))
             .unwrap_or(value_start);
         let end = declared_end.max(value_start).min(bytes.len());
         if end > value_start {
@@ -234,7 +234,27 @@ fn dnm_from_txt(txt: &[u8]) -> Option<String> {
 }
 
 async fn read_hidden_mac() -> Result<MacAddr, Box<dyn Error>> {
+    // Base mode: the monitor carries the AWDL address. The hidden wlan_inj*
+    // STA is only the WMI TX tag, so do not use its MAC as the AWDL identity.
     for _ in 0..30 {
+        if let Ok(kind) = std::fs::read_to_string("/sys/class/net/wlan0/type") {
+            if kind.trim() == "803" {
+                if let Ok(text) = std::fs::read_to_string("/sys/class/net/wlan0/address") {
+                    let octets = text
+                        .trim()
+                        .split(':')
+                        .map(|part| u8::from_str_radix(part, 16))
+                        .collect::<Result<Vec<_>, _>>();
+                    if let Ok(octets) = octets {
+                        if octets.len() == 6 {
+                            let mut mac = [0u8; 6];
+                            mac.copy_from_slice(&octets);
+                            return Ok(MacAddr(mac));
+                        }
+                    }
+                }
+            }
+        }
         if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
@@ -259,7 +279,7 @@ async fn read_hidden_mac() -> Result<MacAddr, Box<dyn Error>> {
         }
         sleep(Duration::from_millis(100)).await;
     }
-    Err("injection vSTA did not appear under /sys/class/net/wlan_inj*".into())
+    Err("monitor or injection vSTA did not appear under /sys/class/net".into())
 }
 
 fn sender_id(addr: MacAddr) -> String {
@@ -547,6 +567,7 @@ async fn find_and_send(
 async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
     rustls::crypto::ring::default_provider().install_default().ok();
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
+    let mut live_peers = peers_rx.clone();
     let names = Arc::new(Mutex::new(HashMap::new()));
     let mut sniffer = start_name_sniffer(names.clone());
     let mdns = Mdns::new(index);
@@ -571,6 +592,13 @@ async fn session(channel: u8, name: String) -> Result<(), Box<dyn Error>> {
     emit_peer_updates(&mut known, &initial_peers, &initial_names);
     loop {
         tokio::select! {
+            changed = live_peers.changed() => {
+                if changed.is_ok() {
+                    let peers = live_peers.borrow().clone();
+                    let names_snapshot = names.lock().unwrap().clone();
+                    emit_peer_updates(&mut known, &peers, &names_snapshot);
+                }
+            }
             command = cmd_rx.recv() => {
                 let Some(line) = command else { break };
                 let mut parts = line.splitn(4, ' ');

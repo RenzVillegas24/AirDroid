@@ -1,4 +1,4 @@
-package io.github.owlyradio
+package io.moonbase.droidy
 
 import android.app.Notification
 import android.app.NotificationChannel

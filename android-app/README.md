@@ -34,8 +34,16 @@ Compose UI
 The helper deliberately omits Owly's daemon, D-Bus, CLI and Omarchy layer. Only
 the K20's internal WCN3990 radio is used; external USB Wi-Fi is out of scope.
 
-Injection requires the patched K20 boot image with
-`wlan.con_mode=4`:
+The base boot image starts in normal Wi-Fi mode (no `wlan.con_mode=4`).
+Use **System → Radio mode → Enter AirDrop mode** when a session is ready.
+The app can also reboot into the mode through its `BOOT_COMPLETED` receiver if
+the live switch fails.
+
+```text
+../workspaces/raphael/boot-images/boot-owly-base-mission.img
+```
+
+The older always-monitor image remains a fallback:
 
 ```text
 ../workspaces/raphael/boot-images/boot-owly-monitor-fixed.img
@@ -121,8 +129,10 @@ printf '%s' 'id; uname -a; cat /sys/module/wlan/parameters/con_mode' \
   | ./adb-debug.sh
 ```
 
-The receiver requires the local token in `DebugReceiver.kt` and is intended
-only for debug builds. Set `ADB_SERIAL` explicitly before using `adb-debug.sh`.
+The receiver is included only in debug builds. It generates a random
+per-install token under the app's private files directory; `adb-debug.sh` and
+`adb-ble.sh` read that token with `run-as`. Set `ADB_SERIAL` explicitly before
+using them.
 
 Useful radio checks:
 
@@ -142,7 +152,7 @@ bug in the hidden vSTA path on this boot.
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.github.owlyradio/.MainActivity
+adb shell am start -n io.moonbase.droidy/.MainActivity
 ```
 
 Grant KernelSU root when the first radio action asks for it. The app installs
@@ -152,7 +162,7 @@ the helper and monitor tools under `/data/local/tmp/owly-app`.
 
 ```text
 android-app/
-  app/src/main/java/io/github/owlyradio/   Compose UI + controller
+  app/src/main/java/io/moonbase/droidy/   Compose UI + controller
   app/src/main/res/drawable/               Material Symbols vectors
   helper/                                  Rust AWDL/AirDrop helper
   assets/                                  helper + monitor binaries (local)

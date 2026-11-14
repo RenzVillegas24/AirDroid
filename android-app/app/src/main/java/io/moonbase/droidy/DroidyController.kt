@@ -1,4 +1,4 @@
-package io.github.owlyradio
+package io.moonbase.droidy
 
 import android.bluetooth.BluetoothManager
 import android.content.Context
@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -37,6 +38,8 @@ data class DroidySettings(
     val channel: Int = 44,
     val bleArm: Int = 0,
     val deviceName: String = "Droidy K20",
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val tintMode: TintMode = TintMode.CUSTOM,
 )
 
 /**
@@ -77,7 +80,7 @@ private class PendingRequest(
 
 enum class MonitorState(val badge: String) {
     MONITOR("READY"),
-    STOCK("STOCK KERNEL"),
+    STOCK("WIFI MODE"),
     UNVERIFIED("VERIFY KERNEL"),
 }
 
@@ -106,14 +109,21 @@ data class KernelStatus(
         if (effectiveMode == 4) {
             return copy(
                 state = MonitorState.MONITOR,
-                detail = "Root confirmed wlan.con_mode=4 in the boot command line.",
+                detail = "Ready for AirDrop discovery and transfers.",
+                verifiedBy = "root",
+            )
+        }
+        if (effectiveMode == 0) {
+            return copy(
+                state = MonitorState.STOCK,
+                detail = "Normal Wi-Fi connectivity is available.",
                 verifiedBy = "root",
             )
         }
         if (cmdline.isNotBlank() || conMode != null) {
             return copy(
                 state = MonitorState.STOCK,
-                detail = "Root confirmed the boot command line has no wlan.con_mode=4.",
+                detail = "Normal Wi-Fi connectivity is available.",
                 verifiedBy = "root",
             )
         }
@@ -151,20 +161,20 @@ data class KernelStatus(
                 monitorBuild -> KernelStatus(
                     release = release,
                     buildVersion = version,
-                    state = MonitorState.MONITOR,
-                    detail = "Known monitor-enabled kernel. wlan.con_mode=4 is present.",
+                    state = MonitorState.UNVERIFIED,
+                    detail = "Checking radio mode...",
                 )
                 release in STOCK_RELEASES -> KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.STOCK,
-                    detail = "Stock kernel. The monitor boot command line (wlan.con_mode=4) is absent.",
+                    detail = "Normal Wi-Fi connectivity is available.",
                 )
                 else -> KernelStatus(
                     release = release,
                     buildVersion = version,
                     state = MonitorState.UNVERIFIED,
-                    detail = "Unknown kernel build. Verify the boot command line with root before using the radio.",
+                    detail = "Unsupported kernel. Verify with root to use the radio.",
                 )
             }
         }
@@ -180,12 +190,13 @@ class DroidyController(private val context: Context) {
     companion object {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/Droidy"
-        private const val SCAN_SECONDS = 12L
+        const val AUTO_CHANNEL = 0
+        private val AUTO_CHANNELS = intArrayOf(44, 6, 149)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
-        private const val SCAN_TIMEOUT_MS = (SCAN_SECONDS + 20L) * 1000L
         private const val SEND_TIMEOUT_MS = 300_000L
         private val ASSETS = arrayOf(
+            "owly-mode.sh",
             "owly-nl80211-set-channel",
             "owly-monitor-send-frame",
             "owly-monitor-full",
@@ -214,6 +225,7 @@ class DroidyController(private val context: Context) {
 
     var settings by mutableStateOf(loadSettings())
         private set
+    private var activeChannel = if (settings.channel > 0) settings.channel else 44
     var peers by mutableStateOf<List<Peer>>(emptyList())
         private set
     var selectedMac by mutableStateOf<String?>(null)
@@ -248,6 +260,10 @@ class DroidyController(private val context: Context) {
         private set
     var verifyingKernel by mutableStateOf(false)
         private set
+    var modeSwitching by mutableStateOf(false)
+        private set
+    var modeAction by mutableStateOf<String?>(null)
+        private set
     var status by mutableStateOf("READY")
         private set
     var sendMessage by mutableStateOf("")
@@ -267,7 +283,7 @@ class DroidyController(private val context: Context) {
 
     val effectiveStatus: String
         get() = when {
-            scanning || sending || receiverRunning || verifyingKernel -> status
+            scanning || sending || receiverRunning || verifyingKernel || modeSwitching -> status
             !kernel.monitorReady -> kernel.state.badge
             else -> status
         }
@@ -293,6 +309,7 @@ class DroidyController(private val context: Context) {
         append("Channel ${settings.channel} · BLE arm ${settings.bleArm}")
         append("Kernel ${kernel.release}")
         append(kernel.detail)
+        scope.launch { verifyKernelWithRoot() }
     }
 
     fun selectPeer(peer: Peer) {
@@ -309,24 +326,43 @@ class DroidyController(private val context: Context) {
         append("Log cleared")
     }
 
-    fun saveSettings(channel: Int, bleArm: Int, deviceName: String) {
+    fun saveAppearance(themeMode: ThemeMode, tintMode: TintMode) {
+        settings = settings.copy(themeMode = themeMode, tintMode = tintMode)
+        prefs.edit()
+            .putString("themeMode", themeMode.name)
+            .putString("tintMode", tintMode.name)
+            .apply()
+    }
+
+    fun saveSettings(
+        channel: Int,
+        bleArm: Int,
+        deviceName: String,
+        themeMode: ThemeMode = settings.themeMode,
+        tintMode: TintMode = settings.tintMode,
+    ) {
         val previous = settings
         val cleanName = deviceName.trim().ifBlank { "Droidy K20" }
-        settings = DroidySettings(channel, bleArm, cleanName)
+        settings = DroidySettings(channel, bleArm, cleanName, themeMode, tintMode)
+        activeChannel = if (channel > 0) channel else 44
         prefs.edit()
             .putInt("channel", channel)
             .putInt("bleArm", bleArm)
             .putString("deviceName", cleanName)
+            .putString("themeMode", themeMode.name)
+            .putString("tintMode", tintMode.name)
             .apply()
-        sendMessage = "Settings saved · channel $channel"
+        val channelLabel = if (channel == AUTO_CHANNEL) "Auto" else channel.toString()
+        sendMessage = "Settings saved · channel $channelLabel"
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        append("Settings saved: channel=$channel bleArm=$bleArm name=$cleanName")
+        append("Settings saved: channel=$channelLabel bleArm=$bleArm name=$cleanName theme=${themeMode.name} tint=${tintMode.name}")
 
         // Channel and identity are fixed when the session helper starts awdl0.
         // Drop the live session so the next scan/send recreates it with the new
         // values; a BLE-arm change only needs the advertisement restarted.
         val identityChanged = channel != previous.channel || cleanName != previous.deviceName
-        if (identityChanged && helperSession != null) {
+        if (identityChanged) {
+            scanning = false
             scope.launch {
                 stopSession()
                 append("Live session dropped; the next operation uses channel $channel as $cleanName.")
@@ -342,6 +378,12 @@ class DroidyController(private val context: Context) {
         channel = prefs.getInt("channel", 44),
         bleArm = prefs.getInt("bleArm", 0),
         deviceName = prefs.getString("deviceName", "Droidy K20") ?: "Droidy K20",
+        themeMode = prefs.getString("themeMode", ThemeMode.SYSTEM.name)
+            ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
+            ?: ThemeMode.SYSTEM,
+        tintMode = prefs.getString("tintMode", TintMode.CUSTOM.name)
+            ?.let { runCatching { TintMode.valueOf(it) }.getOrNull() }
+            ?: TintMode.CUSTOM,
     )
 
     suspend fun prepare() {
@@ -379,35 +421,83 @@ class DroidyController(private val context: Context) {
     }
 
     suspend fun scan() {
-        if (scanning || sending || sendCancelling || receiverRunning) return
+        if (sending || sendCancelling || receiverRunning) return
         if (!requireMonitorKernel()) return
+        if (scanning) {
+            append("Live scan is already running.")
+            return
+        }
         scanning = true
         status = "SCANNING"
         peers = emptyList()
         selectedMac = null
         append("")
-        append("Scanning for AirDrop people...")
-        val rc = runSessionCommand(
-            kind = "scan",
-            timeoutMs = SCAN_TIMEOUT_MS,
-            command = { id -> "scan $SCAN_SECONDS $id" },
-        )
+        if (settings.channel == AUTO_CHANNEL) {
+            scanAuto()
+            return
+        }
+        activeChannel = settings.channel
+        append("Starting live AirDrop scan on channel $activeChannel...")
+        val session = sessionMutex.withLock { ensureSessionLocked() }
+        if (session == null) {
+            scanning = false
+            status = "CHECK LOG"
+            sendMessage = "Live scan could not start; check the log."
+            return
+        }
+        status = "SCANNING"
+        sendMessage = "Live scan running. Nearby peers update automatically."
+        append("Live scan running; peer updates are continuous.")
+    }
+
+    private suspend fun scanAuto() {
+        sendMessage = "Auto scan: trying 44 → 6 → 149..."
+        append("Auto channel scan: 44 → 6 → 149")
+        while (scanning) {
+            for (channel in AUTO_CHANNELS) {
+                if (!scanning) break
+                activeChannel = channel
+                stopSession()
+                val session = sessionMutex.withLock { ensureSessionLocked() }
+                if (session == null) {
+                    scanning = false
+                    status = "CHECK LOG"
+                    sendMessage = "Live scan could not start; check the log."
+                    return
+                }
+                if (!scanning) {
+                    stopSession()
+                    return
+                }
+                append("Auto scan on channel $channel")
+                val started = System.currentTimeMillis()
+                while (scanning && peers.isEmpty() &&
+                    System.currentTimeMillis() - started < 4_000
+                ) {
+                    delay(250)
+                }
+                if (peers.isNotEmpty()) {
+                    status = "SCANNING"
+                    sendMessage = "${peers.size} person(s) found on channel $channel."
+                    append("Auto channel locked on $channel.")
+                    return
+                }
+            }
+        }
+    }
+
+    suspend fun stopScanning() {
+        if (!scanning || sending || sendCancelling) return
+        append("Stopping live scan...")
+        stopSession()
         scanning = false
         status = when {
-            rc != 0 -> "CHECK LOG"
             peers.isEmpty() -> "NO PEERS"
             !kernel.monitorReady -> kernel.state.badge
             else -> "READY"
         }
-        if (rc == 0) {
-            sendMessage = if (peers.isEmpty()) {
-                "No people found. Keep the iPhone nearby and AirDrop open."
-            } else {
-                "${peers.size} person(s) found."
-            }
-        } else if (!sendMessage.startsWith("Helper session ended")) {
-            sendMessage = "Scan did not complete; check the log."
-        }
+        sendMessage = "Scanning stopped."
+        append("Live scan stopped.")
     }
 
     suspend fun pickFile(uri: Uri) {
@@ -438,7 +528,7 @@ class DroidyController(private val context: Context) {
     }
 
     private suspend fun sendFile(path: String) {
-        if (sending || sendCancelling || scanning || receiverRunning) return
+        if (sending || sendCancelling || receiverRunning) return
         if (!requireMonitorKernel()) return
         val target = selectedPeer
         if (target == null) {
@@ -552,8 +642,9 @@ class DroidyController(private val context: Context) {
     }
 
     suspend fun startReceiving() {
-        if (receiverRunning || scanning || sending || sendCancelling) return
+        if (receiverRunning || sending || sendCancelling) return
         if (!requireMonitorKernel()) return
+        scanning = false
         // Claim receive mode before tearing the session down so Scan/Send stay
         // disabled while awdl0 changes hands.
         receiverRunning = true
@@ -647,10 +738,10 @@ class DroidyController(private val context: Context) {
     private fun requireMonitorKernel(): Boolean {
         if (kernel.monitorReady) return true
         status = kernel.state.badge
-        sendMessage = "Monitor boot required. Flash boot-owly-monitor-fixed.img."
+        sendMessage = "Enter AirDrop mode to use the radio."
         append("")
         append("Radio action blocked: ${kernel.detail}")
-        append("Expected monitor kernel: 4.14.357-openela-perf-g7a7b4d1b6808")
+        append("Use Enter AirDrop mode; if the live switch fails, use Reboot into AirDrop mode.")
         return false
     }
 
@@ -677,10 +768,91 @@ class DroidyController(private val context: Context) {
                 kernel = updated
                 status = if (updated.monitorReady) "READY" else updated.state.badge
                 append("Kernel check: ${updated.state.badge} · ${updated.detail}")
+                if (updated.monitorReady && !scanning && !sending && !receiverRunning) {
+                    scan()
+                }
             } else {
                 status = if (kernel.monitorReady) "READY" else kernel.state.badge
                 append("Kernel check did not complete; keeping ${kernel.state.badge}.")
             }
+        }
+    }
+
+    fun enterAirDropMode(reboot: Boolean = false) {
+        if (modeSwitching || sending || receiverRunning) return
+        scope.launch {
+            modeSwitching = true
+            status = if (reboot) "REBOOTING" else "ENTERING AIRDROP"
+            val action = if (reboot) "reboot-enter" else "enter"
+            modeAction = action
+            append("")
+            append(if (reboot) "Rebooting into AirDrop mode..." else "Entering AirDrop mode...")
+            val rc = execRoot(
+                label = "enter AirDrop mode",
+                command = "$APP_TMP/owly-mode.sh $action",
+            )
+            modeAction = null
+            modeSwitching = false
+            if (reboot && rc == 0) return@launch
+            if (rc == 0) {
+                refreshKernelStatus()
+                append("AirDrop mode: ${kernel.detail}")
+                scan()
+            } else {
+                status = "WIFI MODE"
+                sendMessage = "Could not enter AirDrop mode. Try again."
+                append("Enter AirDrop mode failed; check the log and try again.")
+            }
+        }
+    }
+
+    fun exitAirDropMode(reboot: Boolean = false) {
+        if (modeSwitching || sending || receiverRunning) return
+        scope.launch {
+            modeSwitching = true
+            status = if (reboot) "REBOOTING" else "LEAVING AIRDROP"
+            val action = if (reboot) "reboot-exit" else "exit"
+            modeAction = action
+            append("")
+            append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving AirDrop mode...")
+            if (!reboot) {
+                stopSession()
+                scanning = false
+            }
+            val rc = execRoot(
+                label = "exit AirDrop mode",
+                command = "$APP_TMP/owly-mode.sh $action",
+            )
+            modeAction = null
+            modeSwitching = false
+            if (reboot && rc == 0) return@launch
+            if (rc == 0) {
+                refreshKernelStatus()
+                append("Wi-Fi mode: ${kernel.detail}")
+            } else {
+                status = "AIRDROP"
+                sendMessage = "Could not restore Wi-Fi. Reboot to Wi-Fi mode."
+                append("Exit AirDrop mode failed; reboot to restore Wi-Fi.")
+            }
+        }
+    }
+
+    private suspend fun refreshKernelStatus() {
+        var cmdline = ""
+        var conMode: Int? = null
+        val rc = execRoot(
+            label = "kernel check",
+            command = "printf 'CMDLINE='; cat /proc/cmdline; " +
+                "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; echo",
+        ) { line ->
+            when {
+                line.startsWith("CMDLINE=") -> cmdline = line.removePrefix("CMDLINE=").trim()
+                line.startsWith("CON_MODE=") -> conMode = line.removePrefix("CON_MODE=").trim().toIntOrNull()
+            }
+        }
+        if (rc == 0) {
+            kernel = kernel.withRootCheck(cmdline, conMode)
+            status = if (kernel.monitorReady) "READY" else kernel.state.badge
         }
     }
 
@@ -843,7 +1015,7 @@ class DroidyController(private val context: Context) {
         if (existing != null) stopReceiveLocked(existing)
 
         val command = helper(
-            "receive '$RECEIVE_DIR' 8771 ${settings.channel} '${helperName()}'",
+            "receive '$RECEIVE_DIR' 8771 $activeChannel '${helperName()}'",
         )
         append("")
         append("$ starting receive helper")
@@ -1010,7 +1182,7 @@ class DroidyController(private val context: Context) {
     private suspend fun ensureSessionLocked(): HelperSession? {
         val current = helperSession
         if (current != null && current.process.isAlive &&
-            current.channel == settings.channel && current.name == helperName()
+            current.channel == activeChannel && current.name == helperName()
         ) {
             return current
         }
@@ -1018,7 +1190,7 @@ class DroidyController(private val context: Context) {
 
         prepare()
         startBle(fresh = false)
-        val channel = settings.channel
+        val channel = activeChannel
         val name = helperName()
         val command = "$APP_TMP/owly-k20-helper session $channel '$name'"
         append("")
