@@ -33,9 +33,14 @@ scripts/build-app.sh release
 The script builds the Rust helper and copies it into `android-app/assets/`.
 Do not add the helper binary to Git.
 
-On an ARM64 Linux host, `android-app/gradle.properties` may need the local
-`aapt2` override adjusted. On x86_64 hosts, the normal Android Gradle Plugin
-`aapt2` is used.
+On an ARM64 Linux host, pass the local qemu `aapt2` explicitly:
+
+```bash
+AAPT2_OVERRIDE="$HOME/Android/Sdk/aapt2-qemu/aapt2" scripts/build-app.sh debug
+```
+
+On x86_64 hosts, the normal Android Gradle Plugin `aapt2` is used. No absolute
+path is committed in `gradle.properties`.
 
 ## 3. Install
 
