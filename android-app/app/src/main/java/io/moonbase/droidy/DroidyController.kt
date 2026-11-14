@@ -225,6 +225,10 @@ class DroidyController(private val context: Context) {
 
     var settings by mutableStateOf(loadSettings())
         private set
+    var pinnedPeers by mutableStateOf(
+        prefs.getStringSet("pinnedPeers", emptySet())?.toSet() ?: emptySet(),
+    )
+        private set
     private var activeChannel = if (settings.channel > 0) settings.channel else 44
     var peers by mutableStateOf<List<Peer>>(emptyList())
         private set
@@ -314,6 +318,18 @@ class DroidyController(private val context: Context) {
 
     fun selectPeer(peer: Peer) {
         selectedMac = peer.mac
+    }
+
+    fun isPinned(mac: String): Boolean = pinnedPeers.contains(mac.lowercase())
+
+    fun togglePinned(mac: String) {
+        val key = mac.lowercase()
+        pinnedPeers = if (pinnedPeers.contains(key)) {
+            pinnedPeers - key
+        } else {
+            pinnedPeers + key
+        }
+        prefs.edit().putStringSet("pinnedPeers", pinnedPeers).apply()
     }
 
     fun clearPickedFile() {
@@ -525,6 +541,26 @@ class DroidyController(private val context: Context) {
     suspend fun sendPicked() {
         val file = pickedFile ?: return
         sendFile(file.absolutePath)
+    }
+
+    fun sendPath(path: String) {
+        scope.launch {
+            pickedFile = File(path)
+            sendFile(path)
+        }
+    }
+
+    fun sendText(text: String) {
+        if (text.isBlank()) {
+            sendMessage = "Clipboard has no text."
+            return
+        }
+        scope.launch {
+            val file = File(context.cacheDir, "clipboard-${System.currentTimeMillis()}.txt")
+            withContext(Dispatchers.IO) { file.writeText(text) }
+            pickedFile = file
+            sendFile(file.absolutePath)
+        }
     }
 
     private suspend fun sendFile(path: String) {

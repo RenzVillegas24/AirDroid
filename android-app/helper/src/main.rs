@@ -554,6 +554,21 @@ async fn find_and_send(
                 Some(Event::Progress(p)) => if p.total > 0 { println!("progress {}/{} bytes", p.sent, p.total); },
                 None => {}
             },
+            changed = peers_rx.changed() => {
+                if changed.is_ok() {
+                    let peers = peers_rx.borrow().clone();
+                    let names_snapshot = names.lock().unwrap().clone();
+                    emit_peer_updates(known, &peers, &names_snapshot);
+                }
+            },
+            event = browse.events.recv() => match event {
+                Some(BrowseEvent::Found(found)) => println!(
+                    "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
+                    found.instance, found.host, found.addr, found.port, found.flags
+                ),
+                Some(BrowseEvent::Lost(instance)) => println!("LOST instance={instance:?}"),
+                None => {}
+            },
             result = &mut send_future => break result,
         }
     };

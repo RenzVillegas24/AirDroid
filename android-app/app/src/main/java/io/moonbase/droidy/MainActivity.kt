@@ -1,7 +1,9 @@
 package io.moonbase.droidy
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -56,6 +59,8 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -84,6 +89,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
@@ -94,9 +100,17 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import androidx.documentfile.provider.DocumentFile
+import java.io.BufferedOutputStream
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -154,16 +168,25 @@ private enum class DroidyTab(
     val subtitle: String,
     @DrawableRes val icon: Int,
 ) {
-    SEND("Send", "Discover nearby AirDrop peers", R.drawable.ic_send),
-    RECEIVE("Receive", "Accept files from an iPhone", R.drawable.ic_download),
+    HOME("Droidy", "Nearby AirDrop and received files", R.drawable.ic_sensors),
     LOGS("Logs", "Live radio and session output", R.drawable.ic_receipt_long),
     SETTINGS("Settings", "Radio, appearance, and receiver identity", R.drawable.ic_settings),
+}
+
+private enum class PeerAction(val label: String, @DrawableRes val icon: Int) {
+    FILES("Files", R.drawable.ic_attach_file),
+    PHOTOS("Photos", R.drawable.ic_upload_file),
+    VIDEOS("Videos", R.drawable.ic_smartphone),
+    FOLDER("Folder", R.drawable.ic_folder),
+    CAMERA("Camera", R.drawable.ic_smartphone),
+    AUDIO("Audio", R.drawable.ic_send),
+    PASTE("Paste", R.drawable.ic_description),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
-    var tab by remember { mutableStateOf(DroidyTab.SEND) }
+    var tab by remember { mutableStateOf(DroidyTab.HOME) }
     val topAppBarState = rememberTopAppBarState()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
     LaunchedEffect(tab) {
@@ -188,8 +211,7 @@ private fun DroidyApp(controller: DroidyController, scope: CoroutineScope) {
                     .padding(innerPadding),
             ) {
                 when (tab) {
-                    DroidyTab.SEND -> SendScreen(controller, scope)
-                    DroidyTab.RECEIVE -> ReceiveScreen(controller, scope)
+                    DroidyTab.HOME -> HomeScreen(controller, scope)
                     DroidyTab.LOGS -> LogsScreen(controller)
                     DroidyTab.SETTINGS -> SettingsScreen(controller)
                 }
@@ -262,7 +284,7 @@ private fun DroidyTopBar(
                 )
             }
             when (tab) {
-                DroidyTab.SEND -> {
+                DroidyTab.HOME -> {
                     FilledTonalButton(
                         onClick = {
                             scope.launch {
@@ -300,7 +322,7 @@ private fun DroidyTopBar(
                         Text("Clear")
                     }
                 }
-                DroidyTab.RECEIVE, DroidyTab.SETTINGS -> Unit
+                DroidyTab.SETTINGS -> Unit
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -356,6 +378,316 @@ private fun DroidyFloatingToolbar(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeScreen(controller: DroidyController, scope: CoroutineScope) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var sheetPeer by remember { mutableStateOf<Peer?>(null) }
+    var cameraFile by remember { mutableStateOf<File?>(null) }
+
+    fun acceptUri(uri: Uri?) {
+        if (uri == null) return
+        scope.launch {
+            controller.pickFile(uri)
+            controller.sendPicked()
+        }
+    }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { acceptUri(it) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { acceptUri(it) }
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { acceptUri(it) }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { acceptUri(it) }
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val zip = withContext(Dispatchers.IO) { zipDocumentTree(context, uri) }
+                if (zip != null) controller.sendPath(zip.absolutePath)
+            }
+        }
+    }
+    val cameraPicker = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        if (ok) cameraFile?.let { controller.sendPath(it.absolutePath) }
+        cameraFile = null
+    }
+
+    fun beginAction(peer: Peer, action: PeerAction) {
+        controller.selectPeer(peer)
+        sheetPeer = null
+        when (action) {
+            PeerAction.FILES -> filePicker.launch(arrayOf("*/*"))
+            PeerAction.PHOTOS -> photoPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+            )
+            PeerAction.VIDEOS -> videoPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly),
+            )
+            PeerAction.AUDIO -> audioPicker.launch(arrayOf("audio/*"))
+            PeerAction.FOLDER -> folderPicker.launch(null)
+            PeerAction.CAMERA -> {
+                val file = File(context.cacheDir, "camera-${System.currentTimeMillis()}.jpg")
+                cameraFile = file
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file,
+                )
+                cameraPicker.launch(uri)
+            }
+            PeerAction.PASTE -> controller.sendText(clipboard.getText()?.text ?: "")
+        }
+    }
+
+    val peers = controller.peers.sortedWith(
+        compareByDescending<Peer> { controller.isPinned(it.mac) }
+            .thenByDescending { it.rssi },
+    )
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 160.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (!controller.kernel.monitorReady) {
+            item { KernelBanner(controller) }
+        }
+        item { SectionLabel("NEARBY AIRDROP") }
+        if (peers.isEmpty()) {
+            item { EmptyPeopleCard() }
+        } else {
+            item {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                ) {
+                    items(peers, key = { it.mac }) { peer ->
+                        PeerCard(
+                            peer = peer,
+                            selected = sheetPeer?.mac == peer.mac,
+                            pinned = controller.isPinned(peer.mac),
+                            onClick = { sheetPeer = peer },
+                        )
+                    }
+                }
+            }
+        }
+        item { HomeReceiverCard(controller, scope) }
+        controller.incomingRequest?.let { request ->
+            item { IncomingRequestCard(controller, request) }
+        }
+        item { SectionLabel("RECEIVED") }
+        if (controller.receivedFiles.isEmpty()) {
+            item { EmptyReceivedCard() }
+        } else {
+            items(controller.receivedFiles) { path -> ReceivedFileCard(path) }
+        }
+    }
+
+    sheetPeer?.let { peer ->
+        PeerActionsSheet(
+            peer = peer,
+            pinned = controller.isPinned(peer.mac),
+            onDismiss = { sheetPeer = null },
+            onTogglePin = { controller.togglePinned(peer.mac) },
+            onAction = { action -> beginAction(peer, action) },
+        )
+    }
+}
+
+@Composable
+private fun HomeReceiverCard(controller: DroidyController, scope: CoroutineScope) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = colors.secondaryContainer),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_download),
+                    contentDescription = null,
+                    tint = colors.onSecondaryContainer,
+                    modifier = Modifier.size(24.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Receive mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSecondaryContainer,
+                    )
+                    Text(
+                        text = controller.receiveMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSecondaryContainer.copy(alpha = 0.78f),
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { scope.launch { controller.startReceiving() } },
+                    enabled = controller.kernel.monitorReady && !controller.receiverRunning &&
+                        !controller.sending && !controller.sendCancelling,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_download),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Start")
+                }
+                OutlinedButton(
+                    onClick = { scope.launch { controller.stopReceiving() } },
+                    enabled = controller.receiverRunning && !controller.receiverStarting &&
+                        !controller.receiverStopping,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_stop_circle),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (controller.receiverStopping) "Stopping..." else "Stop")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyReceivedCard() {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_folder),
+                contentDescription = null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier.size(26.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "Nothing received yet",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.onSurface,
+                )
+                Text(
+                    text = "Start Receive mode and send from AirDrop.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PeerActionsSheet(
+    peer: Peer,
+    pinned: Boolean,
+    onDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onAction: (PeerAction) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = colors.surfaceContainerLow,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = peer.displayName(),
+                style = MaterialTheme.typography.headlineSmall,
+                color = colors.onSurface,
+            )
+            Text(
+                text = "${peer.typeLabel()} · ${peer.rssi} dBm",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.onSurfaceVariant,
+            )
+            TextButton(onClick = onTogglePin) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_badge),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(if (pinned) "Pinned phone" else "Pin this phone")
+            }
+            HorizontalDivider(color = colors.outlineVariant)
+            Text(
+                text = "SEND",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+            )
+            PeerAction.entries.chunked(2).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { action ->
+                        OutlinedButton(
+                            onClick = { onAction(action) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(
+                                painter = painterResource(action.icon),
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(action.label)
+                        }
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+private fun zipDocumentTree(context: Context, treeUri: Uri): File? {
+    val root = DocumentFile.fromTreeUri(context, treeUri) ?: return null
+    val out = File(context.cacheDir, "folder-${System.currentTimeMillis()}.zip")
+    return try {
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(out))).use { zip ->
+            fun add(directory: DocumentFile, prefix: String) {
+                for (child in directory.listFiles()) {
+                    if (child.isDirectory) {
+                        add(child, "$prefix${child.name}/")
+                    } else {
+                        zip.putNextEntry(ZipEntry("$prefix${child.name}"))
+                        context.contentResolver.openInputStream(child.uri)?.use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
+                }
+            }
+            add(root, "")
+        }
+        out
+    } catch (_: Exception) {
+        out.delete()
+        null
     }
 }
 
@@ -448,7 +780,7 @@ private fun EmptyPeopleCard() {
 }
 
 @Composable
-private fun PeerCard(peer: Peer, selected: Boolean, onClick: () -> Unit) {
+private fun PeerCard(peer: Peer, selected: Boolean, pinned: Boolean = false, onClick: () -> Unit) {
     val surface = MaterialTheme.colorScheme
     val avatarColor = when (peer.devclass) {
         2 -> surface.tertiaryContainer
@@ -497,7 +829,14 @@ private fun PeerCard(peer: Peer, selected: Boolean, onClick: () -> Unit) {
                         )
                     }
                 }
-                if (selected) {
+                if (pinned) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_badge),
+                        contentDescription = "Pinned",
+                        tint = surface.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                } else if (selected) {
                     Icon(
                         painter = painterResource(R.drawable.ic_check_circle),
                         contentDescription = "Selected",
