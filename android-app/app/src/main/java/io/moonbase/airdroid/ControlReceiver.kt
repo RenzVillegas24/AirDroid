@@ -32,6 +32,7 @@ class ControlReceiver : BroadcastReceiver() {
         const val ACTION_SEND_TEXT = "io.moonbase.airdroid.debug.SEND_TEXT"
         const val ACTION_CANCEL = "io.moonbase.airdroid.debug.CANCEL"
         const val ACTION_CHANNEL = "io.moonbase.airdroid.debug.CHANNEL"
+        const val ACTION_SET_BLE = "io.moonbase.airdroid.debug.SET_BLE"
         const val ACTION_SET_NAME = "io.moonbase.airdroid.debug.SET_NAME"
         const val ACTION_ENTER_TRANSFER = "io.moonbase.airdroid.debug.ENTER_TRANSFER"
         const val ACTION_EXIT_TRANSFER = "io.moonbase.airdroid.debug.EXIT_TRANSFER"
@@ -104,6 +105,12 @@ class ControlReceiver : BroadcastReceiver() {
                         val s = controller.settings
                         controller.saveSettings(channel, s.bleArm, s.deviceName, s.themeMode, s.tintMode)
                         Log.i("AirDroidDebug", "channel=$channel")
+                    }
+                    ACTION_SET_BLE -> {
+                        val arm = intent.getIntExtra("arm", controller.settings.bleArm)
+                        val s = controller.settings
+                        controller.saveSettings(s.channel, arm, s.deviceName, s.themeMode, s.tintMode)
+                        Log.i("DroidyDebug", "bleArm=$arm")
                     }
                     ACTION_SET_NAME -> {
                         val name = intent.getStringExtra("name").orEmpty()

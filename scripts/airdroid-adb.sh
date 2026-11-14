@@ -26,6 +26,7 @@ Usage: scripts/airdroid-adb.sh <command> [args]
   pin <mac>              toggle peer pin
   delete <path>          delete a received file and its history entry
   channel <44|6|149|0>   save AWDL channel (0 = auto)
+  ble <0|1|2>            save BLE wake arm (0=A, 1=V2, 2=B)
   name <device-name>     save the AirDrop display name
   enter                  enter Transfer mode
   exit                   exit to Wi-Fi mode
@@ -126,6 +127,10 @@ case "$command" in
   channel)
     channel="${1:?channel needs 0, 6, 44, or 149}"
     broadcast -a "$PKG.debug.CHANNEL" --ei channel "$channel"
+    ;;
+  ble)
+    arm="${1:?ble needs 0, 1, or 2}"
+    broadcast -a "$PKG.debug.SET_BLE" --ei arm "$arm"
     ;;
   name)
     name="${1:?name needs a value}"
