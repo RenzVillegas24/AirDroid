@@ -1,6 +1,6 @@
 # Unified Home and transfer tracking — proposed plan
 
-Status: **proposed — awaiting approval**
+Status: **implemented on `feature/unified-home`; live validation in progress**
 Branch: `feature/unified-home`
 Last updated: 2026-11-14
 
@@ -459,15 +459,34 @@ Implemented on `feature/unified-home`:
 - ACK/retry experiment (`no_ack=false` default, `OWLY_TX_NO_ACK` override)
 - per-file send events and stable receive indices
 - all offered receive filenames
+- original source filenames in Sent cards (no cache-prefix names)
+- average transfer speed on completed cards
+- `DroidyService` foreground service keeps the receiver/controller alive and
+  unfrozen while the app is backgrounded
+- notification Accept/Decline handled without opening the activity while the
+  service is alive
+- received Open/Share uses the FileProvider `external-path` for
+  `Download/Droidy` directly; no cache copy
+
+Live validation (2026-11-14):
+
+- 20 MB random file sent to iPhone: delivered successfully.
+- 2.4 MB photo received from iPhone; background notification Accept worked.
+- Received photo opens through the system chooser and shares from the received
+  directory without a cache copy.
+- First send failed only because AirDrop had not been restarted; after the
+  iPhone AirDrop restart the same send succeeded.
 
 Current limitations:
 
 - Owly's receiver API has no true per-file progress; receive cards use
-  aggregate progress distributed across files.
-- Notification Accept/Decline/Cancel actions use a broadcast receiver while the
-  app process/controller is alive. A cold process falls back to opening
-  `MainActivity`.
+  aggregate progress distributed across files. Deferred to the next phase.
+- The foreground service requires a quiet, ongoing system notification while
+  the receiver runs in the background. This is platform-required, not a
+  discovery/readiness alert.
+- If Android kills the whole app process, a restarted service recreates the
+  controller and auto-starts the session when the monitor kernel is ready, but
+  an in-flight request cannot be recovered.
 - Transfer history is session-only by decision.
-- Received Open/Share uses the FileProvider `external-path` for
-  `Download/Droidy` directly; no cache copy.
-- Live 20 MB performance validation is still pending.
+- Precise sustained throughput measurement is still pending; completed cards
+  now show average upload/download speed.
