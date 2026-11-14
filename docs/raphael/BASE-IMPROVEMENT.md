@@ -53,8 +53,13 @@ Two entry paths:
 
 The live monitor-to-station teardown used to panic in
 `wma_mlme_vdev_notify_down_complete` when it received a delete-BSS response
-with vdev id 255. The driver now rejects out-of-range or missing vdev entries;
-live enter and exit both work on the patched image.
+with vdev id 255. The driver now rejects out-of-range or missing vdev entries.
+
+A second AirDrop entry also reused a stale cached injection vdev after the
+first monitor teardown, so `wlan_inj0` was never recreated. The driver now
+clears the cached injection vdev id when leaving monitor mode. Two consecutive
+enter/exit cycles both recreate `wlan_inj0` and return to Wi-Fi without a
+reboot.
 
 ## Base data path
 
