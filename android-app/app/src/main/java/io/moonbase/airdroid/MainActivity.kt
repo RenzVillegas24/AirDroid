@@ -88,7 +88,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
@@ -442,24 +441,27 @@ private fun TopBarPage(
         when (tab) {
             AirDroidTab.HOME -> {
                 val transferMode = controller.kernel.state == MonitorState.MONITOR
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = if (transferMode) "ON" else "OFF",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                FilledTonalButton(
+                    onClick = {
+                        if (transferMode) {
+                            controller.exitTransferMode()
+                        } else {
+                            controller.enterTransferMode()
+                        }
+                    },
+                    enabled = !controller.modeSwitching &&
+                        !controller.sending && !controller.sendCancelling,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (transferMode) R.drawable.ic_sensors else R.drawable.ic_wifi_tethering,
+                        ),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
                     )
-                    Switch(
-                        checked = transferMode,
-                        onCheckedChange = { enabled ->
-                            if (enabled) {
-                                controller.enterTransferMode()
-                            } else {
-                                controller.exitTransferMode()
-                            }
-                        },
-                        enabled = !controller.modeSwitching &&
-                            !controller.sending && !controller.sendCancelling,
-                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (transferMode) "ON" else "OFF")
                 }
             }
             AirDroidTab.LOGS -> {
