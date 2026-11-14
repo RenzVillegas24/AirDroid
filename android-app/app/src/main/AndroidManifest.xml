@@ -26,14 +26,6 @@
             </intent-filter>
         </receiver>
 
-        <receiver
-            android:name=".DebugReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="io.moonbase.droidy.DEBUG" />
-            </intent-filter>
-        </receiver>
-
         <activity
             android:name=".MainActivity"
             android:exported="true"
