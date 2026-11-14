@@ -437,7 +437,7 @@ class DroidyController(private val context: Context) {
     }
 
     suspend fun scan() {
-        if (sending || sendCancelling || receiverRunning) return
+        if (sending || sendCancelling) return
         if (!requireMonitorKernel()) return
         if (scanning) {
             append("Live scan is already running.")
@@ -564,7 +564,7 @@ class DroidyController(private val context: Context) {
     }
 
     private suspend fun sendFile(path: String) {
-        if (sending || sendCancelling || receiverRunning) return
+        if (sending || sendCancelling) return
         if (!requireMonitorKernel()) return
         val target = selectedPeer
         if (target == null) {
@@ -680,10 +680,6 @@ class DroidyController(private val context: Context) {
     suspend fun startReceiving() {
         if (receiverRunning || sending || sendCancelling) return
         if (!requireMonitorKernel()) return
-        scanning = false
-        // Claim receive mode before tearing the session down so Scan/Send stay
-        // disabled while awdl0 changes hands.
-        receiverRunning = true
         receiverStarting = true
         receiverStopping = false
         incomingRequest = null
@@ -694,32 +690,15 @@ class DroidyController(private val context: Context) {
         status = "RECEIVING"
         receiveMessage = "Announcing on AWDL · waiting for a sender"
         notifications.updateReceive(null, receiveMessage, indeterminate = true)
-        prepare()
-        // awdl0 can only belong to one process: tear the scan/send session down
-        // before the receive helper starts its own radio.
-        stopSession()
-        append("")
-        append("Starting AirDrop receiver on port 8771...")
-        val session = receiveMutex.withLock { startReceiveLocked() }
+        val session = sessionMutex.withLock { ensureSessionLocked() }
         if (session == null) {
             receiverStarting = false
-            receiverRunning = false
             status = "CHECK LOG"
             receiveMessage = "Receiver could not start."
             notifications.cancelReceive()
             return
         }
-        val ready = withTimeoutOrNull(RECEIVE_READY_TIMEOUT_MS) { session.ready.await() }
-        if (ready != true) {
-            append("Receiver did not become ready.")
-            receiveMutex.withLock { stopReceiveLocked(session) }
-            receiverStarting = false
-            receiverRunning = false
-            status = "CHECK LOG"
-            receiveMessage = "Receiver did not become ready."
-            notifications.cancelReceive()
-            return
-        }
+        receiverRunning = true
         receiverStarting = false
         if (incomingRequest == null) status = "RECEIVING"
     }
@@ -730,8 +709,8 @@ class DroidyController(private val context: Context) {
         receiveMessage = "Stopping receiver..."
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
         notifications.cancelReceive()
-        receiveMutex.withLock { stopReceiveLocked() }
-        ble.stop()
+        stopSession()
+        scanning = false
         incomingRequest = null
         receiveDecisionPending = false
         receiveTransferring = false
@@ -815,7 +794,7 @@ class DroidyController(private val context: Context) {
     }
 
     fun enterAirDropMode(reboot: Boolean = false) {
-        if (modeSwitching || sending || receiverRunning) return
+        if (modeSwitching || sending) return
         scope.launch {
             modeSwitching = true
             status = if (reboot) "REBOOTING" else "ENTERING AIRDROP"
@@ -843,7 +822,7 @@ class DroidyController(private val context: Context) {
     }
 
     fun exitAirDropMode(reboot: Boolean = false) {
-        if (modeSwitching || sending || receiverRunning) return
+        if (modeSwitching || sending) return
         scope.launch {
             modeSwitching = true
             status = if (reboot) "REBOOTING" else "LEAVING AIRDROP"
@@ -924,9 +903,16 @@ class DroidyController(private val context: Context) {
         append(line)
         // Ignore output still draining from a receiver we already replaced.
         if (receiveSession !== session) return
+        if (line.startsWith("RECEIVE_READY") && !session.ready.isCompleted) {
+            session.ready.complete(true)
+        }
+        handleReceiveStateLine(line)
+    }
+
+    private fun handleReceiveStateLine(line: String) {
         when {
             line.startsWith("RECEIVE_READY") -> {
-                if (!session.ready.isCompleted) session.ready.complete(true)
+                receiverRunning = true
                 receiverStarting = false
                 status = "RECEIVING"
                 receiveMessage = "Receiver ready · waiting for a sender"
@@ -1156,11 +1142,11 @@ class DroidyController(private val context: Context) {
     }
 
     private fun sendReceiveCommand(command: String): Boolean {
-        val session = receiveSession ?: return false
+        val writer = receiveSession?.writer ?: helperSession?.writer ?: return false
         return try {
-            session.writer.write(command)
-            session.writer.newLine()
-            session.writer.flush()
+            writer.write(command)
+            writer.newLine()
+            writer.flush()
             true
         } catch (e: Exception) {
             append("Receive command failed: ${e.message}")
@@ -1228,7 +1214,7 @@ class DroidyController(private val context: Context) {
         startBle(fresh = false)
         val channel = activeChannel
         val name = helperName()
-        val command = "$APP_TMP/owly-k20-helper session $channel '$name'"
+        val command = "$APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
         append("")
         append("$ starting helper session")
         val process = try {
@@ -1278,6 +1264,8 @@ class DroidyController(private val context: Context) {
             }
             line.startsWith("PEER ") || line.startsWith("PEER_GONE ") ||
                 line.startsWith("AWDL name:") -> handlePeerLine(line)
+            line.startsWith("RECEIVE_") || line.startsWith("RECEIVED ") ->
+                handleReceiveStateLine(line)
         }
 
         val pending = pendingRequest ?: return
@@ -1312,9 +1300,10 @@ class DroidyController(private val context: Context) {
         }
         scanning = false
         sending = false
-        if (!receiverRunning) {
-            status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        }
+        receiverRunning = false
+        receiverStarting = false
+        receiverStopping = false
+        status = if (kernel.monitorReady) "READY" else kernel.state.badge
     }
 
     private fun finishPending(pending: PendingRequest, rc: Int) {
