@@ -473,7 +473,9 @@ private fun AirDroidFloatingToolbar(
         var dragDelta by remember { mutableStateOf(Offset.Zero) }
         val density = LocalDensity.current
         val fingerOffset = with(density) {
-            (fingerX.toDp() - itemSize / 2).coerceIn(
+            val raw = fingerX.toDp() - itemSize / 2
+            val center = itemSize * selectedIndex
+            (center + (raw - center) * 0.65f).coerceIn(
                 0.dp,
                 itemSize * (TOOLBAR_TABS.size - 1),
             )
@@ -490,7 +492,7 @@ private fun AirDroidFloatingToolbar(
         val indicatorYOffset by animateDpAsState(
             targetValue = if (pressed) {
                 with(density) {
-                    ((fingerY.toDp() - itemSize / 2) * 0.12f).coerceIn((-3).dp, 3.dp)
+                    ((fingerY.toDp() - itemSize / 2) * 0.08f).coerceIn((-2.5).dp, 2.5.dp)
                 }
             } else {
                 0.dp
