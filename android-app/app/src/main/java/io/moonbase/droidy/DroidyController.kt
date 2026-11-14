@@ -258,6 +258,8 @@ class DroidyController(private val context: Context) {
         private set
     var modeSwitching by mutableStateOf(false)
         private set
+    var modeAction by mutableStateOf<String?>(null)
+        private set
     var status by mutableStateOf("READY")
         private set
     var sendMessage by mutableStateOf("")
@@ -734,12 +736,14 @@ class DroidyController(private val context: Context) {
             modeSwitching = true
             status = if (reboot) "REBOOTING" else "ENTERING AIRDROP"
             val action = if (reboot) "reboot-enter" else "enter"
+            modeAction = action
             append("")
             append(if (reboot) "Rebooting into AirDrop mode..." else "Entering AirDrop mode...")
             val rc = execRoot(
                 label = "enter AirDrop mode",
                 command = "$APP_TMP/owly-mode.sh $action",
             )
+            modeAction = null
             modeSwitching = false
             if (reboot && rc == 0) return@launch
             if (rc == 0) {
@@ -760,6 +764,7 @@ class DroidyController(private val context: Context) {
             modeSwitching = true
             status = if (reboot) "REBOOTING" else "LEAVING AIRDROP"
             val action = if (reboot) "reboot-exit" else "exit"
+            modeAction = action
             append("")
             append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving AirDrop mode...")
             if (!reboot) {
@@ -770,6 +775,7 @@ class DroidyController(private val context: Context) {
                 label = "exit AirDrop mode",
                 command = "$APP_TMP/owly-mode.sh $action",
             )
+            modeAction = null
             modeSwitching = false
             if (reboot && rc == 0) return@launch
             if (rc == 0) {
