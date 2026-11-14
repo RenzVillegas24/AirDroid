@@ -12,6 +12,7 @@ usage() {
 Usage: scripts/droidy-adb.sh <command> [args]
 
   status                 print controller/peer/transfer state
+  history                print received files and completed transfers
   log                    dump timestamped app + helper logs
   follow                 follow timestamped logs (Ctrl-C to stop)
   clear-log              clear the in-app log buffer
@@ -22,6 +23,8 @@ Usage: scripts/droidy-adb.sh <command> [args]
   send <path> [mac]      send a file, optionally selecting a peer MAC
   send-text <text> [mac] send clipboard-style text
   cancel <transfer-id>   cancel a transfer
+  pin <mac>              toggle peer pin
+  delete <path>          delete a received file and its history entry
   channel <44|6|149|0>   save AWDL channel (0 = auto)
   name <device-name>     save the AirDrop display name
   enter                  enter AirDrop mode
@@ -47,6 +50,10 @@ case "$command" in
   status)
     broadcast -a "$PKG.debug.STATUS"
     "$ADB" logcat -d -s DroidyDebug:D '*:S' | tail -n 40
+    ;;
+  history)
+    broadcast -a "$PKG.debug.HISTORY"
+    "$ADB" logcat -d -s DroidyDebug:D '*:S' | tail -n 80
     ;;
   log)
     "$ADB" logcat -d -s DroidyLog:D '*:S'
@@ -86,6 +93,14 @@ case "$command" in
   cancel)
     id="${1:?cancel needs a transfer id}"
     broadcast -a "$PKG.debug.CANCEL" --es id "$id"
+    ;;
+  pin)
+    mac="${1:?pin needs a peer MAC}"
+    broadcast -a "$PKG.debug.PIN_PEER" --es mac "$mac"
+    ;;
+  delete)
+    path="${1:?delete needs a received file path}"
+    broadcast -a "$PKG.debug.DELETE_RECEIVED" --es path "$path"
     ;;
   channel)
     channel="${1:?channel needs 0, 6, 44, or 149}"

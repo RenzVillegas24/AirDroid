@@ -39,6 +39,9 @@ class DebugReceiver : BroadcastReceiver() {
         const val ACTION_REBOOT_EXIT = "io.moonbase.droidy.debug.REBOOT_EXIT"
         const val ACTION_DUMP_LOG = "io.moonbase.droidy.debug.DUMP_LOG"
         const val ACTION_CLEAR_LOG = "io.moonbase.droidy.debug.CLEAR_LOG"
+        const val ACTION_HISTORY = "io.moonbase.droidy.debug.HISTORY"
+        const val ACTION_PIN_PEER = "io.moonbase.droidy.debug.PIN_PEER"
+        const val ACTION_DELETE_RECEIVED = "io.moonbase.droidy.debug.DELETE_RECEIVED"
 
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     }
@@ -117,6 +120,17 @@ class DebugReceiver : BroadcastReceiver() {
                         controller.clearLogs()
                         Log.i("DroidyDebug", "logs cleared")
                     }
+                    ACTION_HISTORY -> dumpHistory(controller)
+                    ACTION_PIN_PEER -> {
+                        val mac = intent.getStringExtra("mac").orEmpty()
+                        controller.togglePinned(mac)
+                        Log.i("DroidyDebug", "pinned[$mac]=${controller.isPinned(mac)}")
+                    }
+                    ACTION_DELETE_RECEIVED -> {
+                        val path = intent.getStringExtra("path").orEmpty()
+                        controller.deleteReceivedFile(path)
+                        Log.i("DroidyDebug", "deleted $path")
+                    }
                     else -> Log.i("DroidyDebug", "unknown action: $action")
                 }
             } catch (e: Exception) {
@@ -124,6 +138,18 @@ class DebugReceiver : BroadcastReceiver() {
             } finally {
                 pending.finish()
             }
+        }
+    }
+
+    private fun dumpHistory(controller: DroidyController) {
+        controller.receivedFiles.forEach { Log.i("DroidyDebug", "file=$it") }
+        controller.completedTransfers.forEach { t ->
+            Log.i(
+                "DroidyDebug",
+                "done id=${t.id} dir=${t.direction} file=${t.fileName} " +
+                    "bytes=${t.transferredBytes}/${t.totalBytes} status=${t.status} " +
+                    "peer=${t.peerName} path=${t.localPath.orEmpty()}",
+            )
         }
     }
 
