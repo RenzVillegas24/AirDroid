@@ -1143,7 +1143,7 @@ private fun SettingsScreen(controller: DroidyController) {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 160.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { SectionLabel("IDENTITY") }
@@ -1476,23 +1476,30 @@ private fun SettingsScreen(controller: DroidyController) {
                 }
                 Spacer(Modifier.height(10.dp))
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf(44, 6, 149).forEachIndexed { index, option ->
+                    listOf(0, 44, 6, 149).forEachIndexed { index, option ->
                         SegmentedButton(
                             selected = channel == option,
                             onClick = { channel = option },
-                            shape = SegmentedButtonDefaults.itemShape(index, 3),
+                            shape = SegmentedButtonDefaults.itemShape(index, 4),
                             label = {
                                 Text(
                                     when (option) {
-                                        6 -> "6 · 2.4"
-                                        149 -> "149 · 5"
-                                        else -> "44 · 5"
+                                        0 -> "Auto"
+                                        6 -> "6"
+                                        149 -> "149"
+                                        else -> "44"
                                     },
                                 )
                             },
                         )
                     }
                 }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Auto tries 44 → 6 → 149 and locks onto the first channel with peers.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(

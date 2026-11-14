@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -189,6 +190,8 @@ class DroidyController(private val context: Context) {
     companion object {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/Droidy"
+        const val AUTO_CHANNEL = 0
+        private val AUTO_CHANNELS = intArrayOf(44, 6, 149)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
@@ -222,6 +225,7 @@ class DroidyController(private val context: Context) {
 
     var settings by mutableStateOf(loadSettings())
         private set
+    private var activeChannel = if (settings.channel > 0) settings.channel else 44
     var peers by mutableStateOf<List<Peer>>(emptyList())
         private set
     var selectedMac by mutableStateOf<String?>(null)
@@ -340,6 +344,7 @@ class DroidyController(private val context: Context) {
         val previous = settings
         val cleanName = deviceName.trim().ifBlank { "Droidy K20" }
         settings = DroidySettings(channel, bleArm, cleanName, themeMode, tintMode)
+        activeChannel = if (channel > 0) channel else 44
         prefs.edit()
             .putInt("channel", channel)
             .putInt("bleArm", bleArm)
@@ -347,15 +352,17 @@ class DroidyController(private val context: Context) {
             .putString("themeMode", themeMode.name)
             .putString("tintMode", tintMode.name)
             .apply()
-        sendMessage = "Settings saved · channel $channel"
+        val channelLabel = if (channel == AUTO_CHANNEL) "Auto" else channel.toString()
+        sendMessage = "Settings saved · channel $channelLabel"
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        append("Settings saved: channel=$channel bleArm=$bleArm name=$cleanName theme=${themeMode.name} tint=${tintMode.name}")
+        append("Settings saved: channel=$channelLabel bleArm=$bleArm name=$cleanName theme=${themeMode.name} tint=${tintMode.name}")
 
         // Channel and identity are fixed when the session helper starts awdl0.
         // Drop the live session so the next scan/send recreates it with the new
         // values; a BLE-arm change only needs the advertisement restarted.
         val identityChanged = channel != previous.channel || cleanName != previous.deviceName
-        if (identityChanged && helperSession != null) {
+        if (identityChanged) {
+            scanning = false
             scope.launch {
                 stopSession()
                 append("Live session dropped; the next operation uses channel $channel as $cleanName.")
@@ -425,7 +432,12 @@ class DroidyController(private val context: Context) {
         peers = emptyList()
         selectedMac = null
         append("")
-        append("Starting live AirDrop scan...")
+        if (settings.channel == AUTO_CHANNEL) {
+            scanAuto()
+            return
+        }
+        activeChannel = settings.channel
+        append("Starting live AirDrop scan on channel $activeChannel...")
         val session = sessionMutex.withLock { ensureSessionLocked() }
         if (session == null) {
             scanning = false
@@ -436,6 +448,42 @@ class DroidyController(private val context: Context) {
         status = "SCANNING"
         sendMessage = "Live scan running. Nearby peers update automatically."
         append("Live scan running; peer updates are continuous.")
+    }
+
+    private suspend fun scanAuto() {
+        sendMessage = "Auto scan: trying 44 → 6 → 149..."
+        append("Auto channel scan: 44 → 6 → 149")
+        while (scanning) {
+            for (channel in AUTO_CHANNELS) {
+                if (!scanning) break
+                activeChannel = channel
+                stopSession()
+                val session = sessionMutex.withLock { ensureSessionLocked() }
+                if (session == null) {
+                    scanning = false
+                    status = "CHECK LOG"
+                    sendMessage = "Live scan could not start; check the log."
+                    return
+                }
+                if (!scanning) {
+                    stopSession()
+                    return
+                }
+                append("Auto scan on channel $channel")
+                val started = System.currentTimeMillis()
+                while (scanning && peers.isEmpty() &&
+                    System.currentTimeMillis() - started < 4_000
+                ) {
+                    delay(250)
+                }
+                if (peers.isNotEmpty()) {
+                    status = "SCANNING"
+                    sendMessage = "${peers.size} person(s) found on channel $channel."
+                    append("Auto channel locked on $channel.")
+                    return
+                }
+            }
+        }
     }
 
     suspend fun stopScanning() {
@@ -967,7 +1015,7 @@ class DroidyController(private val context: Context) {
         if (existing != null) stopReceiveLocked(existing)
 
         val command = helper(
-            "receive '$RECEIVE_DIR' 8771 ${settings.channel} '${helperName()}'",
+            "receive '$RECEIVE_DIR' 8771 $activeChannel '${helperName()}'",
         )
         append("")
         append("$ starting receive helper")
@@ -1134,7 +1182,7 @@ class DroidyController(private val context: Context) {
     private suspend fun ensureSessionLocked(): HelperSession? {
         val current = helperSession
         if (current != null && current.process.isAlive &&
-            current.channel == settings.channel && current.name == helperName()
+            current.channel == activeChannel && current.name == helperName()
         ) {
             return current
         }
@@ -1142,7 +1190,7 @@ class DroidyController(private val context: Context) {
 
         prepare()
         startBle(fresh = false)
-        val channel = settings.channel
+        val channel = activeChannel
         val name = helperName()
         val command = "$APP_TMP/owly-k20-helper session $channel '$name'"
         append("")
