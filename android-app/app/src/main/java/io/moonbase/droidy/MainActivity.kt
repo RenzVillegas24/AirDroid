@@ -1162,164 +1162,6 @@ private fun SettingsScreen(controller: DroidyController) {
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { SectionLabel("CONNECTION") }
-        item {
-            SettingsCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_cell_tower),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "AWDL channel",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = "Fixed monitor channel on the WCN3990 radio",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf(44, 6, 149).forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = channel == option,
-                            onClick = { channel = option },
-                            shape = SegmentedButtonDefaults.itemShape(index, 3),
-                            label = {
-                                Text(
-                                    when (option) {
-                                        6 -> "6 · 2.4"
-                                        149 -> "149 · 5"
-                                        else -> "44 · 5"
-                                    },
-                                )
-                            },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(18.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_bluetooth),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "BLE wake arm",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = "Apple Continuity advertisement shape",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf("A", "V2", "B").forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = bleArm == index,
-                            onClick = { bleArm = index },
-                            shape = SegmentedButtonDefaults.itemShape(index, 3),
-                            label = { Text(option) },
-                        )
-                    }
-                }
-            }
-        }
-        item { SectionLabel("APPEARANCE") }
-        item {
-            SettingsCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_tune),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Theme",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = "Follow the system or force light or dark",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    ThemeMode.entries.forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = themeMode == option,
-                            onClick = {
-                                themeMode = option
-                                controller.saveAppearance(option, tintMode)
-                            },
-                            shape = SegmentedButtonDefaults.itemShape(index, ThemeMode.entries.size),
-                            label = { Text(option.label) },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(18.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_tune),
-                        contentDescription = null,
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Tint",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.onSurface,
-                        )
-                        Text(
-                            text = if (Build.VERSION.SDK_INT >= 31) {
-                                "Droidy palette or Android dynamic color"
-                            } else {
-                                "Droidy palette; system tint needs Android 12+"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    TintMode.entries.forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = tintMode == option,
-                            onClick = {
-                                tintMode = option
-                                controller.saveAppearance(themeMode, option)
-                            },
-                            shape = SegmentedButtonDefaults.itemShape(index, TintMode.entries.size),
-                            label = { Text(option.label) },
-                        )
-                    }
-                }
-            }
-        }
         item { SectionLabel("IDENTITY") }
         item {
             SettingsCard {
@@ -1376,40 +1218,6 @@ private fun SettingsScreen(controller: DroidyController) {
                         color = colors.primary,
                     )
                 }
-            }
-        }
-        item { SectionLabel("RECEIVER") }
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
-            ) {
-                ListItem(
-                    headlineContent = { Text("Incoming storage") },
-                    supportingContent = { Text(DroidyController.RECEIVE_DIR) },
-                    leadingContent = {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_folder),
-                            contentDescription = null,
-                            tint = colors.primary,
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                )
-                HorizontalDivider(color = colors.outlineVariant)
-                ListItem(
-                    headlineContent = { Text("AirDrop port") },
-                    supportingContent = { Text("8771 · AWDL link-local") },
-                    leadingContent = {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_sensors),
-                            contentDescription = null,
-                            tint = colors.primary,
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                )
             }
         }
         item { SectionLabel("SYSTEM") }
@@ -1507,6 +1315,198 @@ private fun SettingsScreen(controller: DroidyController) {
                             text = "Verified from /proc/cmdline and con_mode",
                             style = MaterialTheme.typography.labelSmall,
                             color = colors.primary,
+                        )
+                    }
+                }
+            }
+        }
+        item { SectionLabel("APPEARANCE") }
+        item {
+            SettingsCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_tune),
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Theme",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onSurface,
+                        )
+                        Text(
+                            text = "Follow the system or force light or dark",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    ThemeMode.entries.forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = themeMode == option,
+                            onClick = {
+                                themeMode = option
+                                controller.saveAppearance(option, tintMode)
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index, ThemeMode.entries.size),
+                            label = { Text(option.label) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_tune),
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Tint",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onSurface,
+                        )
+                        Text(
+                            text = if (Build.VERSION.SDK_INT >= 31) {
+                                "Droidy palette or Android dynamic color"
+                            } else {
+                                "Droidy palette; system tint needs Android 12+"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    TintMode.entries.forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = tintMode == option,
+                            onClick = {
+                                tintMode = option
+                                controller.saveAppearance(themeMode, option)
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index, TintMode.entries.size),
+                            label = { Text(option.label) },
+                        )
+                    }
+                }
+            }
+        }
+        item { SectionLabel("RECEIVER") }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
+            ) {
+                ListItem(
+                    headlineContent = { Text("Incoming storage") },
+                    supportingContent = { Text(DroidyController.RECEIVE_DIR) },
+                    leadingContent = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_folder),
+                            contentDescription = null,
+                            tint = colors.primary,
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                )
+                HorizontalDivider(color = colors.outlineVariant)
+                ListItem(
+                    headlineContent = { Text("AirDrop port") },
+                    supportingContent = { Text("8771 · AWDL link-local") },
+                    leadingContent = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_sensors),
+                            contentDescription = null,
+                            tint = colors.primary,
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                )
+            }
+        }
+        item { SectionLabel("CONNECTION") }
+        item {
+            SettingsCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_cell_tower),
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "AWDL channel",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onSurface,
+                        )
+                        Text(
+                            text = "Fixed monitor channel on the WCN3990 radio",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    listOf(44, 6, 149).forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = channel == option,
+                            onClick = { channel = option },
+                            shape = SegmentedButtonDefaults.itemShape(index, 3),
+                            label = {
+                                Text(
+                                    when (option) {
+                                        6 -> "6 · 2.4"
+                                        149 -> "149 · 5"
+                                        else -> "44 · 5"
+                                    },
+                                )
+                            },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_bluetooth),
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "BLE wake arm",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onSurface,
+                        )
+                        Text(
+                            text = "Apple Continuity advertisement shape",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    listOf("A", "V2", "B").forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = bleArm == index,
+                            onClick = { bleArm = index },
+                            shape = SegmentedButtonDefaults.itemShape(index, 3),
+                            label = { Text(option) },
                         )
                     }
                 }
