@@ -1,3 +1,6 @@
 [submodule "kernel"]
 	path = kernel
-	url = https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael.git
+	url = https://github.com/RenzVillegas24/kernel_xiaomi_raphael.git
+[submodule "third_party/owly"]
+	path = third_party/owly
+	url = https://github.com/RenzVillegas24/owly.git
