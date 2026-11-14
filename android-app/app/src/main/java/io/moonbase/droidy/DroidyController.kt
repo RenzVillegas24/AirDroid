@@ -191,6 +191,7 @@ class DroidyController(private val context: Context) {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/Droidy"
         const val AUTO_CHANNEL = 0
+        private const val AUTO_CHANNEL_DWELL_MS = 2_500L
         private val AUTO_CHANNELS = intArrayOf(44, 6, 149)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
@@ -230,6 +231,7 @@ class DroidyController(private val context: Context) {
     )
         private set
     private var activeChannel = if (settings.channel > 0) settings.channel else 44
+    private var lastAutoChannel = prefs.getInt("lastAutoChannel", 44)
     var peers by mutableStateOf<List<Peer>>(emptyList())
         private set
     var selectedMac by mutableStateOf<String?>(null)
@@ -467,10 +469,12 @@ class DroidyController(private val context: Context) {
     }
 
     private suspend fun scanAuto() {
-        sendMessage = "Auto scan: trying 44 → 6 → 149..."
-        append("Auto channel scan: 44 → 6 → 149")
+        val channels = listOf(lastAutoChannel) + AUTO_CHANNELS.filter { it != lastAutoChannel }
+        val order = channels.joinToString(" → ")
+        sendMessage = "Auto scan: trying $order..."
+        append("Auto channel scan: $order")
         while (scanning) {
-            for (channel in AUTO_CHANNELS) {
+            for (channel in channels) {
                 if (!scanning) break
                 activeChannel = channel
                 stopSession()
@@ -488,11 +492,13 @@ class DroidyController(private val context: Context) {
                 append("Auto scan on channel $channel")
                 val started = System.currentTimeMillis()
                 while (scanning && peers.isEmpty() &&
-                    System.currentTimeMillis() - started < 4_000
+                    System.currentTimeMillis() - started < AUTO_CHANNEL_DWELL_MS
                 ) {
                     delay(250)
                 }
                 if (peers.isNotEmpty()) {
+                    lastAutoChannel = channel
+                    prefs.edit().putInt("lastAutoChannel", channel).apply()
                     status = "SCANNING"
                     sendMessage = "${peers.size} person(s) found on channel $channel."
                     append("Auto channel locked on $channel.")
