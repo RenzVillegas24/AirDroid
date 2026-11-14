@@ -403,7 +403,7 @@ private fun AirDroidTopBar(
 }
 
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun TopBarPage(
     tab: AirDroidTab,
@@ -453,13 +453,20 @@ private fun TopBarPage(
                         !controller.sending && !controller.sendCancelling,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                    Icon(
-                        painter = painterResource(
-                            if (transferMode) R.drawable.ic_sensors else R.drawable.ic_wifi_tethering,
-                        ),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
+                    if (controller.modeSwitching) {
+                        LoadingIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = LocalContentColor.current,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(
+                                if (transferMode) R.drawable.ic_sensors else R.drawable.ic_wifi_tethering,
+                            ),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                     Spacer(Modifier.width(6.dp))
                     Text(if (transferMode) "ON" else "OFF")
                 }
