@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.system.Os
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -608,28 +609,28 @@ class DroidyController(private val context: Context) {
             try {
                 val displayName = queryDisplayName(uri) ?: "airdrop-file"
                 val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                Log.i("DroidySend", "pickFile display=$displayName clean=$cleanName uri=$uri")
                 val out = File(context.cacheDir, "outgoing-${System.currentTimeMillis()}-$cleanName")
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(out).use { output -> input.copyTo(output) }
                 } ?: return@withContext null
-                out
+                out to cleanName
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { append("Could not read file: ${e.message}") }
                 null
             }
         }
-        pickedFile = picked
-        pickedDisplayName = if (picked == null) null else {
-            queryDisplayName(uri)?.replace(Regex("[^A-Za-z0-9._ -]"), "_") ?: picked.name
-        }
+        pickedFile = picked?.first
+        pickedDisplayName = picked?.second
         sendMessage = when {
             picked == null -> "Could not open that file."
-            else -> "Ready to send ${pickedDisplayName ?: picked.name}."
+            else -> "Ready to send ${picked.second}."
         }
     }
 
     suspend fun sendPicked() {
         val file = pickedFile ?: return
+        Log.i("DroidySend", "sendPicked file=${file.name} display=$pickedDisplayName")
         sendFile(file.absolutePath, pickedDisplayName)
     }
 
@@ -663,7 +664,13 @@ class DroidyController(private val context: Context) {
         }
         val cleanPath = path.replace('\n', ' ').replace('\r', ' ')
         val file = File(cleanPath)
-        val shownName = displayName?.takeIf { it.isNotBlank() } ?: file.name
+        val candidateName = displayName?.takeIf { it.isNotBlank() } ?: file.name
+        val shownName = if (candidateName.startsWith("outgoing-")) {
+            sourceDisplayName(candidateName)
+        } else {
+            candidateName
+        }
+        Log.i("DroidySend", "sendFile display=$displayName shown=$shownName file=${file.name}")
         val generation = ++sendGeneration
         sendCancelled = false
         sendProgressBytes = 0
@@ -1992,7 +1999,9 @@ class DroidyController(private val context: Context) {
         startBle(fresh = false)
         val channel = activeChannel
         val name = helperName()
-        val command = "$APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
+        // ACK-less TX avoids a per-frame 802.11 ACK stall on the AWDL link.
+        // The AirDrop protocol still has its own response/retry handling.
+        val command = "OWLY_TX_NO_ACK=1 $APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
         append("")
         append("$ starting helper session")
         val process = try {
@@ -2358,6 +2367,14 @@ class DroidyController(private val context: Context) {
             logs.addAll(line.split('\n'))
         }
         if (logs.size > 2500) logs.removeRange(0, logs.size - 2000)
+    }
+
+    /** Strips the `outgoing-<timestamp>-` cache prefix if state was lost. */
+    private fun sourceDisplayName(cacheName: String): String {
+        if (!cacheName.startsWith("outgoing-")) return cacheName
+        val rest = cacheName.removePrefix("outgoing-")
+        val separator = rest.indexOf('-')
+        return if (separator >= 0) rest.substring(separator + 1) else cacheName
     }
 
     private fun queryDisplayName(uri: Uri): String? {
