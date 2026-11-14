@@ -24,12 +24,15 @@ scripts/droidy-adb.sh scan
 scripts/droidy-adb.sh stop
 scripts/droidy-adb.sh accept
 scripts/droidy-adb.sh decline
+scripts/droidy-adb.sh history
 ```
 
 ```bash
 scripts/droidy-adb.sh send /sdcard/Download/example.bin <redacted-mac>
 scripts/droidy-adb.sh send-text "hello" <redacted-mac>
 scripts/droidy-adb.sh cancel <transfer-id>
+scripts/droidy-adb.sh pin <redacted-mac>
+scripts/droidy-adb.sh delete /sdcard/Download/Droidy/example.jpg
 ```
 
 The peer MAC is optional when a peer is already selected. It is read at
