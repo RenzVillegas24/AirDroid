@@ -18,8 +18,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.asPaddingValues
@@ -34,6 +42,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,12 +50,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ButtonGroup
+import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.ButtonGroupMenuState
+import androidx.compose.material3.ButtonGroupScope
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -66,19 +83,18 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,16 +106,20 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -222,7 +242,7 @@ private enum class AirDroidTab(
     val subtitle: String,
     @DrawableRes val icon: Int,
 ) {
-    HOME("AirDroid", "Nearby AirDrop and received files", R.drawable.ic_sensors),
+    HOME("AirDroid", "Nearby AirDrop and received files", R.drawable.ic_airdroid_home),
     LOGS("Logs", "Live radio and session output", R.drawable.ic_receipt_long),
     SETTINGS("Settings", "Radio, appearance, and receiver identity", R.drawable.ic_settings),
 }
@@ -242,43 +262,60 @@ private enum class HomeTab(val label: String) {
     RECEIVED("Received"),
 }
 
+private val TOOLBAR_TABS = listOf(AirDroidTab.LOGS, AirDroidTab.HOME, AirDroidTab.SETTINGS)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
     var tab by remember { mutableStateOf(AirDroidTab.HOME) }
+    val pagerState = rememberPagerState(
+        initialPage = TOOLBAR_TABS.indexOf(AirDroidTab.HOME),
+        pageCount = { TOOLBAR_TABS.size },
+    )
     val topAppBarState = rememberTopAppBarState()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
     LaunchedEffect(tab) {
         topAppBarState.heightOffset = 0f
         topAppBarState.contentOffset = 0f
     }
+    LaunchedEffect(pagerState.currentPage) {
+        tab = TOOLBAR_TABS[pagerState.currentPage]
+    }
+    fun selectTab(next: AirDroidTab) {
+        tab = next
+        scope.launch {
+            pagerState.animateScrollToPage(TOOLBAR_TABS.indexOf(next))
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        Scaffold(
+        HorizontalPager(
+            state = pagerState,
             modifier = Modifier.fillMaxSize(),
-            containerColor = Color.Transparent,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = { AirDroidTopBar(tab, controller, scope, scrollBehavior) },
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection)
-                    .padding(innerPadding),
-            ) {
-                when (tab) {
-                    AirDroidTab.HOME -> HomeScreen(controller, scope)
-                    AirDroidTab.LOGS -> LogsScreen(controller)
-                    AirDroidTab.SETTINGS -> SettingsScreen(controller)
+        ) { page ->
+            val pageTab = TOOLBAR_TABS[page]
+            Column(modifier = Modifier.fillMaxSize()) {
+                AirDroidTopBar(pageTab, controller, scope, scrollBehavior)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .nestedScroll(scrollBehavior.nestedScrollConnection),
+                ) {
+                    when (pageTab) {
+                        AirDroidTab.HOME -> HomeScreen(controller, scope)
+                        AirDroidTab.LOGS -> LogsScreen(controller)
+                        AirDroidTab.SETTINGS -> SettingsScreen(controller)
+                    }
                 }
             }
         }
         AirDroidFloatingToolbar(
             selected = tab,
-            onSelected = { tab = it },
+            onSelected = ::selectTab,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         IncomingRequestDialog(controller)
@@ -319,72 +356,95 @@ private fun AirDroidTopBar(
             .padding(start = 20.dp, end = 20.dp, top = statusTop),
     ) {
         Spacer(Modifier.weight(1f))
-        Row(
+        TopBarPage(
+            tab = tab,
+            titleStyle = titleStyle,
+            subtitleAlpha = subtitleAlpha,
+            subtitleHeight = subtitleHeight,
+            controller = controller,
+            scope = scope,
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = tab.label,
-                    style = titleStyle,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = tab.subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .height(subtitleHeight)
-                        .alpha(subtitleAlpha)
-                        .clipToBounds(),
-                )
-            }
-            when (tab) {
-                AirDroidTab.HOME -> {
-                    FilledTonalButton(
-                        onClick = {
-                            scope.launch {
-                                if (controller.scanning) {
-                                    controller.stopScanning()
-                                } else {
-                                    controller.scan()
-                                }
-                            }
-                        },
-                        enabled = controller.kernel.monitorReady &&
-                            !controller.sending && !controller.sendCancelling,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(
-                                if (controller.scanning) R.drawable.ic_stop_circle else R.drawable.ic_refresh,
-                            ),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (controller.scanning) "Stop" else "Scan")
-                    }
-                }
-                AirDroidTab.LOGS -> {
-                    TextButton(onClick = { controller.clearLogs() }) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_delete),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Clear")
-                    }
-                }
-                AirDroidTab.SETTINGS -> Unit
-            }
-        }
+        )
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TopBarPage(
+    tab: AirDroidTab,
+    titleStyle: TextStyle,
+    subtitleAlpha: Float,
+    subtitleHeight: Dp,
+    controller: AirDroidController,
+    scope: CoroutineScope,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = tab.label,
+                style = titleStyle,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = tab.subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .height(subtitleHeight)
+                    .alpha(subtitleAlpha)
+                    .clipToBounds(),
+            )
+        }
+        when (tab) {
+            AirDroidTab.HOME -> {
+                FilledTonalButton(
+                    onClick = {
+                        scope.launch {
+                            if (controller.scanning) {
+                                controller.stopScanning()
+                            } else {
+                                controller.scan()
+                            }
+                        }
+                    },
+                    enabled = controller.kernel.monitorReady &&
+                        !controller.sending && !controller.sendCancelling,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (controller.scanning) R.drawable.ic_stop_circle else R.drawable.ic_refresh,
+                        ),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (controller.scanning) "Stop" else "Scan")
+                }
+            }
+            AirDroidTab.LOGS -> {
+                TextButton(onClick = { controller.clearLogs() }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_delete),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Clear")
+                }
+            }
+            AirDroidTab.SETTINGS -> Unit
+        }
     }
 }
 
@@ -402,38 +462,106 @@ private fun AirDroidFloatingToolbar(
             .padding(horizontal = 20.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
+        val itemSize = 60.dp
+        val selectedIndex = TOOLBAR_TABS.indexOf(selected).coerceAtLeast(0)
+        var pressed by remember { mutableStateOf(false) }
+        var hoveredIndex by remember { mutableIntStateOf(selectedIndex) }
+        var fingerX by remember { mutableFloatStateOf(0f) }
+        val density = LocalDensity.current
+        val fingerOffset = with(density) {
+            (fingerX.toDp() - itemSize / 2).coerceIn(
+                0.dp,
+                itemSize * (TOOLBAR_TABS.size - 1),
+            )
+        }
+        val indicatorOffset by animateDpAsState(
+            targetValue = if (pressed) fingerOffset else itemSize * selectedIndex,
+            animationSpec = if (pressed) {
+                tween(durationMillis = 45)
+            } else {
+                spring(dampingRatio = 0.82f, stiffness = 420f)
+            },
+            label = "toolbar selection",
+        )
+        val toolbarScale by animateFloatAsState(
+            targetValue = if (pressed) 1.045f else 1f,
+            animationSpec = spring(dampingRatio = 0.78f, stiffness = 360f),
+            label = "toolbar scale",
+        )
         HorizontalFloatingToolbar(
             expanded = true,
-            colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors(),
+            modifier = Modifier.graphicsLayer {
+                scaleX = toolbarScale
+                scaleY = toolbarScale
+            },
+            colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors(
+                toolbarContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                toolbarContentColor = MaterialTheme.colorScheme.onSurface,
+                fabContainerColor = MaterialTheme.colorScheme.primary,
+                fabContentColor = MaterialTheme.colorScheme.onPrimary,
+            ),
             shape = FloatingToolbarDefaults.ContainerShape,
             expandedShadowElevation = 6.dp,
             collapsedShadowElevation = 3.dp,
         ) {
-            AirDroidTab.entries.forEach { tab ->
-                val isSelected = selected == tab
-                IconButton(
-                    onClick = { onSelected(tab) },
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (isSelected) {
-                                MaterialTheme.colorScheme.primaryContainer
+            Box(
+                modifier = Modifier.pointerInput(itemSize, TOOLBAR_TABS.size) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        fun indexAt(x: Float): Int =
+                            (x / itemSize.toPx()).toInt().coerceIn(0, TOOLBAR_TABS.lastIndex)
+                        fingerX = down.position.x
+                        hoveredIndex = indexAt(down.position.x)
+                        pressed = true
+                        var released = false
+                        while (!released) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null) {
+                                released = true
                             } else {
-                                Color.Transparent
+                                fingerX = change.position.x
+                                hoveredIndex = indexAt(change.position.x)
+                                released = !change.pressed
+                                change.consume()
+                            }
+                        }
+                        pressed = false
+                        onSelected(TOOLBAR_TABS[hoveredIndex])
+                    }
+                },
+            ) {
+                Box(
+                    modifier = Modifier
+                        .offset(x = indicatorOffset)
+                        .size(itemSize)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    for ((index, tab) in TOOLBAR_TABS.withIndex()) {
+                        val isHighlighted = if (pressed) hoveredIndex == index else selected == tab
+                        val tint by animateColorAsState(
+                            targetValue = if (isHighlighted) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                        ),
-                ) {
-                    Icon(
-                        painter = painterResource(tab.icon),
-                        contentDescription = tab.label,
-                        tint = if (isSelected) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(24.dp),
-                    )
+                            animationSpec = tween(durationMillis = 120),
+                            label = "toolbar icon tint",
+                        )
+                        Box(
+                            modifier = Modifier.size(itemSize),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(tab.icon),
+                                contentDescription = tab.label,
+                                tint = tint,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -698,6 +826,82 @@ private fun EmptyTransfersCard(title: String, subtitle: String) {
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun <T> AirDroidButtonGroup(
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelected: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ButtonGroup(
+        overflowIndicator = { state -> ButtonGroupDefaults.OverflowIndicator(state) },
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+    ) {
+        for (index in options.indices) {
+            val option = options[index]
+            customItem(
+                buttonGroupContent = {
+                    AirDroidGroupItem(
+                        option = option,
+                        selected = selected,
+                        label = label(option),
+                        onSelected = onSelected,
+                        index = index,
+                        count = options.size,
+                    )
+                },
+                menuContent = { state ->
+                    DropdownMenuItem(
+                        text = { Text(label(option)) },
+                        onClick = {
+                            onSelected(option)
+                            state.dismiss()
+                        },
+                    )
+                },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun <T> ButtonGroupScope.AirDroidGroupItem(
+    option: T,
+    selected: T,
+    label: String,
+    onSelected: (T) -> Unit,
+    index: Int,
+    count: Int,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val shapes = when {
+        count == 1 -> ToggleButtonDefaults.shapes()
+        index == 0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+        index == count - 1 -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+        else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+    }
+    ToggleButton(
+        checked = selected == option,
+        onCheckedChange = { onSelected(option) },
+        modifier = Modifier
+            .weight(1f)
+            .animateWidth(interaction),
+        shapes = shapes,
+        interactionSource = interaction,
+        contentPadding = ToggleButtonDefaults.ContentPadding,
+    ) {
+        Text(
+            text = label,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeTabs(
@@ -706,20 +910,19 @@ private fun HomeTabs(
     receivedCount: Int,
     onSelected: (HomeTab) -> Unit,
 ) {
-    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-        HomeTab.entries.forEachIndexed { index, tab ->
+    AirDroidButtonGroup(
+        options = HomeTab.entries,
+        selected = selected,
+        label = { tab ->
             val count = when (tab) {
                 HomeTab.SENT -> sentCount
                 HomeTab.RECEIVED -> receivedCount
             }
-            SegmentedButton(
-                selected = selected == tab,
-                onClick = { onSelected(tab) },
-                shape = SegmentedButtonDefaults.itemShape(index, HomeTab.entries.size),
-                label = { Text("${tab.label} ($count)") },
-            )
-        }
-    }
+            "${tab.label} ($count)"
+        },
+        onSelected = onSelected,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -1822,19 +2025,16 @@ private fun SettingsScreen(controller: AirDroidController) {
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    ThemeMode.entries.forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = themeMode == option,
-                            onClick = {
-                                themeMode = option
-                                controller.saveAppearance(option, tintMode)
-                            },
-                            shape = SegmentedButtonDefaults.itemShape(index, ThemeMode.entries.size),
-                            label = { Text(option.label) },
-                        )
-                    }
-                }
+                AirDroidButtonGroup(
+                    options = ThemeMode.entries,
+                    selected = themeMode,
+                    label = { it.label },
+                    onSelected = {
+                        themeMode = it
+                        controller.saveAppearance(it, tintMode)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Spacer(Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -1862,19 +2062,16 @@ private fun SettingsScreen(controller: AirDroidController) {
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    TintMode.entries.forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = tintMode == option,
-                            onClick = {
-                                tintMode = option
-                                controller.saveAppearance(themeMode, option)
-                            },
-                            shape = SegmentedButtonDefaults.itemShape(index, TintMode.entries.size),
-                            label = { Text(option.label) },
-                        )
-                    }
-                }
+                AirDroidButtonGroup(
+                    options = TintMode.entries,
+                    selected = tintMode,
+                    label = { it.label },
+                    onSelected = {
+                        tintMode = it
+                        controller.saveAppearance(themeMode, it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         item { SectionLabel("RECEIVER") }
@@ -1936,25 +2133,20 @@ private fun SettingsScreen(controller: AirDroidController) {
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf(0, 44, 6, 149).forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = channel == option,
-                            onClick = { channel = option },
-                            shape = SegmentedButtonDefaults.itemShape(index, 4),
-                            label = {
-                                Text(
-                                    when (option) {
-                                        0 -> "Auto"
-                                        6 -> "6"
-                                        149 -> "149"
-                                        else -> "44"
-                                    },
-                                )
-                            },
-                        )
-                    }
-                }
+                AirDroidButtonGroup(
+                    options = listOf(0, 44, 6, 149),
+                    selected = channel,
+                    label = { option ->
+                        when (option) {
+                            0 -> "Auto"
+                            6 -> "6"
+                            149 -> "149"
+                            else -> "44"
+                        }
+                    },
+                    onSelected = { channel = it },
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = "Auto tries 44 → 6 → 149 and locks onto the first channel with peers.",
@@ -1984,16 +2176,14 @@ private fun SettingsScreen(controller: AirDroidController) {
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf("A", "V2", "B").forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = bleArm == index,
-                            onClick = { bleArm = index },
-                            shape = SegmentedButtonDefaults.itemShape(index, 3),
-                            label = { Text(option) },
-                        )
-                    }
-                }
+                val bleOptions = listOf("A", "V2", "B")
+                AirDroidButtonGroup(
+                    options = bleOptions,
+                    selected = bleOptions.getOrElse(bleArm) { "A" },
+                    label = { it },
+                    onSelected = { bleArm = bleOptions.indexOf(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         item { SectionLabel("ABOUT") }

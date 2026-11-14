@@ -108,7 +108,7 @@ class AirDroidNotifications(private val context: Context) {
             CHANNEL_TRANSFERS,
             "AirDroid transfers",
             text,
-            R.drawable.ic_sensors,
+            R.drawable.ic_airdroid_notification,
         )
         builder
             .setGroupSummary(true)
@@ -155,7 +155,7 @@ class AirDroidNotifications(private val context: Context) {
             Notification.Builder(context).setPriority(Notification.PRIORITY_HIGH)
         }
         builder
-            .setSmallIcon(R.drawable.ic_download)
+            .setSmallIcon(R.drawable.ic_airdroid_notification)
             .setContentTitle(title)
             .setContentText(summary)
             .setStyle(Notification.BigTextStyle().bigText(bigText))
@@ -193,10 +193,7 @@ class AirDroidNotifications(private val context: Context) {
                 append(transfer.transferredBytes.readableBytes())
             }
         }
-        val icon = when (transfer.direction) {
-            TransferDirection.SENT -> R.drawable.ic_send
-            TransferDirection.RECEIVED -> R.drawable.ic_download
-        }
+        val icon = R.drawable.ic_airdroid_notification
         val percent = transfer.progressPercent
         val builder = baseBuilder(CHANNEL_TRANSFERS, title, text, icon)
         builder
@@ -243,10 +240,7 @@ class AirDroidNotifications(private val context: Context) {
                 "${transfer.fileName} · ${transfer.error?.takeIf { it.isNotBlank() } ?: "Cancelled"}"
             else -> transfer.fileName
         }
-        val icon = when (transfer.direction) {
-            TransferDirection.SENT -> R.drawable.ic_send
-            TransferDirection.RECEIVED -> R.drawable.ic_download
-        }
+        val icon = R.drawable.ic_airdroid_notification
         val builder = baseBuilder(CHANNEL_TRANSFERS, title, text, icon)
         builder
             .setCategory(Notification.CATEGORY_STATUS)

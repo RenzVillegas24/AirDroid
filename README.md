@@ -1,3 +1,5 @@
+<img src="docs/assets/airdroid-icon.png" width="128" alt="AirDroid">
+
 # AirDroid
 
 AirDrop over AWDL for the Redmi K20 Pro / Mi 9T Pro (`raphael`, WCN3990),
