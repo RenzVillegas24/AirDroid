@@ -480,6 +480,12 @@ struct ActiveReceive {
 /// this, a vanished sender would pause discovery for the rest of the session.
 const RECEIVE_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// The receiver can stop answering new `/Discover` connections right after a
+/// transfer even while its AWDL peer stays visible. Ten-second attempts make
+/// the next request look 20+ seconds late; retry the small discover exchange
+/// sooner instead.
+const SEND_DISCOVER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
+
 /// Pauses or resumes background discovery for a transfer. Prints only on a
 /// change, so the UI can show "discovery paused" without log spam.
 fn update_transfer_pause(sniffer: &mut NameSniffer, paused: &mut bool, now: bool) {
@@ -709,7 +715,7 @@ async fn find_and_send(
         }
         for (target, flags, source) in targets {
             attempt += 1;
-            let discover = timeout(Duration::from_secs(15), sender.discover(target));
+            let discover = timeout(SEND_DISCOVER_ATTEMPT_TIMEOUT, sender.discover(target));
             let discovered = tokio::select! {
                 _ = cancel.changed() => {
                     if *cancel.borrow() {
