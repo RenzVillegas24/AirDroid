@@ -139,6 +139,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import android.os.SystemClock
+import android.text.format.DateUtils
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -245,7 +256,20 @@ class MainActivity : ComponentActivity() {
                     }
                     if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
                 }
-                AirDroidApp(controller = controller, scope = scope)
+                var showSplash by rememberSaveable { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    delay(2400)
+                    showSplash = false
+                }
+                Box(Modifier.fillMaxSize()) {
+                    AirDroidApp(controller = controller, scope = scope)
+                    AnimatedVisibility(
+                        visible = showSplash,
+                        exit = fadeOut(tween(500)) + scaleOut(tween(500), targetScale = 1.06f),
+                    ) {
+                        AirDroidSplash()
+                    }
+                }
             }
         }
     }
@@ -883,6 +907,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     }
 
     var homeTab by remember { mutableStateOf(HomeTab.SENT) }
+    val myName = controller.settings.deviceName.ifBlank { Build.MODEL }
     val peers = controller.peers.filter { it.airdropReady }.sortedWith(
         compareByDescending<Peer> { controller.isPinned(it.mac) }
             .thenByDescending { it.rssi },
@@ -945,6 +970,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                         Box(Modifier.animateItem()) {
                             TransferCard(
                                 transfer = transfer,
+                                localName = myName,
                                 onCancel = { controller.cancelTransfer(transfer.id) },
                             )
                         }
@@ -953,7 +979,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 if (sentDone.isNotEmpty()) {
                     item(key = "sent-label") { SectionLabel("SENT", Modifier.animateItem()) }
                     items(sentDone, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) { TransferCard(transfer) }
+                        Box(Modifier.animateItem()) { TransferCard(transfer, localName = myName) }
                     }
                 }
                 if (sentActive.isEmpty() && sentDone.isEmpty()) {
@@ -971,7 +997,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 if (receivedActive.isNotEmpty()) {
                     item(key = "receiving-label") { SectionLabel("RECEIVING", Modifier.animateItem()) }
                     items(receivedActive, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) { TransferCard(transfer) }
+                        Box(Modifier.animateItem()) { TransferCard(transfer, localName = myName) }
                     }
                 }
                 if (receivedDone.isNotEmpty()) {
@@ -980,6 +1006,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                         Box(Modifier.animateItem()) {
                         TransferCard(
                             transfer = transfer,
+                            localName = myName,
                             onOpen = {
                                 transfer.localPath?.let { path ->
                                     scope.launch { openReceivedFile(context, path) }
@@ -1211,10 +1238,173 @@ private fun HomeTabs(
     )
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+/** Smoothed live transfer speed, measured from how fast transferredBytes grows. */
+@Stable
+private class TransferRateState {
+    var bytesPerSecond by mutableDoubleStateOf(0.0)
+    var lastBytes = -1L
+    var lastMs = 0L
+}
+
+@Composable
+private fun rememberLiveRate(key: Any, transferredBytes: Long, active: Boolean): Double {
+    val state = remember(key) { TransferRateState() }
+    LaunchedEffect(transferredBytes, active) {
+        if (!active) {
+            state.bytesPerSecond = 0.0
+            state.lastBytes = -1L
+            return@LaunchedEffect
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (state.lastBytes < 0 || transferredBytes < state.lastBytes) {
+            state.lastBytes = transferredBytes
+            state.lastMs = now
+        } else {
+            val dt = now - state.lastMs
+            if (dt >= 400 && transferredBytes > state.lastBytes) {
+                val instant = (transferredBytes - state.lastBytes) * 1000.0 / dt
+                state.bytesPerSecond = if (state.bytesPerSecond <= 0.0) {
+                    instant
+                } else {
+                    state.bytesPerSecond * 0.65 + instant * 0.35
+                }
+                state.lastBytes = transferredBytes
+                state.lastMs = now
+            }
+        }
+        // No new bytes for a while: treat the transfer as stalled.
+        delay(3000)
+        state.bytesPerSecond = 0.0
+        state.lastBytes = transferredBytes
+        state.lastMs = SystemClock.elapsedRealtime()
+    }
+    return state.bytesPerSecond
+}
+
+private fun formatDuration(totalSeconds: Long): String {
+    val s = totalSeconds.coerceAtLeast(0)
+    return when {
+        s < 60 -> "${s}s"
+        s < 3600 -> "${s / 60}m ${(s % 60).toString().padStart(2, '0')}s"
+        else -> "${s / 3600}h ${((s % 3600) / 60).toString().padStart(2, '0')}m"
+    }
+}
+
+private fun formatClockSeconds(timestamp: Long): String =
+    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+
+/** "Finished at 14:32:05", or "Finished Nov 15 · 14:32:05" when it wasn't today. */
+private fun formatEndedAt(verb: String, timestamp: Long): String =
+    if (DateUtils.isToday(timestamp)) {
+        "$verb at ${formatClockSeconds(timestamp)}"
+    } else {
+        val day = SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(timestamp))
+        "$verb $day · ${formatClockSeconds(timestamp)}"
+    }
+
+@Composable
+private fun BigPercent(progress: Float, color: Color) {
+    val value = (progress * 100f).toInt().coerceIn(0, 100)
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(fontSize = 52.sp, fontWeight = FontWeight.Bold, color = color)) {
+                append(value.toString())
+            }
+            withStyle(
+                SpanStyle(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = color.copy(alpha = 0.8f),
+                ),
+            ) { append("%") }
+        },
+        style = MaterialTheme.typography.displayMedium.copy(
+            fontFeatureSettings = "tnum",
+            letterSpacing = (-1).sp,
+            lineHeight = 56.sp,
+        ),
+    )
+}
+
+@Composable
+private fun RouteEnd(name: String, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            painter = painterResource(R.drawable.ic_smartphone),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = name,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** "My phone → their phone" (or the reverse for received files). */
+@Composable
+private fun TransferRoute(from: String, to: String, arrowColor: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        RouteEnd(from, Modifier.weight(1f, fill = false))
+        Text(
+            text = "→",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            color = arrowColor,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
+        RouteEnd(to, Modifier.weight(1f, fill = false))
+    }
+}
+
+@Composable
+private fun MetaChip(text: String) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+        )
+    }
+}
+
+@Composable
+private fun StatusChip(text: String, @DrawableRes icon: Int, container: Color, content: Color) {
+    Surface(shape = CircleShape, color = container) {
+        Row(
+            modifier = Modifier.padding(start = 8.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = null,
+                tint = content,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = content,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun TransferCard(
     transfer: TransferItem,
+    localName: String = Build.MODEL,
     onCancel: (() -> Unit)? = null,
     onOpen: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
@@ -1222,63 +1412,100 @@ private fun TransferCard(
 ) {
     val colors = MaterialTheme.colorScheme
     val sent = transfer.direction == TransferDirection.SENT
+    val status = transfer.status
+    val active = status.isActive
+    val transferring = status == TransferStatus.TRANSFERRING
+    val failed = status == TransferStatus.FAILED || status == TransferStatus.CANCELLED
+    val complete = status == TransferStatus.COMPLETE
+
+    val accent = if (sent) colors.primary else colors.tertiary
+    val avatarContainer = when {
+        failed -> colors.errorContainer
+        sent -> colors.primaryContainer
+        else -> colors.tertiaryContainer
+    }
+    val avatarTint = when {
+        failed -> colors.onErrorContainer
+        sent -> colors.onPrimaryContainer
+        else -> colors.onTertiaryContainer
+    }
     val icon = when {
-        transfer.status == TransferStatus.COMPLETE && sent -> R.drawable.ic_check_circle
+        complete -> R.drawable.ic_check_circle
+        failed -> R.drawable.ic_warning
         sent -> R.drawable.ic_send
         else -> R.drawable.ic_download
     }
-    val iconContainer = if (sent) colors.primaryContainer else colors.tertiaryContainer
-    val iconTint = if (sent) colors.onPrimaryContainer else colors.onTertiaryContainer
-    val statusColor = when (transfer.status) {
-        TransferStatus.FAILED, TransferStatus.CANCELLED -> colors.error
-        else -> colors.onSurfaceVariant
+    val peer = transfer.peerName.ifBlank { "AirDrop" }
+    val me = localName.ifBlank { Build.MODEL }
+
+    val hasProgress = active &&
+        transfer.progressPercent != null &&
+        (transferring || transfer.transferredBytes > 0)
+    val targetProgress = if (transfer.totalBytes > 0) {
+        (transfer.transferredBytes.toFloat() / transfer.totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else {
+        (transfer.progressPercent ?: 0) / 100f
     }
+    val progress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(450, easing = LinearOutSlowInEasing),
+        label = "transferProgress",
+    )
+
+    val rate = rememberLiveRate(transfer.id, transfer.transferredBytes, transferring)
+    val remainingBytes = (transfer.totalBytes - transfer.transferredBytes).coerceAtLeast(0)
+    val etaSeconds: Long? = if (rate > 0.0 && transfer.totalBytes > 0) {
+        kotlin.math.ceil(remainingBytes / rate).toLong()
+    } else {
+        null
+    }
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
+        border = if (active) BorderStroke(1.dp, accent.copy(alpha = 0.28f)) else null,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 14.dp, top = 12.dp, end = 6.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(start = 16.dp, top = 16.dp, end = 12.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            // Header: avatar, file name, "my phone -> their phone", cancel.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = CircleShape,
-                    color = iconContainer,
-                    modifier = Modifier.size(38.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = avatarContainer,
+                    modifier = Modifier.size(48.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             painter = painterResource(icon),
                             contentDescription = null,
-                            tint = iconTint,
-                            modifier = Modifier.size(20.dp),
+                            tint = avatarTint,
+                            modifier = Modifier.size(24.dp),
                         )
                     }
                 }
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = transfer.fileName,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = colors.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        text = if (sent) {
-                            "→ ${transfer.peerName.ifBlank { "AirDrop" }}"
-                        } else {
-                            "from ${transfer.peerName.ifBlank { "AirDrop" }}"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Spacer(Modifier.height(3.dp))
+                    if (sent) {
+                        TransferRoute(from = me, to = peer, arrowColor = accent)
+                    } else {
+                        TransferRoute(from = peer, to = me, arrowColor = accent)
+                    }
                 }
                 if (transfer.canCancel && onCancel != null) {
                     IconButton(onClick = onCancel) {
@@ -1286,71 +1513,184 @@ private fun TransferCard(
                             painter = painterResource(R.drawable.ic_stop_circle),
                             contentDescription = "Cancel send",
                             tint = colors.error,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                 } else {
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(4.dp))
                 }
             }
-            if (transfer.status.isActive) {
-                val percent = transfer.progressPercent
-                if (percent != null &&
-                    (transfer.status == TransferStatus.TRANSFERRING ||
-                        transfer.transferredBytes > 0)
-                ) {
-                    LinearProgressIndicator(
-                        progress = { percent / 100f },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(end = 8.dp)
-                            .height(4.dp),
-                        trackColor = colors.surfaceContainerHighest,
-                    )
-                } else {
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(end = 8.dp)
-                            .height(4.dp),
-                        trackColor = colors.surfaceContainerHighest,
-                    )
+
+            when {
+                // Live transfer: big percentage on the left, speed + ETA on the right.
+                hasProgress -> {
+                    Column(
+                        modifier = Modifier.padding(end = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            BigPercent(progress = progress, color = accent)
+                            Spacer(Modifier.weight(1f))
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(1.dp),
+                            ) {
+                                Text(
+                                    text = if (rate > 0.0) {
+                                        "${rate.toLong().readableBytes()}/s"
+                                    } else {
+                                        "Measuring speed…"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.onSurface,
+                                )
+                                Text(
+                                    text = etaSeconds?.let { "${formatDuration(it)} left" }
+                                        ?: "Estimating time…",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.onSurfaceVariant,
+                                )
+                                if (etaSeconds != null) {
+                                    Text(
+                                        text = "Done ≈ ${formatClockSeconds(System.currentTimeMillis() + etaSeconds * 1000)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = accent,
+                                    )
+                                }
+                            }
+                        }
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            color = accent,
+                            trackColor = colors.surfaceContainerHighest,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(CircleShape),
+                        )
+                        Text(
+                            text = buildString {
+                                append(transfer.transferredBytes.readableBytes())
+                                if (transfer.totalBytes > 0) {
+                                    append(" of ")
+                                    append(transfer.totalBytes.readableBytes())
+                                }
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                // Waiting / offered / accepted: status text with an indeterminate bar.
+                active -> {
+                    Column(
+                        modifier = Modifier.padding(end = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = transferStatusLine(transfer),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.onSurface,
+                        )
+                        LinearProgressIndicator(
+                            color = accent,
+                            trackColor = colors.surfaceContainerHighest,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(CircleShape),
+                        )
+                    }
+                }
+                // Finished: status chip, size / average speed / duration, and the finish time.
+                complete -> {
+                    Column(
+                        modifier = Modifier.padding(end = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            StatusChip(
+                                text = if (sent) "Delivered" else "Received",
+                                icon = R.drawable.ic_check_circle,
+                                container = if (sent) colors.primaryContainer else colors.tertiaryContainer,
+                                content = if (sent) colors.onPrimaryContainer else colors.onTertiaryContainer,
+                            )
+                            if (transfer.totalBytes > 0) MetaChip(transfer.totalBytes.readableBytes())
+                            transfer.averageBytesPerSecond?.let { avg ->
+                                MetaChip("${avg.readableBytes()}/s avg")
+                                val avgValue = avg.toDouble()
+                                if (avgValue > 0.0 && transfer.totalBytes > 0) {
+                                    MetaChip(
+                                        "took ${formatDuration(kotlin.math.ceil(transfer.totalBytes / avgValue).toLong())}",
+                                    )
+                                }
+                            }
+                        }
+                        transfer.completedAt?.let {
+                            Text(
+                                text = formatEndedAt("Finished", it),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                failed -> {
+                    Column(
+                        modifier = Modifier.padding(end = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = colors.errorContainer.copy(alpha = 0.55f),
+                        ) {
+                            Text(
+                                text = transferStatusLine(transfer),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.onErrorContainer,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                            )
+                        }
+                        transfer.completedAt?.let {
+                            Text(
+                                text = formatEndedAt(
+                                    if (status == TransferStatus.CANCELLED) "Cancelled" else "Failed",
+                                    it,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
-            Text(
-                text = transferStatusLine(transfer),
-                style = MaterialTheme.typography.bodySmall,
-                color = statusColor,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(end = 8.dp),
-            )
-            if (transfer.status == TransferStatus.COMPLETE &&
+
+            if (complete &&
                 transfer.direction == TransferDirection.RECEIVED &&
                 transfer.localPath != null &&
                 (onOpen != null || onShare != null || onDelete != null)
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.padding(end = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     onOpen?.let {
-                        TextButton(
-                            onClick = it,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                        ) { Text("Open") }
+                        FilledTonalButton(onClick = it, modifier = Modifier.weight(1f)) { Text("Open") }
                     }
                     onShare?.let {
-                        TextButton(
-                            onClick = it,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                        ) { Text("Share") }
+                        OutlinedButton(onClick = it, modifier = Modifier.weight(1f)) { Text("Share") }
                     }
                     onDelete?.let {
-                        TextButton(
-                            onClick = it,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                        ) { Text("Delete", color = colors.error) }
+                        TextButton(onClick = it) { Text("Delete", color = colors.error) }
                     }
                 }
             }
@@ -2516,6 +2856,77 @@ private fun ScanningPeerTile(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * Launch splash. Same language as the "No one nearby yet" card: the rotating, morphing app-icon
+ * bubble with signal waves washing out across the whole screen behind it.
+ */
+@Composable
+private fun AirDroidSplash() {
+    val colors = MaterialTheme.colorScheme
+    val enter = remember { Animatable(0f) }
+    val text = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { enter.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 120f)) }
+        delay(350)
+        text.animateTo(1f, tween(600, easing = FastOutSlowInEasing))
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(colors.primaryContainer.copy(alpha = 0.55f), Color.Transparent),
+                ),
+            )
+            // Swallow touches so the app underneath can't be tapped while the splash is up.
+            .pointerInput(Unit) { detectTapGestures { } },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier.graphicsLayer {
+                    val sc = 0.5f + 0.5f * enter.value
+                    scaleX = sc
+                    scaleY = sc
+                    alpha = enter.value.coerceIn(0f, 1f)
+                },
+            ) {
+                SearchingSignalIcon(
+                    bubbleSize = 128.dp,
+                    iconSize = 80.dp,
+                    waveReach = 700.dp,
+                    waveCount = 5,
+                    wavePeriodMillis = 4800,
+                )
+            }
+            Spacer(Modifier.height(36.dp))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.graphicsLayer {
+                    alpha = text.value
+                    translationY = (1f - text.value) * 24.dp.toPx()
+                },
+            ) {
+                Text(
+                    text = "AirDroid",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onSurface,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Looking for devices nearby…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
     }
 }
 
