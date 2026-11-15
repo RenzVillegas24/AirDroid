@@ -408,7 +408,7 @@ private fun AirDroidTopBar(
 ) {
     val density = LocalDensity.current
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val expandedHeight = 176.dp
+    val expandedHeight = 140.dp
     val collapsedHeight = 64.dp
     val rangePx = with(density) { (expandedHeight - collapsedHeight).toPx() }
     LaunchedEffect(rangePx) {
@@ -418,8 +418,8 @@ private fun AirDroidTopBar(
     val collapse = scrollBehavior.state.collapsedFraction.coerceIn(0f, 1f)
     val headerHeight = expandedHeight + (collapsedHeight - expandedHeight) * collapse + statusTop
     val titleStyle = MaterialTheme.typography.headlineMedium.copy(
-        fontSize = (34f - 12f * collapse).sp,
-        lineHeight = (42f - 14f * collapse).sp,
+        fontSize = (30f - 8f * collapse).sp,
+        lineHeight = (37f - 9f * collapse).sp,
     )
     val subtitleAlpha = (1f - collapse * 1.6f).coerceIn(0f, 1f)
     val subtitleHeight = (20.dp * (1f - collapse)).coerceAtLeast(0.dp)
@@ -1562,6 +1562,8 @@ private fun PeerActionsSheet(
         // While the attach menu is open, a tap outside closes the menu instead of the sheet.
         onDismissRequest = { if (fabExpanded) fabExpanded = false else onDismiss() },
         sheetState = sheetState,
+        // Themed, translucent scrim instead of the default black dim.
+        scrimColor = MaterialTheme.colorScheme.background.copy(alpha = 0.5f),
         // No swipe-to-collapse/dismiss while the attach menu is open.
         sheetGesturesEnabled = !fabExpanded,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1784,14 +1786,14 @@ private fun LargePeerHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 6.dp),
+            .padding(horizontal = 20.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Surface(
             shape = CircleShape,
             color = avatarColor,
-            modifier = Modifier.size(56.dp),
+            modifier = Modifier.size(46.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 // Swaps to a loading indicator while the phone is out of range, as if waiting
@@ -1799,7 +1801,7 @@ private fun LargePeerHeader(
                 Crossfade(targetState = lost, label = "peer avatar") { isLost ->
                     if (isLost) {
                         LoadingIndicator(
-                            modifier = Modifier.size(28.dp),
+                            modifier = Modifier.size(24.dp),
                             color = avatarTint,
                         )
                     } else {
@@ -1807,7 +1809,7 @@ private fun LargePeerHeader(
                             painter = painterResource(icon),
                             contentDescription = null,
                             tint = avatarTint,
-                            modifier = Modifier.size(28.dp),
+                            modifier = Modifier.size(24.dp),
                         )
                     }
                 }
@@ -1815,7 +1817,7 @@ private fun LargePeerHeader(
         }
         Text(
             text = peer.displayName(),
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp, lineHeight = 24.sp),
             color = colors.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1825,7 +1827,11 @@ private fun LargePeerHeader(
             style = MaterialTheme.typography.bodySmall,
             color = if (lost) colors.error else colors.onSurfaceVariant,
         )
-        TextButton(onClick = onTogglePin) {
+        TextButton(
+            onClick = onTogglePin,
+            modifier = Modifier.heightIn(min = 34.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+        ) {
             Icon(
                 painter = painterResource(R.drawable.ic_pin),
                 contentDescription = null,
@@ -2007,8 +2013,9 @@ private fun FileRow(item: StagedItem, onRemove: () -> Unit) {
 }
 
 /**
- * Invisible catcher behind the attach menu: tapping outside the menu closes it, but the
- * content is not dimmed.
+ * Wash behind the attach menu. It is tinted with the themed sheet background (not black) and
+ * stays translucent, so the content fades back without the sheet getting darker. Tapping it
+ * closes the menu.
  */
 @Composable
 private fun AttachScrim(
@@ -2016,13 +2023,22 @@ private fun AttachScrim(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (visible) {
+    val washColor = MaterialTheme.colorScheme.surfaceContainerLow
+    val washAlpha = animateFloatAsState(
+        targetValue = if (visible) 0.72f else 0f,
+        animationSpec = tween(durationMillis = 180, easing = LinearEasing),
+        label = "attach scrim",
+    )
+    // Stay composed until the fade-out has finished.
+    if (visible || washAlpha.value > 0f) {
         Box(
             modifier = modifier
                 .fillMaxSize()
+                .background(washColor.copy(alpha = washAlpha.value))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
+                    enabled = visible,
                     onClick = onDismiss,
                 ),
         )
