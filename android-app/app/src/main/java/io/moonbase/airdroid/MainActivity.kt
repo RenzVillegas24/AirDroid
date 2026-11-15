@@ -76,6 +76,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonGroup
@@ -101,8 +102,6 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SplitButtonDefaults
-import androidx.compose.material3.SplitButtonLayout
 import androidx.compose.material3.FloatingActionButtonMenuItem
 import androidx.compose.material3.FloatingActionButtonMenu
 import androidx.compose.material3.ModalBottomSheet
@@ -594,12 +593,23 @@ private fun AirDroidFloatingToolbar(
         val animatedIndicatorPx by animateFloatAsState(
             targetValue = targetIndicatorPx,
             animationSpec = when {
-                pressed -> spring(dampingRatio = 0.95f, stiffness = 1200f)
-                tapTargetPx != null -> spring(dampingRatio = 0.9f, stiffness = 650f)
-                else -> spring(dampingRatio = 0.95f, stiffness = 1200f)
+                // Following the finger: quick, with a little give.
+                pressed -> spring(dampingRatio = 0.72f, stiffness = 900f)
+                // Tap: a softer, bouncier travel that overshoots slightly and settles.
+                tapTargetPx != null -> spring(dampingRatio = 0.6f, stiffness = 380f)
+                // Following the pager while swiping: tight enough to stay in sync.
+                else -> spring(dampingRatio = 0.78f, stiffness = 800f)
             },
             label = "toolbar selection",
         )
+        // The highlight stretches while it travels and squashes a little, like a jelly drop;
+        // it is derived from the spring itself, so it relaxes back as the spring settles.
+        val stretchDp = with(density) {
+            (kotlin.math.abs(targetIndicatorPx - animatedIndicatorPx) * 0.16f)
+                .coerceAtMost(itemSize.toPx() * 0.45f)
+                .toDp()
+        }
+        val squash = 1f - (stretchDp / itemSize) * 0.14f
         val indicatorOffset = with(density) { animatedIndicatorPx.toDp() }
         val highlightedIndex = with(density) {
             ((animatedIndicatorPx + itemSize.toPx() / 2) / itemSize.toPx())
@@ -615,19 +625,20 @@ private fun AirDroidFloatingToolbar(
         }
         val toolbarScale by animateFloatAsState(
             targetValue = if (pressed) 1.06f else 1f,
-            animationSpec = spring(dampingRatio = 0.82f, stiffness = 450f),
+            animationSpec = spring(dampingRatio = 0.52f, stiffness = 420f),
             label = "toolbar scale",
         )
         val highlightScale by animateFloatAsState(
             targetValue = if (pressed) 1.04f else 1f,
-            animationSpec = spring(dampingRatio = 0.9f, stiffness = 650f),
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = 520f),
             label = "highlight scale",
         )
-        val highlightWidth by animateDpAsState(
+        val highlightBaseWidth by animateDpAsState(
             targetValue = if (pressed) itemSize + 6.dp else itemSize,
-            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = 520f),
             label = "highlight width",
         )
+        val highlightWidth = highlightBaseWidth + stretchDp
         val barShiftX by animateDpAsState(
             targetValue = if (pressed) {
                 with(density) {
@@ -636,7 +647,7 @@ private fun AirDroidFloatingToolbar(
             } else {
                 0.dp
             },
-            animationSpec = spring(dampingRatio = 0.85f, stiffness = 480f),
+            animationSpec = spring(dampingRatio = 0.55f, stiffness = 320f),
             label = "toolbar x",
         )
         val barShiftY by animateDpAsState(
@@ -647,7 +658,7 @@ private fun AirDroidFloatingToolbar(
             } else {
                 0.dp
             },
-            animationSpec = spring(dampingRatio = 0.85f, stiffness = 480f),
+            animationSpec = spring(dampingRatio = 0.55f, stiffness = 320f),
             label = "toolbar y",
         )
         val barRotation by animateFloatAsState(
@@ -656,7 +667,7 @@ private fun AirDroidFloatingToolbar(
             } else {
                 0f
             },
-            animationSpec = spring(dampingRatio = 0.85f, stiffness = 480f),
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = 300f),
             label = "toolbar tilt",
         )
         HorizontalFloatingToolbar(
@@ -728,7 +739,7 @@ private fun AirDroidFloatingToolbar(
                         .height(itemSize)
                         .graphicsLayer {
                             scaleX = highlightScale
-                            scaleY = highlightScale
+                            scaleY = highlightScale * squash
                         }
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary),
@@ -745,6 +756,11 @@ private fun AirDroidFloatingToolbar(
                             animationSpec = tween(durationMillis = 70, easing = FastOutSlowInEasing),
                             label = "toolbar icon tint",
                         )
+                        val iconScale by animateFloatAsState(
+                            targetValue = if (isHighlighted) 1.14f else 1f,
+                            animationSpec = spring(dampingRatio = 0.4f, stiffness = 600f),
+                            label = "toolbar icon scale",
+                        )
                         Box(
                             modifier = Modifier.size(itemSize),
                             contentAlignment = Alignment.Center,
@@ -753,7 +769,12 @@ private fun AirDroidFloatingToolbar(
                                 painter = painterResource(tab.icon),
                                 contentDescription = tab.label,
                                 tint = tint,
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .graphicsLayer {
+                                        scaleX = iconScale
+                                        scaleY = iconScale
+                                    },
                             )
                         }
                     }
@@ -1986,14 +2007,162 @@ private fun AttachScrim(
     }
 }
 
+private val AttachButtonHeight = 56.dp
+private val AttachOuterCorner = AttachButtonHeight / 2
+private val AttachInnerCorner = 4.dp
+private val AttachInnerCornerPressed = 2.dp
+
 /**
- * Material 3 split button ("Files" + chevron) that doubles as the attach FAB menu button.
+ * Split button following the Material 3 spec: a leading action ("Files") and a trailing toggle
+ * joined by a 2dp gap, with small inner corners. The trailing part morphs to a full circle while
+ * checked and its chevron turns 180 degrees.
  *
- * - Leading part: runs the Files action directly.
- * - Trailing part: toggles the menu. While checked it morphs to a round shape and the chevron
- *   turns 180 degrees, as in the split button spec.
- * - While the menu is open the leading part collapses into the trailing one; Files then
- *   shows up as the last item of the menu, next to the toggle.
+ * The two halves are drawn here (rather than with SplitButtonDefaults) so the height is always
+ * [AttachButtonHeight], the corners are always applied and the toggle stays visible while the
+ * leading part is collapsed.
+ */
+@Composable
+private fun AttachSplitButton(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onFiles: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    // Read only inside graphicsLayer, so the chevron animates without recomposing.
+    val toggle = animateFloatAsState(
+        targetValue = if (expanded) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 500f),
+        label = "attach toggle",
+    )
+    val leadingSource = remember { MutableInteractionSource() }
+    val trailingSource = remember { MutableInteractionSource() }
+    val leadingPressed by leadingSource.collectIsPressedAsState()
+    val trailingPressed by trailingSource.collectIsPressedAsState()
+    val cornerSpec = spring<Dp>(dampingRatio = 0.6f, stiffness = 500f)
+    val leadingInner by animateDpAsState(
+        targetValue = if (leadingPressed) AttachInnerCornerPressed else AttachInnerCorner,
+        animationSpec = cornerSpec,
+        label = "leading inner corner",
+    )
+    val trailingStart by animateDpAsState(
+        targetValue = when {
+            expanded -> AttachOuterCorner
+            trailingPressed -> AttachInnerCornerPressed
+            else -> AttachInnerCorner
+        },
+        animationSpec = cornerSpec,
+        label = "trailing start corner",
+    )
+    val gap by animateDpAsState(
+        targetValue = if (expanded) 0.dp else 2.dp,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "split gap",
+    )
+    val trailingContainer by animateColorAsState(
+        targetValue = if (expanded) colors.primary else colors.secondaryContainer,
+        animationSpec = tween(durationMillis = 200),
+        label = "split trailing container",
+    )
+    val trailingContent by animateColorAsState(
+        targetValue = if (expanded) colors.onPrimary else colors.onSecondaryContainer,
+        animationSpec = tween(durationMillis = 200),
+        label = "split trailing content",
+    )
+
+    Row(
+        modifier = modifier.height(AttachButtonHeight),
+        horizontalArrangement = Arrangement.spacedBy(gap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AnimatedVisibility(
+            visible = !expanded,
+            enter = fadeIn(tween(160)) + expandHorizontally(
+                animationSpec = tween(240, easing = FastOutSlowInEasing),
+                expandFrom = Alignment.End,
+            ),
+            exit = fadeOut(tween(120)) + shrinkHorizontally(
+                animationSpec = tween(240, easing = FastOutSlowInEasing),
+                shrinkTowards = Alignment.End,
+            ),
+        ) {
+            Surface(
+                onClick = onFiles,
+                modifier = Modifier.height(AttachButtonHeight),
+                shape = RoundedCornerShape(
+                    topStart = AttachOuterCorner,
+                    topEnd = leadingInner.coerceAtLeast(0.dp),
+                    bottomEnd = leadingInner.coerceAtLeast(0.dp),
+                    bottomStart = AttachOuterCorner,
+                ),
+                color = colors.primaryContainer,
+                contentColor = colors.onPrimaryContainer,
+                shadowElevation = 4.dp,
+                interactionSource = leadingSource,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(start = 22.dp, end = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_attach_file),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "Files",
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        Surface(
+            checked = expanded,
+            onCheckedChange = onExpandedChange,
+            modifier = Modifier
+                .size(AttachButtonHeight)
+                .semantics {
+                    contentDescription = if (expanded) {
+                        "Close attach menu"
+                    } else {
+                        "Open attach menu"
+                    }
+                },
+            shape = RoundedCornerShape(
+                topStart = trailingStart.coerceAtLeast(0.dp),
+                topEnd = AttachOuterCorner,
+                bottomEnd = AttachOuterCorner,
+                bottomStart = trailingStart.coerceAtLeast(0.dp),
+            ),
+            color = trailingContainer,
+            contentColor = trailingContent,
+            shadowElevation = 4.dp,
+            interactionSource = trailingSource,
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_expand_less),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .graphicsLayer { rotationZ = 180f * toggle.value },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The attach button and its menu, in one [FloatingActionButtonMenu] so the chips are laid out
+ * by the menu itself and always share the trailing edge of the toggle. The menu is composed
+ * inline in the sheet window (no Popup), so there is no extra window or pixel offset to drift.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -2004,102 +2173,15 @@ private fun AttachControls(
     onAddFiles: () -> Unit,
     onAction: (PeerAction) -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
-    val buttonHeight = SplitButtonDefaults.MediumContainerHeight
-    // Read only inside graphicsLayer blocks, so the chevron animates without recomposing.
-    val toggle = animateFloatAsState(
-        targetValue = if (fabExpanded) 1f else 0f,
-        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-        label = "attach toggle",
-    )
-    val spacing by animateDpAsState(
-        targetValue = if (fabExpanded) 0.dp else SplitButtonDefaults.Spacing,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "split spacing",
-    )
-    val trailingContainer by animateColorAsState(
-        targetValue = if (fabExpanded) colors.secondary else colors.secondaryContainer,
-        animationSpec = tween(durationMillis = 200),
-        label = "split trailing container",
-    )
-    val trailingContent by animateColorAsState(
-        targetValue = if (fabExpanded) colors.onSecondary else colors.onSecondaryContainer,
-        animationSpec = tween(durationMillis = 200),
-        label = "split trailing content",
-    )
     FloatingActionButtonMenu(
         expanded = fabExpanded,
         modifier = modifier,
         horizontalAlignment = Alignment.End,
         button = {
-            SplitButtonLayout(
-                spacing = spacing,
-                leadingButton = {
-                    AnimatedVisibility(
-                        visible = !fabExpanded,
-                        enter = fadeIn(tween(160)) + expandHorizontally(
-                            animationSpec = tween(220, easing = FastOutSlowInEasing),
-                            expandFrom = Alignment.End,
-                        ),
-                        exit = fadeOut(tween(120)) + shrinkHorizontally(
-                            animationSpec = tween(220, easing = FastOutSlowInEasing),
-                            shrinkTowards = Alignment.End,
-                        ),
-                    ) {
-                        SplitButtonDefaults.LeadingButton(
-                            onClick = onAddFiles,
-                            shapes = SplitButtonDefaults.leadingButtonShapesFor(buttonHeight),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = colors.primaryContainer,
-                                contentColor = colors.onPrimaryContainer,
-                            ),
-                            contentPadding =
-                                SplitButtonDefaults.leadingButtonContentPaddingFor(buttonHeight),
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_attach_file),
-                                contentDescription = null,
-                                modifier = Modifier.size(
-                                    SplitButtonDefaults.leadingButtonIconSizeFor(buttonHeight),
-                                ),
-                            )
-                            Spacer(Modifier.width(ButtonDefaults.iconSpacingFor(buttonHeight)))
-                            Text(
-                                text = "Files",
-                                style = ButtonDefaults.textStyleFor(buttonHeight),
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                },
-                trailingButton = {
-                    SplitButtonDefaults.TrailingButton(
-                        checked = fabExpanded,
-                        onCheckedChange = onFabExpandedChange,
-                        modifier = Modifier.semantics {
-                            contentDescription = if (fabExpanded) {
-                                "Close attach menu"
-                            } else {
-                                "Open attach menu"
-                            }
-                        },
-                        shapes = SplitButtonDefaults.trailingButtonShapesFor(buttonHeight),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = trailingContainer,
-                            contentColor = trailingContent,
-                        ),
-                        contentPadding =
-                            SplitButtonDefaults.trailingButtonContentPaddingFor(buttonHeight),
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_expand_less),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(SplitButtonDefaults.trailingButtonIconSizeFor(buttonHeight))
-                                .graphicsLayer { rotationZ = 180f * toggle.value },
-                        )
-                    }
-                },
+            AttachSplitButton(
+                expanded = fabExpanded,
+                onExpandedChange = onFabExpandedChange,
+                onFiles = onAddFiles,
             )
         },
     ) {
