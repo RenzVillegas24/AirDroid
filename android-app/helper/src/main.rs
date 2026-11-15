@@ -608,6 +608,7 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
     let sender = Sender::new(sender_config)?;
+    let mdns_cache = Arc::new(Mutex::new(MdnsCache::default()));
     let mut known: HashMap<String, KnownPeer> = HashMap::new();
     // One file per send, so the send ID is fixed for this command.
     //
@@ -629,6 +630,7 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
         &path,
         source_total,
         target.as_deref(),
+        &mdns_cache,
         Some("send"),
         &mut cancel_rx,
     )
@@ -648,6 +650,54 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
     result.map(|_| ())
 }
 
+/// The AirDrop mDNS services seen by the session browse, keyed by AWDL MAC.
+/// The app uses the same FOUND/LOST events for its peer-readiness state; the
+/// send task uses this cache to avoid a redundant /Discover.
+#[derive(Default)]
+struct MdnsCache {
+    by_mac: HashMap<String, Found>,
+    by_instance: HashMap<String, String>,
+}
+
+impl MdnsCache {
+    fn found(&mut self, found: &Found) {
+        let Some(mac) = MacAddr::from_link_local(found.addr) else {
+            return;
+        };
+        let mac = mac.to_string();
+        self.by_mac.insert(mac.clone(), found.clone());
+        self.by_instance.insert(found.instance.clone(), mac);
+    }
+
+    fn lost(&mut self, instance: &str) {
+        if let Some(mac) = self.by_instance.remove(instance) {
+            self.by_mac.remove(&mac);
+        }
+    }
+
+    fn target(&self, mac: &str) -> Option<Found> {
+        self.by_mac
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(mac))
+            .map(|(_, found)| found.clone())
+    }
+
+    fn clear(&mut self) {
+        self.by_mac.clear();
+        self.by_instance.clear();
+    }
+}
+
+/// Does this mDNS receiver resolve to the selected AWDL peer?
+fn mdns_matches_target(found: &Found, target_mac: Option<&str>) -> bool {
+    let Some(target) = target_mac else {
+        return true;
+    };
+    MacAddr::from_link_local(found.addr)
+        .map(|mac| mac.to_string().eq_ignore_ascii_case(target))
+        .unwrap_or(false)
+}
+
 async fn find_and_send(
     sender: &Sender,
     index: u32,
@@ -658,6 +708,7 @@ async fn find_and_send(
     path: &Path,
     source_total: u64,
     target_mac: Option<&str>,
+    mdns_cache: &Arc<Mutex<MdnsCache>>,
     report_id: Option<&str>,
     cancel: &mut watch::Receiver<bool>,
 ) -> Result<Outcome, Box<dyn Error>> {
@@ -671,6 +722,24 @@ async fn find_and_send(
         if *cancel.borrow() {
             return Ok(Outcome::Failed("cancelled".into()));
         }
+        // The session browse already knows this receiver from the peer card's
+        // FOUND event. Go straight to /Ask like the owly CLI; only wait for
+        // /Discover when there is no cached mDNS target.
+        if let Some(target) = target_mac {
+            let cached = mdns_cache.lock().unwrap().target(target);
+            if let Some(found) = cached {
+                let addr = SocketAddrV6::new(found.addr, found.port, 0, index);
+                let name = names
+                    .lock()
+                    .unwrap()
+                    .get(target)
+                    .cloned()
+                    .unwrap_or_else(|| found.host.clone());
+                println!("using cached mDNS receiver {name:?} at {addr}");
+                chosen = Some((addr, found.flags, name));
+                break;
+            }
+        }
         loop {
             match browse.events.try_recv() {
                 Ok(BrowseEvent::Found(found)) => {
@@ -678,20 +747,31 @@ async fn find_and_send(
                         "mDNS FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
                         found.instance, found.host, found.addr, found.port, found.flags
                     );
-                    if target_mac.is_none() { mdns_found = Some(found); }
+                    if mdns_matches_target(&found, target_mac) {
+                        mdns_found = Some(found);
+                    }
                 }
                 Ok(BrowseEvent::Lost(instance)) => println!("mDNS LOST instance={instance:?}"),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
-        let mut targets: Vec<(SocketAddrV6, u32, &str)> = Vec::new();
-        if let Some(found) = &mdns_found {
-            targets.push((SocketAddrV6::new(found.addr, found.port, 0, index), found.flags, "mDNS"));
-        }
         let peers = peers_rx.borrow().clone();
         let names_snapshot = names.lock().unwrap().clone();
         emit_peer_updates(known, &peers, &names_snapshot);
+        // The CLI sends directly to the mDNS-resolved receiver; it does not
+        // wait for a /Discover connection first. Do the same when the selected
+        // peer is already advertised, and fall back to /Discover otherwise.
+        if let Some(found) = mdns_found.as_ref() {
+            let target = SocketAddrV6::new(found.addr, found.port, 0, index);
+            let name = target_mac
+                .and_then(|mac| names_snapshot.get(mac).cloned())
+                .unwrap_or_else(|| found.host.clone());
+            println!("using mDNS receiver {:?} at {target}", found.host);
+            chosen = Some((target, found.flags, name));
+            break;
+        }
+        let mut targets: Vec<(SocketAddrV6, u32, &str)> = Vec::new();
         for peer in &peers {
             let mac = peer.mac.to_string();
             if let Some(target) = target_mac {
@@ -740,7 +820,9 @@ async fn find_and_send(
             tokio::select! {
                 event = browse.events.recv() => match event {
                     Some(BrowseEvent::Found(found)) => {
-                        if target_mac.is_none() { mdns_found = Some(found); }
+                        if mdns_matches_target(&found, target_mac) {
+                            mdns_found = Some(found);
+                        }
                     }
                     Some(BrowseEvent::Lost(_)) | None => {}
                 },
@@ -867,6 +949,7 @@ async fn session(
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
     let sender = Arc::new(Sender::new(sender_config)?);
+    let mdns_cache = Arc::new(Mutex::new(MdnsCache::default()));
     let send_active = Arc::new(AtomicBool::new(false));
     let active_send: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let (send_cancel_tx, send_cancel_rx) = watch::channel(false);
@@ -974,15 +1057,22 @@ async fn session(
                         // The app clears its list when a scan starts; forget the
                         // previous snapshot so every current peer is emitted again.
                         known.clear();
+                        mdns_cache.lock().unwrap().clear();
                         let deadline = Instant::now() + Duration::from_secs(seconds);
                         loop {
                             tokio::select! {
                                 event = browse.events.recv() => match event {
-                                    Some(BrowseEvent::Found(found)) => println!(
-                                        "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
-                                        found.instance, found.host, found.addr, found.port, found.flags
-                                    ),
-                                    Some(BrowseEvent::Lost(instance)) => println!("LOST instance={instance:?}"),
+                                    Some(BrowseEvent::Found(found)) => {
+                                        mdns_cache.lock().unwrap().found(&found);
+                                        println!(
+                                            "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
+                                            found.instance, found.host, found.addr, found.port, found.flags
+                                        );
+                                    }
+                                    Some(BrowseEvent::Lost(instance)) => {
+                                        mdns_cache.lock().unwrap().lost(&instance);
+                                        println!("LOST instance={instance:?}");
+                                    }
                                     None => break,
                                 },
                                 changed = peers_rx.changed() => {
@@ -1038,6 +1128,7 @@ async fn session(
                         let sender = Arc::clone(&sender);
                         let mut send_peers = peers_rx.clone();
                         let send_names = Arc::clone(&names);
+                        let send_mdns_cache = Arc::clone(&mdns_cache);
                         let mut send_cancel_rx = send_cancel_rx.clone();
                         tokio::spawn(async move {
                             let _send_slot = send_slot;
@@ -1063,6 +1154,7 @@ async fn session(
                                 &path,
                                 source_total,
                                 Some(&mac),
+                                &send_mdns_cache,
                                 Some(&id),
                                 &mut send_cancel_rx,
                             ).await;
@@ -1151,11 +1243,17 @@ async fn session(
             // leaving a stale card. Peer updates remain paused separately.
             event = browse.events.recv() => match event {
                 None => break,
-                Some(BrowseEvent::Found(found)) => println!(
-                    "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
-                    found.instance, found.host, found.addr, found.port, found.flags
-                ),
-                Some(BrowseEvent::Lost(instance)) => println!("LOST instance={instance:?}"),
+                Some(BrowseEvent::Found(found)) => {
+                    mdns_cache.lock().unwrap().found(&found);
+                    println!(
+                        "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
+                        found.instance, found.host, found.addr, found.port, found.flags
+                    );
+                }
+                Some(BrowseEvent::Lost(instance)) => {
+                    mdns_cache.lock().unwrap().lost(&instance);
+                    println!("LOST instance={instance:?}");
+                }
             },
             // Aggregate receive progress. The receiver library reports only
             // `Received { paths }` at completion, so there is no per-file
