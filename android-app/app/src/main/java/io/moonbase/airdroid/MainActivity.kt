@@ -109,6 +109,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SheetState
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
@@ -135,15 +136,20 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -1426,6 +1432,28 @@ private fun IncomingRequestDialog(controller: AirDroidController) {
     )
 }
 
+private val AttachFabSize = 56.dp
+
+/** Space the list keeps free at its end so the last row can scroll clear of the attach buttons. */
+private val AttachBarClearance = 88.dp
+
+/** Height of the soft fade that keeps rows from colliding visually with the attach buttons. */
+private val AttachFadeHeight = 80.dp
+
+/**
+ * Current top edge of the sheet in pixels, measured from the top of the window.
+ * Returns 0 while the sheet has no anchors yet (first frame, previews).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+private fun SheetState.topOffsetPx(): Int {
+    val offset = try {
+        requireOffset()
+    } catch (_: IllegalStateException) {
+        0f
+    }
+    return if (offset.isNaN()) 0 else offset.roundToInt()
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun PeerActionsSheet(
@@ -1443,12 +1471,21 @@ private fun PeerActionsSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     var fabExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
-    BackHandler(enabled = fabExpanded) { fabExpanded = false }
+
+    // The attach menu stacks six chips above the buttons. That needs more room than the
+    // partially expanded sheet has, so grow the sheet while the menu opens.
+    LaunchedEffect(fabExpanded) {
+        if (fabExpanded && sheetState.currentValue != SheetValue.Expanded) {
+            sheetState.expand()
+        }
+    }
+
+    // contentWindowInsets is left at the Material default on purpose: the sheet consumes the
+    // status-bar inset as it reaches the top, so the drag handle no longer sits under the clock.
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        contentWindowInsets = { WindowInsets.navigationBars },
     ) {
         PeerSheetContent(
             peer = peer,
@@ -1486,39 +1523,81 @@ private fun PeerSheetContent(
     onSend: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val compactVisible by remember {
-        derivedStateOf { listState.firstVisibleItemIndex > 0 }
+    var largeHeaderHeightPx by remember { mutableIntStateOf(0) }
+
+    // Registered inside the sheet window so Back closes the menu before it dismisses the sheet.
+    BackHandler(enabled = fabExpanded) { onFabExpandedChange(false) }
+
+    // 0f = large header fully visible, 1f = large header scrolled away and the compact header
+    // fully shown. The value is scroll-linked, so the swap animates with the finger.
+    val headerCollapse = remember(listState) {
+        derivedStateOf {
+            val height = largeHeaderHeightPx
+            when {
+                listState.firstVisibleItemIndex > 0 -> 1f
+                height <= 0 -> 0f
+                else -> {
+                    val start = height * 0.35f
+                    val end = height * 0.85f
+                    ((listState.firstVisibleItemScrollOffset - start) / (end - start))
+                        .coerceIn(0f, 1f)
+                }
+            }
+        }
     }
-    Column(
+    val compactShown by remember(headerCollapse) {
+        derivedStateOf { headerCollapse.value > 0.01f }
+    }
+
+    // Fade the buttons out while the sheet is being dismissed so they don't hang in the air.
+    val attachAlpha = animateFloatAsState(
+        targetValue = if (
+            sheetState.targetValue == SheetValue.Hidden &&
+            sheetState.currentValue != SheetValue.Hidden
+        ) {
+            0f
+        } else {
+            1f
+        },
+        animationSpec = tween(durationMillis = 120),
+        label = "attach alpha",
+    )
+
+    // The sheet is laid out at full height and then translated down while it is partially
+    // expanded. Sizing the content to the part that is actually on screen keeps the list
+    // viewport, the bottom fade and the attach buttons aligned to the real bottom edge in
+    // every state, without any counter-offset hack on the buttons.
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .fillMaxHeight(),
+            .layout { measurable, constraints ->
+                val bounded = constraints.hasBoundedHeight
+                val full = if (bounded) constraints.maxHeight else 0
+                val childConstraints = if (bounded) {
+                    val visible = (full - sheetState.topOffsetPx())
+                        .coerceIn(constraints.minHeight, full)
+                    constraints.copy(minHeight = visible, maxHeight = visible)
+                } else {
+                    constraints
+                }
+                val placeable = measurable.measure(childConstraints)
+                layout(placeable.width, if (bounded) full else placeable.height) {
+                    placeable.place(0, 0)
+                }
+            },
     ) {
-        AnimatedVisibility(
-            visible = compactVisible,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = AttachBarClearance),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            CompactPeerHeader(
-                peer = peer,
-                channel = channel,
-                itemCount = selectedItems.size,
-                onSend = onSend,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 56.dp + 16.dp + navBottom),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item(key = "largePeerHeader") {
+            item(key = "largePeerHeader") {
+                Box(
+                    modifier = Modifier
+                        .onSizeChanged { largeHeaderHeightPx = it.height }
+                        .graphicsLayer { alpha = 1f - headerCollapse.value },
+                ) {
                     LargePeerHeader(
                         peer = peer,
                         channel = channel,
@@ -1528,30 +1607,62 @@ private fun PeerSheetContent(
                         onSend = onSend,
                     )
                 }
-                if (selectedItems.isEmpty()) {
-                    item(key = "emptyItems") {
-                        EmptyItemsState(modifier = Modifier.padding(horizontal = 20.dp))
-                    }
-                } else {
-                    items(selectedItems, key = { it.path }) { item ->
-                        FileRow(item = item, onRemove = { onRemoveItem(item) })
-                    }
+            }
+            if (selectedItems.isEmpty()) {
+                item(key = "emptyItems") {
+                    EmptyItemsState(modifier = Modifier.padding(horizontal = 20.dp))
+                }
+            } else {
+                items(selectedItems, key = { it.path }) { item ->
+                    FileRow(item = item, onRemove = { onRemoveItem(item) })
                 }
             }
-            if (fabExpanded) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.32f))
-                        .clickable { onFabExpandedChange(false) },
-                )
-            }
         }
+
+        // Rows fade out softly before they reach the buttons instead of being cut by a hard edge.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(AttachFadeHeight)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            colors.surfaceContainerLow.copy(alpha = 0f),
+                            colors.surfaceContainerLow,
+                        ),
+                    ),
+                ),
+        )
+
+        // Small header, cross-faded in as the large one scrolls away. It stays pinned to the
+        // top of the visible sheet area in both the partially and fully expanded states.
+        if (compactShown) {
+            CompactPeerHeader(
+                peer = peer,
+                channel = channel,
+                itemCount = selectedItems.size,
+                onSend = onSend,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .graphicsLayer {
+                        val progress = headerCollapse.value
+                        alpha = progress
+                        translationY = -(1f - progress) * 10.dp.toPx()
+                    },
+            )
+        }
+
+        AttachScrim(
+            visible = fabExpanded,
+            onDismiss = { onFabExpandedChange(false) },
+        )
+
         AttachControls(
-            modifier = Modifier.offset {
-                val offset = runCatching { sheetState.requireOffset() }.getOrDefault(0f)
-                IntOffset(0, -offset.toInt())
-            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 20.dp, bottom = 16.dp)
+                .graphicsLayer { alpha = attachAlpha.value },
             fabExpanded = fabExpanded,
             onFabExpandedChange = onFabExpandedChange,
             onAddFiles = onAddFiles,
@@ -1649,6 +1760,7 @@ private fun CompactPeerHeader(
     channel: Int?,
     itemCount: Int,
     onSend: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
     val avatarColor = when (peer.devclass) {
@@ -1668,8 +1780,7 @@ private fun CompactPeerHeader(
     }
     Surface(
         color = colors.surfaceContainerLow,
-        tonalElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column {
             Row(
@@ -1786,6 +1897,41 @@ private fun FileRow(item: StagedItem, onRemove: () -> Unit) {
     }
 }
 
+@Composable
+private fun AttachScrim(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scrimAlpha = animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = 180, easing = LinearEasing),
+        label = "attach scrim",
+    )
+    // Stay composed until the fade-out has finished.
+    if (visible || scrimAlpha.value > 0f) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = scrimAlpha.value }
+                .background(Color.Black.copy(alpha = 0.32f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+        )
+    }
+}
+
+/**
+ * "Files" button, the toggle next to it, and the attach menu.
+ *
+ * Everything lives in one [FloatingActionButtonMenu], so the chips are laid out by the menu
+ * itself and always share the trailing edge of the toggle button. The menu is composed inline
+ * in the sheet window (no Popup), which removes the extra window and the pixel offsets that
+ * used to make it lag and drift out of alignment.
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun AttachControls(
@@ -1796,103 +1942,102 @@ private fun AttachControls(
     onAction: (PeerAction) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val rotation by animateFloatAsState(
-        targetValue = if (fabExpanded) 180f else 0f,
-        label = "attach chevron",
+    // Read only inside graphicsLayer blocks, so the icon animates without recomposing.
+    val toggle = animateFloatAsState(
+        targetValue = if (fabExpanded) 1f else 0f,
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        label = "attach toggle",
     )
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+    FloatingActionButtonMenu(
+        expanded = fabExpanded,
+        modifier = modifier,
         horizontalAlignment = Alignment.End,
-    ) {
-        Row(
-            modifier = Modifier.shadow(6.dp, RoundedCornerShape(28.dp)),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ExtendedFloatingActionButton(
-                onClick = onAddFiles,
-                icon = {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_attach_file),
-                        contentDescription = null,
-                    )
-                },
-                text = { Text("Files") },
-            )
-            ToggleFloatingActionButton(
-                checked = fabExpanded,
-                onCheckedChange = onFabExpandedChange,
-                modifier = Modifier.size(56.dp),
-                contentAlignment = Alignment.Center,
-                containerColor = ToggleFloatingActionButtonDefaults.containerColor(
-                    initialColor = colors.secondaryContainer,
-                    finalColor = colors.secondary,
-                ),
+        button = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Crossfade(
-                    targetState = fabExpanded,
-                    modifier = Modifier.fillMaxSize(),
-                    label = "attach icon",
-                ) { open ->
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        onFabExpandedChange(false)
+                        onAddFiles()
+                    },
+                    icon = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_attach_file),
+                            contentDescription = null,
+                        )
+                    },
+                    text = { Text("Files") },
+                )
+                ToggleFloatingActionButton(
+                    checked = fabExpanded,
+                    onCheckedChange = onFabExpandedChange,
+                    modifier = Modifier
+                        .size(AttachFabSize)
+                        .semantics {
+                            contentDescription = if (fabExpanded) {
+                                "Close attach menu"
+                            } else {
+                                "Open attach menu"
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                    containerColor = ToggleFloatingActionButtonDefaults.containerColor(
+                        initialColor = colors.secondaryContainer,
+                        finalColor = colors.secondary,
+                    ),
+                ) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            painter = painterResource(
-                                if (open) R.drawable.ic_close else R.drawable.ic_expand_less,
-                            ),
-                            contentDescription = if (open) {
-                                "Close attach menu"
-                            } else {
-                                "Open attach menu"
-                            },
-                            tint = if (open) colors.onSecondary else colors.onSecondaryContainer,
+                            painter = painterResource(R.drawable.ic_expand_less),
+                            contentDescription = null,
+                            tint = colors.onSecondaryContainer,
                             modifier = Modifier
                                 .size(24.dp)
-                                .rotate(if (open) 180f else 0f),
+                                .graphicsLayer {
+                                    val progress = toggle.value
+                                    alpha = 1f - progress
+                                    rotationZ = 180f * progress
+                                },
+                        )
+                        Icon(
+                            painter = painterResource(R.drawable.ic_close),
+                            contentDescription = null,
+                            tint = colors.onSecondary,
+                            modifier = Modifier
+                                .size(24.dp)
+                                .graphicsLayer {
+                                    val progress = toggle.value
+                                    alpha = progress
+                                    rotationZ = -90f * (1f - progress)
+                                },
                         )
                     }
                 }
             }
-        }
-        if (fabExpanded) {
-            var menuExpanded by remember { mutableStateOf(false) }
-            LaunchedEffect(Unit) { menuExpanded = true }
-            Popup(
-                alignment = Alignment.BottomEnd,
-                offset = IntOffset(88, -96),
-                onDismissRequest = { onFabExpandedChange(false) },
-                properties = PopupProperties(focusable = true),
-            ) {
-                FloatingActionButtonMenu(
-                    expanded = menuExpanded,
-                    button = {},
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.End,
-                ) {
-                    PeerAction.entries
-                        .filter { it != PeerAction.FILES }
-                        .forEach { action ->
-                            FloatingActionButtonMenuItem(
-                                onClick = {
-                                    onFabExpandedChange(false)
-                                    onAction(action)
-                                },
-                                text = { Text(action.label) },
-                                icon = {
-                                    Icon(
-                                        painter = painterResource(action.icon),
-                                        contentDescription = null,
-                                    )
-                                },
-                            )
-                        }
-                }
+        },
+    ) {
+        PeerAction.entries
+            .filter { it != PeerAction.FILES }
+            .forEach { action ->
+                FloatingActionButtonMenuItem(
+                    onClick = {
+                        onFabExpandedChange(false)
+                        onAction(action)
+                    },
+                    text = { Text(action.label) },
+                    icon = {
+                        Icon(
+                            painter = painterResource(action.icon),
+                            contentDescription = null,
+                        )
+                    },
+                )
             }
-        }
     }
 }
 
