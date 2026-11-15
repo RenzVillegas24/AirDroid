@@ -40,6 +40,18 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -894,24 +906,13 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
             item { KernelBanner(controller) }
         }
         item { SectionLabel("NEARBY AIRDROP") }
-        if (peers.isEmpty()) {
-            item { EmptyPeopleCard() }
-        } else {
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp),
-                ) {
-                    items(peers, key = { it.mac }) { peer ->
-                        PeerCard(
-                            peer = peer,
-                            selected = sheetPeer?.mac == peer.mac,
-                            pinned = controller.isPinned(peer.mac),
-                            onClick = { openPeer(peer) },
-                        )
-                    }
-                }
-            }
+        item {
+            NearbyPeersSection(
+                peers = peers,
+                selectedMac = sheetPeer?.mac,
+                isPinned = { controller.isPinned(it) },
+                onPeerClick = { openPeer(it) },
+            )
         }
         item {
             HomeTabs(
@@ -2381,23 +2382,13 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
         if (!controller.kernel.monitorReady) {
             item { KernelBanner(controller) }
         }
-        if (controller.peers.isEmpty()) {
-            item { EmptyPeopleCard() }
-        } else {
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp),
-                ) {
-                    items(controller.peers, key = { it.mac }) { peer ->
-                        PeerCard(
-                            peer = peer,
-                            selected = controller.selectedMac == peer.mac,
-                            onClick = { controller.selectPeer(peer) },
-                        )
-                    }
-                }
-            }
+        item {
+            NearbyPeersSection(
+                peers = controller.peers.toList(),
+                selectedMac = controller.selectedMac,
+                isPinned = { false },
+                onPeerClick = { controller.selectPeer(it) },
+            )
         }
         item { SectionLabel("SEND") }
         item {
@@ -2407,6 +2398,151 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
                 onSend = { scope.launch { controller.sendPicked() } },
                 onCancelSend = { controller.cancelSend() },
             )
+        }
+    }
+}
+
+/**
+ * Nearby peers row. Cross-animates between the empty state and the list, and inside the list
+ * every device fades/scales in when it shows up and fades out (with neighbours sliding over)
+ * when it disappears.
+ */
+@Composable
+private fun NearbyPeersSection(
+    peers: List<Peer>,
+    selectedMac: String?,
+    isPinned: (String) -> Boolean,
+    onPeerClick: (Peer) -> Unit,
+) {
+    // Keep the last non-empty list around so the row can still render while it fades out.
+    val lastPeers = remember { arrayOf(peers) }
+    if (peers.isNotEmpty()) lastPeers[0] = peers
+    AnimatedContent(
+        targetState = peers.isEmpty(),
+        transitionSpec = {
+            (fadeIn(tween(300, delayMillis = 90)) + scaleIn(tween(300, delayMillis = 90), initialScale = 0.92f))
+                .togetherWith(fadeOut(tween(150)) + scaleOut(tween(150), targetScale = 0.96f))
+                .using(SizeTransform(clip = false))
+        },
+        label = "nearbyPeersSection",
+    ) { empty ->
+        if (empty) {
+            EmptyPeopleCard()
+        } else {
+            val shown = if (peers.isNotEmpty()) peers else lastPeers[0]
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(vertical = 2.dp),
+            ) {
+                items(shown, key = { it.mac }) { peer ->
+                    PeerCard(
+                        peer = peer,
+                        selected = selectedMac == peer.mac,
+                        pinned = isPinned(peer.mac),
+                        onClick = { onPeerClick(peer) },
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = tween(300),
+                            placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                            fadeOutSpec = tween(200),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Empty-state icon. Echoes the Material 3 expressive LoadingIndicator (a continuously rotating,
+ * morphing container) and adds radio waves rippling out of it, so it reads as "scanning for
+ * signals".
+ */
+@Composable
+private fun SearchingSignalIcon() {
+    val colors = MaterialTheme.colorScheme
+    val waveColor = colors.primary
+    val transition = rememberInfiniteTransition(label = "searchingSignal")
+
+    // Container: slow rotation + corner morph (circle <-> soft squircle), like LoadingIndicator.
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(5000, easing = LinearEasing)),
+        label = "rotation",
+    )
+    val cornerPercent by transition.animateFloat(
+        initialValue = 50f,
+        targetValue = 50f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 2400
+                50f at 0 using FastOutSlowInEasing
+                30f at 800 using FastOutSlowInEasing
+                50f at 1200 using FastOutSlowInEasing
+                30f at 2000 using FastOutSlowInEasing
+                50f at 2400
+            },
+        ),
+        label = "corners",
+    )
+    // Gentle "transmit" pulse of the container.
+    val pulse by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1800
+                1f at 0 using FastOutSlowInEasing
+                1.08f at 300 using FastOutSlowInEasing
+                1f at 900
+            },
+        ),
+        label = "pulse",
+    )
+    // Three waves, evenly staggered in phase.
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
+        label = "wavePhase",
+    )
+
+    Box(contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(64.dp)) {
+            val minR = size.minDimension / 2f
+            val maxR = minR + 22.dp.toPx()
+            repeat(3) { i ->
+                val t = (phase + i / 3f) % 1f
+                val eased = FastOutSlowInEasing.transform(t)
+                drawCircle(
+                    color = waveColor.copy(alpha = (1f - t) * 0.4f),
+                    radius = minR + (maxR - minR) * eased,
+                    style = Stroke(width = (2.5f * (1f - t) + 0.5f).dp.toPx()),
+                )
+            }
+        }
+        Surface(
+            shape = RoundedCornerShape(percent = cornerPercent.roundToInt()),
+            color = colors.primaryContainer,
+            modifier = Modifier
+                .size(64.dp)
+                .graphicsLayer {
+                    scaleX = pulse
+                    scaleY = pulse
+                    rotationZ = rotation
+                },
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_wifi_tethering),
+                    contentDescription = null,
+                    tint = colors.onPrimaryContainer,
+                    // Counter-rotate so the icon stays upright while the container turns.
+                    modifier = Modifier
+                        .size(32.dp)
+                        .graphicsLayer { rotationZ = -rotation },
+                )
+            }
         }
     }
 }
@@ -2426,20 +2562,7 @@ private fun EmptyPeopleCard() {
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(64.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_wifi_tethering),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-            }
+            SearchingSignalIcon()
             Spacer(Modifier.height(14.dp))
             Text(
                 text = "No one nearby yet",
@@ -2462,8 +2585,14 @@ private fun PeerCard(
     selected: Boolean,
     pinned: Boolean = false,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val surface = MaterialTheme.colorScheme
+    // Pop in when the device first shows up.
+    val appear = remember { Animatable(0.8f) }
+    LaunchedEffect(Unit) {
+        appear.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 400f))
+    }
     val avatarColor = when (peer.devclass) {
         2 -> surface.tertiaryContainer
         1 -> surface.secondaryContainer
@@ -2482,7 +2611,12 @@ private fun PeerCard(
     val contentColor = if (selected) surface.onPrimaryContainer else surface.onSurface
     ElevatedCard(
         onClick = onClick,
-        modifier = Modifier.width(152.dp),
+        modifier = modifier
+            .width(152.dp)
+            .graphicsLayer {
+                scaleX = appear.value
+                scaleY = appear.value
+            },
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.elevatedCardColors(
             containerColor = if (selected) surface.primaryContainer else surface.surfaceContainerLow,
