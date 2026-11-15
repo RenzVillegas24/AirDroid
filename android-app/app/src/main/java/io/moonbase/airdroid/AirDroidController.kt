@@ -29,7 +29,9 @@ import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 data class Peer(
     val mac: String,
@@ -203,6 +205,10 @@ class AirDroidController(private val context: Context) {
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
+        private const val MODE_SWITCH_TIMEOUT_MS = 60_000L
+        private const val OWNER_WRITE_TIMEOUT_MS = 5_000L
+        private const val WATCHDOG_TIMEOUT_MS = 10_000L
+        private const val TIMEOUT_EXIT_CODE = 124
         private val ASSETS = arrayOf(
             "owly-mode.sh",
             "owly-watchdog.sh",
@@ -1000,9 +1006,24 @@ class AirDroidController(private val context: Context) {
             modeAction = action
             append("")
             append(if (reboot) "Rebooting into Transfer mode..." else "Entering Transfer mode...")
+            if (!reboot) {
+                // Install the assets first, then arm both watchdogs before the
+                // switch. The script also arms the kernel owner before
+                // con_mode=4; the root watchdog covers the Wi-Fi restore if the
+                // switch is interrupted.
+                prepare()
+                setMonitorOwner(AndroidProcess.myPid())
+            }
             val rc = execRoot(
                 label = "enter Transfer mode",
-                command = "$APP_TMP/owly-mode.sh $action",
+                // The PID lets owly-mode.sh arm the kernel owner before it
+                // writes con_mode=4 and self-restore if this process dies.
+                command = if (reboot) {
+                    "$APP_TMP/owly-mode.sh $action"
+                } else {
+                    "$APP_TMP/owly-mode.sh $action ${AndroidProcess.myPid()}"
+                },
+                timeoutMs = if (reboot) 0L else MODE_SWITCH_TIMEOUT_MS,
             )
             modeAction = null
             modeSwitching = false
@@ -1013,9 +1034,28 @@ class AirDroidController(private val context: Context) {
                 append("Transfer mode: ${kernel.detail}")
                 scan()
             } else {
-                status = "WIFI MODE"
-                sendMessage = "Could not enter Transfer mode. Try again."
-                append("Enter Transfer mode failed; check the log and try again.")
+                refreshKernelStatus()
+                when {
+                    rc == TIMEOUT_EXIT_CODE -> {
+                        // The switch may still be running in the background, so
+                        // leave both watchdogs armed instead of clearing them.
+                        append("Enter Transfer mode timed out; keeping the watchdog armed.")
+                        sendMessage = "Transfer mode switch timed out. Check the log."
+                    }
+                    kernel.monitorReady -> {
+                        // The switch failed after monitor mode came up; keep the
+                        // watchdogs armed so a force-stop still restores Wi-Fi.
+                        setMonitorOwner(AndroidProcess.myPid())
+                        sendMessage = "Monitor mode is up but the switch did not finish."
+                        append("Monitor mode is still up; keeping the watchdog armed.")
+                    }
+                    else -> {
+                        setMonitorOwner(0)
+                        status = "WIFI MODE"
+                        sendMessage = "Could not enter Transfer mode. Try again."
+                        append("Enter Transfer mode failed; check the log and try again.")
+                    }
+                }
             }
         }
     }
@@ -1029,8 +1069,10 @@ class AirDroidController(private val context: Context) {
             modeAction = action
             append("")
             append(if (reboot) "Rebooting back to Wi-Fi..." else "Leaving Transfer mode...")
-            setMonitorOwner(0)
-            if (!reboot) {
+            if (reboot) {
+                // reboot-exit reboots; the kernel state resets with the device.
+                setMonitorOwner(0)
+            } else {
                 stopSession()
                 scanning = false
                 runCatching { AirDroidService.stop(context) }
@@ -1038,7 +1080,14 @@ class AirDroidController(private val context: Context) {
             val rc = execRoot(
                 label = "exit Transfer mode",
                 command = "$APP_TMP/owly-mode.sh $action",
+                timeoutMs = if (reboot) 0L else MODE_SWITCH_TIMEOUT_MS,
             )
+            if (!reboot && rc == 0) {
+                // Keep the watchdogs armed until exit succeeds. The watchdog
+                // skips the Wi-Fi cycle when con_mode is already 0, so a
+                // force-stop here cannot leave monitor mode unguarded.
+                setMonitorOwner(0)
+            }
             modeAction = null
             modeSwitching = false
             if (reboot && rc == 0) return@launch
@@ -2338,10 +2387,16 @@ class AirDroidController(private val context: Context) {
         }
     }
 
+    /**
+     * Runs [command] through `su`. A [timeoutMs] above zero bounds the wait so a
+     * stuck root command cannot block the caller forever; the timeout is
+     * reported as [TIMEOUT_EXIT_CODE] instead of being hidden.
+     */
     private suspend fun execRoot(
         label: String,
         command: String,
         requirePrepared: Boolean = true,
+        timeoutMs: Long = 0L,
         onLine: (String) -> Unit = {},
     ): Int {
         if (requirePrepared) prepare()
@@ -2352,16 +2407,43 @@ class AirDroidController(private val context: Context) {
                 val process = ProcessBuilder("su", "-c", command)
                     .redirectErrorStream(true)
                     .start()
-                process.inputStream.bufferedReader().useLines { lines ->
-                    for (line in lines) {
-                        withContext(Dispatchers.Main) {
-                            append(line)
-                            onLine(line)
+                if (timeoutMs <= 0L) {
+                    process.inputStream.bufferedReader().useLines { lines ->
+                        for (line in lines) {
+                            withContext(Dispatchers.Main) {
+                                append(line)
+                                onLine(line)
+                            }
+                        }
+                    }
+                    val rc = process.waitFor()
+                    withContext(Dispatchers.Main) { append("[exit $rc]") }
+                    return@withContext rc
+                }
+                // Drain on a helper thread: a stuck su can keep the pipe open,
+                // so reading inline would defeat the timeout.
+                val output = ConcurrentLinkedQueue<String>()
+                val drain = thread(isDaemon = true, name = "execRoot-drain") {
+                    runCatching {
+                        process.inputStream.bufferedReader().useLines { lines ->
+                            lines.forEach { output.add(it) }
                         }
                     }
                 }
-                val rc = process.waitFor()
-                withContext(Dispatchers.Main) { append("[exit $rc]") }
+                val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                if (!finished) process.destroyForcibly()
+                drain.join(2_000)
+                val rc = if (finished) process.waitFor() else TIMEOUT_EXIT_CODE
+                withContext(Dispatchers.Main) {
+                    output.forEach { line ->
+                        append(line)
+                        onLine(line)
+                    }
+                    if (!finished) {
+                        append("TIMEOUT: $label did not finish in ${timeoutMs / 1000}s; killed su")
+                    }
+                    append("[exit $rc]")
+                }
                 rc
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -2408,6 +2490,7 @@ class AirDroidController(private val context: Context) {
             label = "monitor owner",
             command = "echo $pid > $MONITOR_OWNER_PATH",
             requirePrepared = false,
+            timeoutMs = OWNER_WRITE_TIMEOUT_MS,
         )
         if (pid > 0) {
             execRoot(
@@ -2416,6 +2499,7 @@ class AirDroidController(private val context: Context) {
                     "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
                     "setsid $APP_TMP/owly-watchdog.sh $pid >/dev/null 2>&1 < /dev/null &",
                 requirePrepared = false,
+                timeoutMs = WATCHDOG_TIMEOUT_MS,
             )
         } else {
             execRoot(
@@ -2424,6 +2508,7 @@ class AirDroidController(private val context: Context) {
                     "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
                     "rm -f /data/local/tmp/owly-watchdog.pid; true",
                 requirePrepared = false,
+                timeoutMs = WATCHDOG_TIMEOUT_MS,
             )
         }
     }

@@ -3,10 +3,27 @@
 APP_PID="$1"
 PID_FILE=/data/local/tmp/owly-watchdog.pid
 LOG=/data/local/tmp/owly-watchdog.log
+MODE=/data/local/tmp/owly-app/owly-mode.sh
+CON_MODE=/sys/module/wlan/parameters/con_mode
+
+log() {
+    echo "$(date 2>/dev/null) $*" >> "$LOG"
+}
+
 [ -n "$APP_PID" ] || exit 2
 echo $$ > "$PID_FILE"
 while kill -0 "$APP_PID" 2>/dev/null; do
     sleep 1
 done
-/data/local/tmp/owly-app/owly-mode.sh exit >>"$LOG" 2>&1
+log "app $APP_PID exited"
+# The kernel owner watchdog reverts con_mode on its own, and a second
+# owly-mode.sh exit would add another Wi-Fi disable/enable blip. Only make
+# sure Wi-Fi is switched back on: svc wifi enable is a no-op when it already is.
+if [ "$(cat "$CON_MODE" 2>/dev/null)" = "0" ]; then
+    log "kernel already restored con_mode=0; skipping Wi-Fi cycle"
+    svc wifi enable
+else
+    log "restoring Wi-Fi via $MODE exit"
+    "$MODE" exit >>"$LOG" 2>&1
+fi
 rm -f "$PID_FILE"

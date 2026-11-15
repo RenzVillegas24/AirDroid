@@ -75,8 +75,10 @@ used as the AWDL identity.
 
 ## Files
 
-- `android-app/app/src/main/assets/owly-mode.sh` — `status`, `enter`, `exit`,
-  `reboot-enter`, `reboot-exit`.
+- `android-app/app/src/main/assets/owly-mode.sh` — `status`, `enter [owner-pid]`,
+  `exit`, `reboot-enter`, `reboot-exit`.
+- `android-app/app/src/main/assets/owly-watchdog.sh` — root watchdog that
+  restores Wi-Fi if the app process disappears without a clean exit.
 - `pack-base-mission.sh` — packs the base monitor+hidden-STA kernel without
   `wlan.con_mode=4`; kept on the investigation branches.
 - `android-app/app/src/main/java/io/moonbase/airdroid/BootReceiver.kt` — applies
@@ -94,3 +96,6 @@ used as the AWDL identity.
 4. Helper starts and scans without a reset.
 5. `owly-mode exit` (or reboot) restores Wi-Fi.
 6. No `owlyap*`, IBSS, or hostapd process remains.
+7. Force-stop during `owly-mode enter <pid>`: the kernel owner watchdog reverts
+   `con_mode` to 0 and Wi-Fi comes back without a reboot. `owly-mode status`
+   shows `owner_pid=0` and `owly-watchdog.log` reports the restore.
