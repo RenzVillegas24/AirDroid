@@ -749,6 +749,10 @@ class AirDroidController(private val context: Context) {
             status = if (kernel.monitorReady) "READY" else kernel.state.badge
             return
         }
+        // Owly starts a fresh BLE wake advert for every send. Reusing the one
+        // from session startup is not the same wake and lets the iPhone stop
+        // answering new /Ask connections after the first transfer.
+        startBle(fresh = true)
         val cleanPath = path.replace('\n', ' ').replace('\r', ' ')
         val file = File(cleanPath)
         val candidateName = displayName?.takeIf { it.isNotBlank() } ?: file.name
@@ -2637,6 +2641,11 @@ class AirDroidController(private val context: Context) {
                 ble.start(settings.bleArm, true, callback)
             } else {
                 true
+            }
+            if (fresh && ok) {
+                // Let the new advertising instance reach the controller before
+                // the /Ask connection is opened.
+                Thread.sleep(250)
             }
             if (!ok) {
                 withContext(Dispatchers.Main) {
