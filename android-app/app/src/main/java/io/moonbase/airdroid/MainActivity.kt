@@ -872,18 +872,6 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         compareByDescending<Peer> { controller.isPinned(it.mac) }
             .thenByDescending { it.rssi },
     )
-    LaunchedEffect(controller.peers, sheetPeer) {
-        val open = sheetPeer ?: return@LaunchedEffect
-        if (controller.peers.none { it.mac == open.mac }) {
-            Toast.makeText(
-                context,
-                "${open.displayName()} is no longer nearby",
-                Toast.LENGTH_SHORT,
-            ).show()
-            sheetPeer = null
-            sheetItems = emptyList()
-        }
-    }
     val sentActive = controller.activeTransfers.filter {
         it.direction == TransferDirection.SENT
     }
@@ -997,8 +985,12 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     }
 
     sheetPeer?.let { peer ->
+        // The sheet stays open when the phone drops out of range. It keeps the last known
+        // details, shows a "waiting" state and picks the live data up again if the phone returns.
+        val livePeer = controller.peers.firstOrNull { it.mac == peer.mac }
         PeerActionsSheet(
-            peer = peer,
+            peer = livePeer ?: peer,
+            lost = livePeer == null,
             channel = if (controller.kernel.state == MonitorState.MONITOR) {
                 controller.lockedChannel
             } else {
@@ -1541,6 +1533,7 @@ private fun SheetState.topOffsetPx(): Int {
 @Composable
 private fun PeerActionsSheet(
     peer: Peer,
+    lost: Boolean = false,
     channel: Int?,
     items: List<StagedItem>,
     pinned: Boolean,
@@ -1566,12 +1559,16 @@ private fun PeerActionsSheet(
     // contentWindowInsets is left at the Material default on purpose: the sheet consumes the
     // status-bar inset as it reaches the top, so the drag handle no longer sits under the clock.
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        // While the attach menu is open, a tap outside closes the menu instead of the sheet.
+        onDismissRequest = { if (fabExpanded) fabExpanded = false else onDismiss() },
         sheetState = sheetState,
+        // No swipe-to-collapse/dismiss while the attach menu is open.
+        sheetGesturesEnabled = !fabExpanded,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         PeerSheetContent(
             peer = peer,
+            lost = lost,
             channel = channel,
             selectedItems = items,
             pinned = pinned,
@@ -1592,6 +1589,7 @@ private fun PeerActionsSheet(
 @Composable
 private fun PeerSheetContent(
     peer: Peer,
+    lost: Boolean = false,
     channel: Int?,
     selectedItems: List<StagedItem>,
     pinned: Boolean,
@@ -1683,6 +1681,7 @@ private fun PeerSheetContent(
                 ) {
                     LargePeerHeader(
                         peer = peer,
+                        lost = lost,
                         channel = channel,
                         itemCount = selectedItems.size,
                         pinned = pinned,
@@ -1723,6 +1722,7 @@ private fun PeerSheetContent(
         if (compactShown) {
             CompactPeerHeader(
                 peer = peer,
+                lost = lost,
                 channel = channel,
                 itemCount = selectedItems.size,
                 onSend = onSend,
@@ -1754,9 +1754,11 @@ private fun PeerSheetContent(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun LargePeerHeader(
     peer: Peer,
+    lost: Boolean = false,
     channel: Int?,
     itemCount: Int,
     pinned: Boolean,
@@ -1792,12 +1794,23 @@ private fun LargePeerHeader(
             modifier = Modifier.size(56.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(icon),
-                    contentDescription = null,
-                    tint = avatarTint,
-                    modifier = Modifier.size(28.dp),
-                )
+                // Swaps to a loading indicator while the phone is out of range, as if waiting
+                // for the signal to come back.
+                Crossfade(targetState = lost, label = "peer avatar") { isLost ->
+                    if (isLost) {
+                        LoadingIndicator(
+                            modifier = Modifier.size(28.dp),
+                            color = avatarTint,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(icon),
+                            contentDescription = null,
+                            tint = avatarTint,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                }
             }
         }
         Text(
@@ -1808,9 +1821,9 @@ private fun LargePeerHeader(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = peerSubtitle(peer, channel),
+            text = if (lost) PEER_LOST_MESSAGE else peerSubtitle(peer, channel),
             style = MaterialTheme.typography.bodySmall,
-            color = colors.onSurfaceVariant,
+            color = if (lost) colors.error else colors.onSurfaceVariant,
         )
         TextButton(onClick = onTogglePin) {
             Icon(
@@ -1823,7 +1836,7 @@ private fun LargePeerHeader(
         }
         Button(
             onClick = onSend,
-            enabled = itemCount > 0,
+            enabled = itemCount > 0 && !lost,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(
@@ -1837,9 +1850,11 @@ private fun LargePeerHeader(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun CompactPeerHeader(
     peer: Peer,
+    lost: Boolean = false,
     channel: Int?,
     itemCount: Int,
     onSend: () -> Unit,
@@ -1878,12 +1893,21 @@ private fun CompactPeerHeader(
                     modifier = Modifier.size(32.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(icon),
-                            contentDescription = null,
-                            tint = avatarTint,
-                            modifier = Modifier.size(17.dp),
-                        )
+                        Crossfade(targetState = lost, label = "peer avatar compact") { isLost ->
+                            if (isLost) {
+                                LoadingIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = avatarTint,
+                                )
+                            } else {
+                                Icon(
+                                    painter = painterResource(icon),
+                                    contentDescription = null,
+                                    tint = avatarTint,
+                                    modifier = Modifier.size(17.dp),
+                                )
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.width(10.dp))
@@ -1896,9 +1920,9 @@ private fun CompactPeerHeader(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = peerSubtitle(peer, channel),
+                        text = if (lost) PEER_LOST_MESSAGE else peerSubtitle(peer, channel),
                         style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
+                        color = if (lost) colors.error else colors.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1906,7 +1930,7 @@ private fun CompactPeerHeader(
                 Spacer(Modifier.width(8.dp))
                 FilledTonalButton(
                     onClick = onSend,
-                    enabled = itemCount > 0,
+                    enabled = itemCount > 0 && !lost,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 ) {
                     Text(if (itemCount == 0) "Send" else "Send $itemCount")
@@ -1916,6 +1940,8 @@ private fun CompactPeerHeader(
         }
     }
 }
+
+private const val PEER_LOST_MESSAGE = "No longer nearby · waiting for the signal…"
 
 private fun peerSubtitle(peer: Peer, channel: Int?): String = buildString {
     append(peer.typeLabel())
@@ -1980,24 +2006,20 @@ private fun FileRow(item: StagedItem, onRemove: () -> Unit) {
     }
 }
 
+/**
+ * Invisible catcher behind the attach menu: tapping outside the menu closes it, but the
+ * content is not dimmed.
+ */
 @Composable
 private fun AttachScrim(
     visible: Boolean,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scrimAlpha = animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 180, easing = LinearEasing),
-        label = "attach scrim",
-    )
-    // Stay composed until the fade-out has finished.
-    if (visible || scrimAlpha.value > 0f) {
+    if (visible) {
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = scrimAlpha.value }
-                .background(Color.Black.copy(alpha = 0.32f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
