@@ -36,6 +36,8 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.AnimatedVisibility
 import androidx.activity.compose.BackHandler
@@ -99,8 +101,8 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ToggleFloatingActionButtonDefaults
-import androidx.compose.material3.ToggleFloatingActionButton
+import androidx.compose.material3.SplitButtonDefaults
+import androidx.compose.material3.SplitButtonLayout
 import androidx.compose.material3.FloatingActionButtonMenuItem
 import androidx.compose.material3.FloatingActionButtonMenu
 import androidx.compose.material3.ModalBottomSheet
@@ -131,12 +133,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
@@ -352,6 +357,9 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
             )
         }
     }
+    // Pages fade out above the floating toolbar instead of being cut by a hard edge.
+    val pageFadeHeight = MainPageFadeHeight +
+        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -369,7 +377,8 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .nestedScroll(scrollBehavior.nestedScrollConnection),
+                        .nestedScroll(scrollBehavior.nestedScrollConnection)
+                        .fadingEdges(bottom = pageFadeHeight),
                 ) {
                     when (pageTab) {
                         AirDroidTab.HOME -> HomeScreen(controller, scope)
@@ -1432,13 +1441,66 @@ private fun IncomingRequestDialog(controller: AirDroidController) {
     )
 }
 
-private val AttachFabSize = 56.dp
-
 /** Space the list keeps free at its end so the last row can scroll clear of the attach buttons. */
 private val AttachBarClearance = 88.dp
 
 /** Height of the soft fade that keeps rows from colliding visually with the attach buttons. */
 private val AttachFadeHeight = 80.dp
+
+/** Fade height on the main pages, on top of the navigation-bar inset, to clear the floating toolbar. */
+private val MainPageFadeHeight = 104.dp
+
+// Alpha ramps for [fadingEdges]. Several stops give an eased ramp instead of a flat linear one.
+private val FadeOutStops = arrayOf(
+    0f to Color.Black,
+    0.30f to Color.Black.copy(alpha = 0.86f),
+    0.60f to Color.Black.copy(alpha = 0.42f),
+    0.85f to Color.Black.copy(alpha = 0.10f),
+    1f to Color.Transparent,
+)
+private val FadeInStops = arrayOf(
+    0f to Color.Transparent,
+    0.15f to Color.Black.copy(alpha = 0.10f),
+    0.40f to Color.Black.copy(alpha = 0.42f),
+    0.70f to Color.Black.copy(alpha = 0.86f),
+    1f to Color.Black,
+)
+
+/**
+ * Fades the content to real transparency at the top and/or bottom edge (alpha mask, not a
+ * painted overlay), so whatever is behind the page shows through.
+ */
+private fun Modifier.fadingEdges(top: Dp = 0.dp, bottom: Dp = 0.dp): Modifier =
+    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val topPx = top.toPx().coerceIn(0f, size.height / 2f)
+            val bottomPx = bottom.toPx().coerceIn(0f, size.height / 2f)
+            if (topPx > 0f) {
+                drawRect(
+                    brush = Brush.verticalGradient(*FadeInStops, startY = 0f, endY = topPx),
+                    size = Size(size.width, topPx),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            if (bottomPx > 0f) {
+                val startY = size.height - bottomPx
+                drawRect(
+                    brush = Brush.verticalGradient(*FadeOutStops, startY = startY, endY = size.height),
+                    topLeft = Offset(0f, startY),
+                    size = Size(size.width, bottomPx),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+        }
+
+/**
+ * Attach menu order, top to bottom. [FloatingActionButtonMenu] lays items out in declaration
+ * order with the last one closest to the toggle, so Files sits right where the collapsed
+ * Files button was.
+ */
+private val AttachMenuActions: List<PeerAction> =
+    PeerAction.entries.filter { it != PeerAction.FILES }.asReversed() + PeerAction.FILES
 
 /**
  * Current top edge of the sheet in pixels, measured from the top of the window.
@@ -1472,7 +1534,7 @@ private fun PeerActionsSheet(
     var fabExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    // The attach menu stacks six chips above the buttons. That needs more room than the
+    // The attach menu stacks seven chips above the buttons. That needs more room than the
     // partially expanded sheet has, so grow the sheet while the menu opens.
     LaunchedEffect(fabExpanded) {
         if (fabExpanded && sheetState.currentValue != SheetValue.Expanded) {
@@ -1925,12 +1987,13 @@ private fun AttachScrim(
 }
 
 /**
- * "Files" button, the toggle next to it, and the attach menu.
+ * Material 3 split button ("Files" + chevron) that doubles as the attach FAB menu button.
  *
- * Everything lives in one [FloatingActionButtonMenu], so the chips are laid out by the menu
- * itself and always share the trailing edge of the toggle button. The menu is composed inline
- * in the sheet window (no Popup), which removes the extra window and the pixel offsets that
- * used to make it lag and drift out of alignment.
+ * - Leading part: runs the Files action directly.
+ * - Trailing part: toggles the menu. While checked it morphs to a round shape and the chevron
+ *   turns 180 degrees, as in the split button spec.
+ * - While the menu is open the leading part collapses into the trailing one; Files then
+ *   shows up as the last item of the menu, next to the toggle.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -1942,102 +2005,119 @@ private fun AttachControls(
     onAction: (PeerAction) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    // Read only inside graphicsLayer blocks, so the icon animates without recomposing.
+    val buttonHeight = SplitButtonDefaults.MediumContainerHeight
+    // Read only inside graphicsLayer blocks, so the chevron animates without recomposing.
     val toggle = animateFloatAsState(
         targetValue = if (fabExpanded) 1f else 0f,
         animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
         label = "attach toggle",
+    )
+    val spacing by animateDpAsState(
+        targetValue = if (fabExpanded) 0.dp else SplitButtonDefaults.Spacing,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "split spacing",
+    )
+    val trailingContainer by animateColorAsState(
+        targetValue = if (fabExpanded) colors.secondary else colors.secondaryContainer,
+        animationSpec = tween(durationMillis = 200),
+        label = "split trailing container",
+    )
+    val trailingContent by animateColorAsState(
+        targetValue = if (fabExpanded) colors.onSecondary else colors.onSecondaryContainer,
+        animationSpec = tween(durationMillis = 200),
+        label = "split trailing content",
     )
     FloatingActionButtonMenu(
         expanded = fabExpanded,
         modifier = modifier,
         horizontalAlignment = Alignment.End,
         button = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        onFabExpandedChange(false)
-                        onAddFiles()
-                    },
-                    icon = {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_attach_file),
-                            contentDescription = null,
-                        )
-                    },
-                    text = { Text("Files") },
-                )
-                ToggleFloatingActionButton(
-                    checked = fabExpanded,
-                    onCheckedChange = onFabExpandedChange,
-                    modifier = Modifier
-                        .size(AttachFabSize)
-                        .semantics {
+            SplitButtonLayout(
+                spacing = spacing,
+                leadingButton = {
+                    AnimatedVisibility(
+                        visible = !fabExpanded,
+                        enter = fadeIn(tween(160)) + expandHorizontally(
+                            animationSpec = tween(220, easing = FastOutSlowInEasing),
+                            expandFrom = Alignment.End,
+                        ),
+                        exit = fadeOut(tween(120)) + shrinkHorizontally(
+                            animationSpec = tween(220, easing = FastOutSlowInEasing),
+                            shrinkTowards = Alignment.End,
+                        ),
+                    ) {
+                        SplitButtonDefaults.LeadingButton(
+                            onClick = onAddFiles,
+                            shapes = SplitButtonDefaults.leadingButtonShapesFor(buttonHeight),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.primaryContainer,
+                                contentColor = colors.onPrimaryContainer,
+                            ),
+                            contentPadding =
+                                SplitButtonDefaults.leadingButtonContentPaddingFor(buttonHeight),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_attach_file),
+                                contentDescription = null,
+                                modifier = Modifier.size(
+                                    SplitButtonDefaults.leadingButtonIconSizeFor(buttonHeight),
+                                ),
+                            )
+                            Spacer(Modifier.width(ButtonDefaults.iconSpacingFor(buttonHeight)))
+                            Text(
+                                text = "Files",
+                                style = ButtonDefaults.textStyleFor(buttonHeight),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                },
+                trailingButton = {
+                    SplitButtonDefaults.TrailingButton(
+                        checked = fabExpanded,
+                        onCheckedChange = onFabExpandedChange,
+                        modifier = Modifier.semantics {
                             contentDescription = if (fabExpanded) {
                                 "Close attach menu"
                             } else {
                                 "Open attach menu"
                             }
                         },
-                    contentAlignment = Alignment.Center,
-                    containerColor = ToggleFloatingActionButtonDefaults.containerColor(
-                        initialColor = colors.secondaryContainer,
-                        finalColor = colors.secondary,
-                    ),
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
+                        shapes = SplitButtonDefaults.trailingButtonShapesFor(buttonHeight),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = trailingContainer,
+                            contentColor = trailingContent,
+                        ),
+                        contentPadding =
+                            SplitButtonDefaults.trailingButtonContentPaddingFor(buttonHeight),
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_expand_less),
                             contentDescription = null,
-                            tint = colors.onSecondaryContainer,
                             modifier = Modifier
-                                .size(24.dp)
-                                .graphicsLayer {
-                                    val progress = toggle.value
-                                    alpha = 1f - progress
-                                    rotationZ = 180f * progress
-                                },
-                        )
-                        Icon(
-                            painter = painterResource(R.drawable.ic_close),
-                            contentDescription = null,
-                            tint = colors.onSecondary,
-                            modifier = Modifier
-                                .size(24.dp)
-                                .graphicsLayer {
-                                    val progress = toggle.value
-                                    alpha = progress
-                                    rotationZ = -90f * (1f - progress)
-                                },
+                                .size(SplitButtonDefaults.trailingButtonIconSizeFor(buttonHeight))
+                                .graphicsLayer { rotationZ = 180f * toggle.value },
                         )
                     }
-                }
-            }
+                },
+            )
         },
     ) {
-        PeerAction.entries
-            .filter { it != PeerAction.FILES }
-            .forEach { action ->
-                FloatingActionButtonMenuItem(
-                    onClick = {
-                        onFabExpandedChange(false)
-                        onAction(action)
-                    },
-                    text = { Text(action.label) },
-                    icon = {
-                        Icon(
-                            painter = painterResource(action.icon),
-                            contentDescription = null,
-                        )
-                    },
-                )
-            }
+        AttachMenuActions.forEach { action ->
+            FloatingActionButtonMenuItem(
+                onClick = {
+                    onFabExpandedChange(false)
+                    onAction(action)
+                },
+                text = { Text(action.label) },
+                icon = {
+                    Icon(
+                        painter = painterResource(action.icon),
+                        contentDescription = null,
+                    )
+                },
+            )
+        }
     }
 }
 
