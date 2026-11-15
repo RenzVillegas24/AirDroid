@@ -28,6 +28,17 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.draw.rotate
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -47,12 +58,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -95,6 +108,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
@@ -272,12 +286,12 @@ private enum class AirDroidTab(
 
 private enum class PeerAction(val label: String, @DrawableRes val icon: Int) {
     FILES("Files", R.drawable.ic_attach_file),
-    PHOTOS("Photos", R.drawable.ic_upload_file),
-    VIDEOS("Videos", R.drawable.ic_smartphone),
+    PHOTOS("Photos", R.drawable.ic_image),
+    VIDEOS("Videos", R.drawable.ic_videocam),
     FOLDER("Folder", R.drawable.ic_folder),
-    CAMERA("Camera", R.drawable.ic_smartphone),
-    AUDIO("Audio", R.drawable.ic_send),
-    PASTE("Paste", R.drawable.ic_description),
+    CAMERA("Camera", R.drawable.ic_photo_camera),
+    AUDIO("Audio", R.drawable.ic_music_note),
+    PASTE("Paste", R.drawable.ic_content_paste),
 }
 
 private data class StagedItem(val path: String, val name: String, val size: Long)
@@ -1426,8 +1440,136 @@ private fun PeerActionsSheet(
     onAction: (PeerAction) -> Unit,
     onSend: () -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     var fabExpanded by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    BackHandler(enabled = fabExpanded) { fabExpanded = false }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentWindowInsets = { WindowInsets.navigationBars },
+    ) {
+        PeerSheetContent(
+            peer = peer,
+            channel = channel,
+            selectedItems = items,
+            pinned = pinned,
+            listState = listState,
+            sheetState = sheetState,
+            fabExpanded = fabExpanded,
+            onFabExpandedChange = { fabExpanded = it },
+            onTogglePin = onTogglePin,
+            onRemoveItem = onRemoveItem,
+            onAddFiles = onAddFiles,
+            onAction = onAction,
+            onSend = onSend,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun PeerSheetContent(
+    peer: Peer,
+    channel: Int?,
+    selectedItems: List<StagedItem>,
+    pinned: Boolean,
+    listState: LazyListState,
+    sheetState: SheetState,
+    fabExpanded: Boolean,
+    onFabExpandedChange: (Boolean) -> Unit,
+    onTogglePin: () -> Unit,
+    onRemoveItem: (StagedItem) -> Unit,
+    onAddFiles: () -> Unit,
+    onAction: (PeerAction) -> Unit,
+    onSend: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val compactVisible by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(),
+    ) {
+        AnimatedVisibility(
+            visible = compactVisible,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            CompactPeerHeader(
+                peer = peer,
+                channel = channel,
+                itemCount = selectedItems.size,
+                onSend = onSend,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 56.dp + 16.dp + navBottom),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "largePeerHeader") {
+                    LargePeerHeader(
+                        peer = peer,
+                        channel = channel,
+                        itemCount = selectedItems.size,
+                        pinned = pinned,
+                        onTogglePin = onTogglePin,
+                        onSend = onSend,
+                    )
+                }
+                if (selectedItems.isEmpty()) {
+                    item(key = "emptyItems") {
+                        EmptyItemsState(modifier = Modifier.padding(horizontal = 20.dp))
+                    }
+                } else {
+                    items(selectedItems, key = { it.path }) { item ->
+                        FileRow(item = item, onRemove = { onRemoveItem(item) })
+                    }
+                }
+            }
+            if (fabExpanded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.32f))
+                        .clickable { onFabExpandedChange(false) },
+                )
+            }
+        }
+        AttachControls(
+            modifier = Modifier.offset {
+                val offset = runCatching { sheetState.requireOffset() }.getOrDefault(0f)
+                IntOffset(0, -offset.toInt())
+            },
+            fabExpanded = fabExpanded,
+            onFabExpandedChange = onFabExpandedChange,
+            onAddFiles = onAddFiles,
+            onAction = onAction,
+        )
+    }
+}
+
+@Composable
+private fun LargePeerHeader(
+    peer: Peer,
+    channel: Int?,
+    itemCount: Int,
+    pinned: Boolean,
+    onTogglePin: () -> Unit,
+    onSend: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
     val avatarColor = when (peer.devclass) {
         2 -> colors.tertiaryContainer
         1 -> colors.secondaryContainer
@@ -1443,201 +1585,300 @@ private fun PeerActionsSheet(
         1 -> R.drawable.ic_computer
         else -> R.drawable.ic_wifi_tethering
     }
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = colors.surfaceContainerLow,
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 600.dp),
+        Surface(
+            shape = CircleShape,
+            color = avatarColor,
+            modifier = Modifier.size(56.dp),
         ) {
-            Column(
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(icon),
+                    contentDescription = null,
+                    tint = avatarTint,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+        Text(
+            text = peer.displayName(),
+            style = MaterialTheme.typography.titleLarge,
+            color = colors.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = peerSubtitle(peer, channel),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+        )
+        TextButton(onClick = onTogglePin) {
+            Icon(
+                painter = painterResource(R.drawable.ic_pin),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(if (pinned) "Pinned phone" else "Pin this phone")
+        }
+        Button(
+            onClick = onSend,
+            enabled = itemCount > 0,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_send),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(if (itemCount == 0) "Send" else "Send $itemCount files")
+        }
+    }
+}
+
+@Composable
+private fun CompactPeerHeader(
+    peer: Peer,
+    channel: Int?,
+    itemCount: Int,
+    onSend: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val avatarColor = when (peer.devclass) {
+        2 -> colors.tertiaryContainer
+        1 -> colors.secondaryContainer
+        else -> colors.primaryContainer
+    }
+    val avatarTint = when (peer.devclass) {
+        2 -> colors.onTertiaryContainer
+        1 -> colors.onSecondaryContainer
+        else -> colors.onPrimaryContainer
+    }
+    val icon = when (peer.devclass) {
+        2 -> R.drawable.ic_smartphone
+        1 -> R.drawable.ic_computer
+        else -> R.drawable.ic_wifi_tethering
+    }
+    Surface(
+        color = colors.surfaceContainerLow,
+        tonalElevation = 3.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(start = 20.dp, end = 20.dp, bottom = 96.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Surface(
                     shape = CircleShape,
                     color = avatarColor,
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(32.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             painter = painterResource(icon),
                             contentDescription = null,
                             tint = avatarTint,
-                            modifier = Modifier.size(28.dp),
+                            modifier = Modifier.size(17.dp),
                         )
                     }
                 }
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = peer.displayName(),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = peerSubtitle(peer, channel),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                FilledTonalButton(
+                    onClick = onSend,
+                    enabled = itemCount > 0,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Text(if (itemCount == 0) "Send" else "Send $itemCount")
+                }
+            }
+            HorizontalDivider(color = colors.outlineVariant)
+        }
+    }
+}
+
+private fun peerSubtitle(peer: Peer, channel: Int?): String = buildString {
+    append(peer.typeLabel())
+    append(" · ")
+    append(peer.rssi)
+    append(" dBm")
+    if (channel != null) {
+        append(" · channel ")
+        append(channel)
+    }
+}
+
+@Composable
+private fun FileRow(item: StagedItem, onRemove: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = colors.surfaceContainerHigh,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(fileIcon(item.name)),
+                contentDescription = null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = peer.displayName(),
-                    style = MaterialTheme.typography.headlineSmall,
+                    text = middleEllipsis(item.name, 30),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurface,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    overflow = TextOverflow.Clip,
                 )
                 Text(
-                    text = buildString {
-                        append(peer.typeLabel())
-                        append(" · ")
-                        append(peer.rssi)
-                        append(" dBm")
-                        if (channel != null) {
-                            append(" · channel ")
-                            append(channel)
-                        }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                )
-                TextButton(onClick = onTogglePin) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_pin),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (pinned) "Pinned phone" else "Pin this phone")
-                }
-                Button(
-                    onClick = onSend,
-                    enabled = items.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_send),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        when (items.size) {
-                            0 -> "Send"
-                            1 -> "Send 1 file"
-                            else -> "Send ${items.size} files"
-                        },
-                    )
-                }
-                HorizontalDivider(color = colors.outlineVariant)
-                Text(
-                    text = if (items.isEmpty()) "NO ITEMS SELECTED" else "SELECTED (${items.size})",
+                    text = item.size.readableBytes(),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth(),
                 )
-                if (items.isEmpty()) {
-                    EmptyItemsState()
-                } else {
-                    items.forEach { item ->
-                        Surface(
-                            shape = MaterialTheme.shapes.medium,
-                            color = colors.surfaceContainerHigh,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_description),
-                                    contentDescription = null,
-                                    tint = colors.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.name,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = colors.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = item.size.readableBytes(),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = colors.onSurfaceVariant,
-                                    )
-                                }
-                                IconButton(onClick = { onRemoveItem(item) }) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_delete),
-                                        contentDescription = "Remove item",
-                                        tint = colors.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
-                            }
-                        }
+            }
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_close),
+                    contentDescription = "Remove ${item.name}",
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun AttachControls(
+    modifier: Modifier = Modifier,
+    fabExpanded: Boolean,
+    onFabExpandedChange: (Boolean) -> Unit,
+    onAddFiles: () -> Unit,
+    onAction: (PeerAction) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val rotation by animateFloatAsState(
+        targetValue = if (fabExpanded) 180f else 0f,
+        label = "attach chevron",
+    )
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.End,
+    ) {
+        Row(
+            modifier = Modifier.shadow(6.dp, RoundedCornerShape(28.dp)),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ExtendedFloatingActionButton(
+                onClick = onAddFiles,
+                icon = {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_attach_file),
+                        contentDescription = null,
+                    )
+                },
+                text = { Text("Files") },
+            )
+            ToggleFloatingActionButton(
+                checked = fabExpanded,
+                onCheckedChange = onFabExpandedChange,
+                modifier = Modifier.size(56.dp),
+                contentAlignment = Alignment.Center,
+                containerColor = ToggleFloatingActionButtonDefaults.containerColor(
+                    initialColor = colors.secondaryContainer,
+                    finalColor = colors.secondary,
+                ),
+            ) {
+                Crossfade(
+                    targetState = fabExpanded,
+                    modifier = Modifier.fillMaxSize(),
+                    label = "attach icon",
+                ) { open ->
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(
+                                if (open) R.drawable.ic_close else R.drawable.ic_expand_less,
+                            ),
+                            contentDescription = if (open) {
+                                "Close attach menu"
+                            } else {
+                                "Open attach menu"
+                            },
+                            tint = if (open) colors.onSecondary else colors.onSecondaryContainer,
+                            modifier = Modifier
+                                .size(24.dp)
+                                .rotate(if (open) 180f else 0f),
+                        )
                     }
                 }
             }
-
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 20.dp, bottom = 16.dp)
-                    .shadow(6.dp, RoundedCornerShape(28.dp)),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        }
+        if (fabExpanded) {
+            var menuExpanded by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { menuExpanded = true }
+            Popup(
+                alignment = Alignment.BottomEnd,
+                offset = IntOffset(88, -96),
+                onDismissRequest = { onFabExpandedChange(false) },
+                properties = PopupProperties(focusable = true),
             ) {
-                ExtendedFloatingActionButton(
-                    onClick = onAddFiles,
-                    icon = {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_attach_file),
-                            contentDescription = null,
-                        )
-                    },
-                    text = { Text("Files") },
-                )
-                ToggleFloatingActionButton(
-                    checked = fabExpanded,
-                    onCheckedChange = { fabExpanded = it },
-                    modifier = Modifier.size(56.dp),
-                    contentAlignment = Alignment.Center,
-                    containerColor = ToggleFloatingActionButtonDefaults.containerColor(
-                        initialColor = colors.secondaryContainer,
-                        finalColor = colors.secondary,
-                    ),
+                FloatingActionButtonMenu(
+                    expanded = menuExpanded,
+                    button = {},
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.End,
                 ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_expand_more),
-                        contentDescription = "More ways to add",
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-            }
-
-            if (fabExpanded) {
-                var menuExpanded by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) { menuExpanded = true }
-                Popup(
-                    alignment = Alignment.BottomEnd,
-                    offset = IntOffset(0, -80),
-                    onDismissRequest = { fabExpanded = false },
-                    properties = PopupProperties(focusable = true),
-                ) {
-                    FloatingActionButtonMenu(
-                        expanded = menuExpanded,
-                        button = {},
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.End,
-                    ) {
                     PeerAction.entries
                         .filter { it != PeerAction.FILES }
                         .forEach { action ->
                             FloatingActionButtonMenuItem(
                                 onClick = {
-                                    fabExpanded = false
+                                    onFabExpandedChange(false)
                                     onAction(action)
                                 },
                                 text = { Text(action.label) },
@@ -1649,7 +1890,6 @@ private fun PeerActionsSheet(
                                 },
                             )
                         }
-                    }
                 }
             }
         }
@@ -1657,12 +1897,12 @@ private fun PeerActionsSheet(
 }
 
 @Composable
-private fun EmptyItemsState() {
+private fun EmptyItemsState(modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Surface(
         shape = MaterialTheme.shapes.large,
         color = colors.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
@@ -1687,6 +1927,24 @@ private fun EmptyItemsState() {
                 textAlign = TextAlign.Center,
             )
         }
+    }
+}
+
+private fun middleEllipsis(value: String, maxChars: Int): String {
+    if (value.length <= maxChars) return value
+    val keep = (maxChars - 1) / 2
+    return value.take(keep) + "…" + value.takeLast(keep)
+}
+
+@DrawableRes
+private fun fileIcon(name: String): Int {
+    val extension = name.substringAfterLast('.', "").lowercase(Locale.US)
+    return when (extension) {
+        "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp" -> R.drawable.ic_image
+        "mp4", "mov", "mkv", "webm", "avi" -> R.drawable.ic_videocam
+        "mp3", "m4a", "wav", "flac", "ogg", "aac" -> R.drawable.ic_music_note
+        "zip", "7z", "rar", "tar", "gz" -> R.drawable.ic_folder
+        else -> R.drawable.ic_description
     }
 }
 
@@ -2758,4 +3016,70 @@ private fun SectionLabel(text: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 4.dp, top = 6.dp),
     )
+}
+
+@Preview(name = "Peer sheet - 0 files", showBackground = true, widthDp = 412, heightDp = 860)
+@Composable
+private fun PeerSheetPreviewEmpty() {
+    PeerSheetPreview(itemCount = 0, menuExpanded = false)
+}
+
+@Preview(name = "Peer sheet - 5 files", showBackground = true, widthDp = 412, heightDp = 860)
+@Composable
+private fun PeerSheetPreviewFive() {
+    PeerSheetPreview(itemCount = 5, menuExpanded = false)
+}
+
+@Preview(name = "Peer sheet - 40 files", showBackground = true, widthDp = 412, heightDp = 860)
+@Composable
+private fun PeerSheetPreviewForty() {
+    PeerSheetPreview(itemCount = 40, menuExpanded = false)
+}
+
+@Preview(name = "Peer sheet - menu expanded", showBackground = true, widthDp = 412, heightDp = 860)
+@Composable
+private fun PeerSheetPreviewMenu() {
+    PeerSheetPreview(itemCount = 5, menuExpanded = true)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PeerSheetPreview(itemCount: Int, menuExpanded: Boolean) {
+    val items = List(itemCount) { index ->
+        StagedItem(
+            path = "/preview/file-$index.bin",
+            name = when (index % 5) {
+                0 -> "droidy-2mb-random.bin"
+                1 -> "droidy-20mb-random2.bin"
+                2 -> "droidy-test.txt"
+                3 -> "nl80211-scan"
+                else -> "photo-${index}.jpg"
+            },
+            size = (index + 1) * 4096L,
+        )
+    }
+    MaterialTheme {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(760.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+            PeerSheetContent(
+                peer = Peer("preview", "RenziPhone", 2, -36),
+                channel = 149,
+                selectedItems = items,
+                pinned = false,
+                listState = rememberLazyListState(),
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
+                fabExpanded = menuExpanded,
+                onFabExpandedChange = {},
+                onTogglePin = {},
+                onRemoveItem = {},
+                onAddFiles = {},
+                onAction = {},
+                onSend = {},
+            )
+        }
+    }
 }
