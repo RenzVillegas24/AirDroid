@@ -407,6 +407,18 @@ class AirDroidController(private val context: Context) {
         if (!transfer.canCancel) return
         if (activeSendTransferId == id) {
             cancelSend()
+        } else if (transfer.direction == TransferDirection.RECEIVED) {
+            // Abort only this upload's receiver connection; the receiver and
+            // radio stay up for other transfers.
+            val requestId = transferRequestIds[transfer.id]
+                ?: transfer.id.removePrefix("rx-").substringBefore("-")
+            if (requestId.isBlank()) return
+            receiveMessage = "Stopping receive..."
+            scope.launch {
+                if (!sendReceiveCommand("abort-receive $requestId")) {
+                    receiveMessage = "Could not stop the receive."
+                }
+            }
         } else {
             finishTransfer(id, TransferStatus.CANCELLED, error = "Cancelled")
         }
@@ -1444,6 +1456,10 @@ class AirDroidController(private val context: Context) {
             }
             line.startsWith("RECEIVE_REQUEST ") -> handleIncomingRequest(line)
             line.startsWith("RECEIVE_REQUEST_FILES ") -> handleIncomingRequestFiles(line)
+            line.startsWith("RECEIVE_ABORTED") -> handleReceiveAborted(line)
+            line.startsWith("RECEIVE_ABORT_ERR") -> {
+                receiveMessage = "Could not stop the receive."
+            }
             line.startsWith("RECEIVE_ACCEPTED") -> handleIncomingAccepted(line)
             line.startsWith("RECEIVE_DECLINED") -> handleIncomingDeclined()
             line.startsWith("RECEIVE_WITHDRAWN") -> handleIncomingWithdrawn()
@@ -1486,6 +1502,34 @@ class AirDroidController(private val context: Context) {
                 status = if (kernel.monitorReady) "READY" else kernel.state.badge
             }
         }
+    }
+
+    private fun handleReceiveAborted(line: String) {
+        val requestKey = eventId(line).toLongOrNull()?.toString() ?: return
+        activeTransfers
+            .filter {
+                it.direction == TransferDirection.RECEIVED &&
+                    transferRequestIds[it.id] == requestKey
+            }
+            .forEach { transfer ->
+                finishTransfer(
+                    transfer.id,
+                    TransferStatus.CANCELLED,
+                    error = "Stopped",
+                )
+            }
+        receiveTransferring = false
+        receiveProgressBytes = 0
+        receiveProgressTotal = 0
+        receiveMessage = "Receive stopped"
+        status = if (receiverRunning) "RECEIVING" else if (kernel.monitorReady) {
+            "READY"
+        } else {
+            kernel.state.badge
+        }
+        notifications.cancelIncomingRequest()
+        notifications.updateTransferSummary(visibleActiveTransferCount())
+        append("[receive aborted]")
     }
 
     private fun handleIncomingRequest(line: String) {

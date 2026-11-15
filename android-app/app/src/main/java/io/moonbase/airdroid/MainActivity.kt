@@ -908,6 +908,12 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     }
 
     var homeTab by remember { mutableStateOf(HomeTab.SENT) }
+    LaunchedEffect(controller.sending) {
+        if (controller.sending) homeTab = HomeTab.SENT
+    }
+    LaunchedEffect(controller.receiveTransferring) {
+        if (controller.receiveTransferring) homeTab = HomeTab.RECEIVED
+    }
     val myName = controller.settings.deviceName.ifBlank { Build.MODEL }
     val peers = controller.peers.filter { it.airdropReady }.sortedWith(
         compareByDescending<Peer> { controller.isPinned(it.mac) }
@@ -998,7 +1004,17 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 if (receivedActive.isNotEmpty()) {
                     item(key = "receiving-label") { SectionLabel("RECEIVING", Modifier.animateItem()) }
                     items(receivedActive, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) { TransferCard(transfer, localName = myName) }
+                        Box(Modifier.animateItem()) {
+                            TransferCard(
+                                transfer = transfer,
+                                localName = myName,
+                                onCancel = if (transfer.canCancel) {
+                                    { controller.cancelTransfer(transfer.id) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
                     }
                 }
                 if (receivedDone.isNotEmpty()) {
@@ -1510,7 +1526,7 @@ private fun TransferCard(
                     IconButton(onClick = onCancel) {
                         Icon(
                             painter = painterResource(R.drawable.ic_stop_circle),
-                            contentDescription = "Cancel send",
+                            contentDescription = if (sent) "Cancel send" else "Stop receiving",
                             tint = colors.error,
                             modifier = Modifier.size(22.dp),
                         )

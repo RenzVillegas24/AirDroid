@@ -959,6 +959,7 @@ async fn session(
     )
     .await?;
     let actual_port = receiver.local_addr()?.port();
+    let receiver_control = receiver.control();
     let service = Service {
         instance: sender_id(addr),
         host: "airdroid-k20".into(),
@@ -1245,6 +1246,17 @@ async fn session(
                                 println!("RECEIVE_DECLINED id={id}");
                             }
                             None => println!("RECEIVE_ERROR unknown_request"),
+                        }
+                    }
+                    "abort-receive" => {
+                        let id = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
+                        match id {
+                            Some(id) if receiver_control.abort_request(id) => {
+                                active_receives.remove(&id);
+                                println!("RECEIVE_ABORTED id={id}");
+                            }
+                            Some(id) => println!("RECEIVE_ABORT_ERR id={id} not active"),
+                            None => println!("RECEIVE_ABORT_ERR missing id"),
                         }
                     }
                     "cancel" => {
