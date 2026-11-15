@@ -2552,7 +2552,7 @@ private fun EmptyPeopleCard() {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 320.dp),
+            .height(240.dp),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -2576,7 +2576,7 @@ private fun EmptyPeopleCard() {
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "Open AirDrop on your iPhone, set it to Everyone for 10 Minutes, then scan from this phone.",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
