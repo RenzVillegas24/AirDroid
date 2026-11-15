@@ -698,6 +698,20 @@ fn mdns_matches_target(found: &Found, target_mac: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+/// A fresh /Ask connection can be refused or time out while the iPhone's
+/// AirDrop port is still waking up. Retry after a short /Discover probe instead
+/// of reporting a send failure with no prompt.
+fn retryable_connect(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::NotConnected
+    )
+}
+
 async fn find_and_send(
     sender: &Sender,
     index: u32,
@@ -847,54 +861,69 @@ async fn find_and_send(
     let (target, flags, name) = chosen.ok_or_else(|| std::io::Error::other("no AirDrop receiver answered within 120 s"))?;
     println!("sending to {name:?} at {target} flags=0x{flags:x}");
     let payload = Payload::Files(vec![path.to_path_buf()]);
-    let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
-    let send_future = sender.send(target, &payload, flags, Some(events_tx));
-    tokio::pin!(send_future);
-    // Transfer priority: once the receiver is chosen, only the upload and its
-    // progress are handled. Peer updates and mDNS browse events would compete
-    // with it, so they are left for after the transfer (the session loop does
-    // the same for its own discovery).
-    let mut last_report: Option<Instant> = None;
+    let mut connect_retry = true;
     let outcome = loop {
-        if *cancel.borrow() {
-            break Ok(Outcome::Failed("cancelled".into()));
-        }
-        tokio::select! {
-            event = events_rx.recv() => match event {
-                Some(Event::Accepted) => println!("receiver accepted; uploading..."),
-                Some(Event::Progress(p)) => {
-                    if p.total > 0 {
-                        println!("progress {}/{} bytes", p.sent, p.total);
-                        if let Some(id) = report_id {
-                            // One line per 64 KiB chunk would add stdout work
-                            // to a fast upload, so the per-file line is capped
-                            // at about ten a second (plus the final one).
-                            let due = last_report
-                                .map_or(true, |last| last.elapsed() >= Duration::from_millis(100));
-                            if due || p.sent >= p.total {
-                                last_report = Some(Instant::now());
-                                // `total` is the compressed `/Upload` body, not
-                                // the source file's size: the sender archives
-                                // and compresses the file before the offer.
-                                // `source_total` keeps the uncompressed size
-                                // alongside it, so the app can show both
-                                // without guessing.
-                                println!(
-                                    "SEND_FILE_PROGRESS source_total={source_total} upload_total={} id={id} bytes={} total={}",
-                                    p.total, p.sent, p.total
-                                );
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let send_future = sender.send(target, &payload, flags, Some(events_tx));
+        tokio::pin!(send_future);
+        // Transfer priority: once the receiver is chosen, only the upload and its
+        // progress are handled. Peer updates and mDNS browse events would compete
+        // with it, so they are left for after the transfer (the session loop does
+        // the same for its own discovery).
+        let mut last_report: Option<Instant> = None;
+        let attempt = loop {
+            if *cancel.borrow() {
+                break Ok(Outcome::Failed("cancelled".into()));
+            }
+            tokio::select! {
+                event = events_rx.recv() => match event {
+                    Some(Event::Accepted) => println!("receiver accepted; uploading..."),
+                    Some(Event::Progress(p)) => {
+                        if p.total > 0 {
+                            println!("progress {}/{} bytes", p.sent, p.total);
+                            if let Some(id) = report_id {
+                                // One line per 64 KiB chunk would add stdout work
+                                // to a fast upload, so the per-file line is capped
+                                // at about ten a second (plus the final one).
+                                let due = last_report
+                                    .map_or(true, |last| last.elapsed() >= Duration::from_millis(100));
+                                if due || p.sent >= p.total {
+                                    last_report = Some(Instant::now());
+                                    // `total` is the compressed `/Upload` body, not
+                                    // the source file's size: the sender archives
+                                    // and compresses the file before the offer.
+                                    // `source_total` keeps the uncompressed size
+                                    // alongside it, so the app can show both
+                                    // without guessing.
+                                    println!(
+                                        "SEND_FILE_PROGRESS source_total={source_total} upload_total={} id={id} bytes={} total={}",
+                                        p.total, p.sent, p.total
+                                    );
+                                }
                             }
                         }
                     }
+                    None => {}
+                },
+                _ = cancel.changed() => {
+                    if *cancel.borrow() {
+                        break Ok(Outcome::Failed("cancelled".into()));
+                    }
                 }
-                None => {}
-            },
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    break Ok(Outcome::Failed("cancelled".into()));
+                result = &mut send_future => break result,
+            }
+        };
+        match attempt {
+            Err(e) if connect_retry && retryable_connect(&e) => {
+                connect_retry = false;
+                println!("send connect failed: {e}; waiting for receiver port...");
+                let probe = timeout(Duration::from_secs(5), sender.discover(target)).await;
+                match probe {
+                    Ok(Ok(Some(_))) => continue,
+                    _ => break Err(e),
                 }
             }
-            result = &mut send_future => break result,
+            other => break other,
         }
     };
     match outcome {
