@@ -922,6 +922,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                     selectedMac = sheetPeer?.mac,
                     isPinned = { controller.isPinned(it) },
                     onPeerClick = { openPeer(it) },
+                    scanningPaused = controller.sending || controller.receiveTransferring,
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -2413,6 +2414,7 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
                     selectedMac = controller.selectedMac,
                     isPinned = { false },
                     onPeerClick = { controller.selectPeer(it) },
+                    scanningPaused = controller.sending || controller.receiveTransferring,
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -2440,6 +2442,7 @@ private fun NearbyPeersSection(
     selectedMac: String?,
     isPinned: (String) -> Boolean,
     onPeerClick: (Peer) -> Unit,
+    scanningPaused: Boolean,
     modifier: Modifier = Modifier,
 ) {
     // Keep the last non-empty list around so the row can still render while it fades out.
@@ -2476,15 +2479,19 @@ private fun NearbyPeersSection(
                         ),
                     )
                 }
-                // Keeps scanning at the end of the list while more phones may still show up.
-                item(key = "scanning-tile") {
-                    ScanningPeerTile(
-                        modifier = Modifier.animateItem(
-                            fadeInSpec = tween(300),
-                            placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
-                            fadeOutSpec = tween(200),
-                        ),
-                    )
+                // Discovery is paused by the helper while a transfer is running, so the
+                // scanning tile should disappear instead of implying that peers are still
+                // being discovered.
+                if (!scanningPaused) {
+                    item(key = "scanning-tile") {
+                        ScanningPeerTile(
+                            modifier = Modifier.animateItem(
+                                fadeInSpec = tween(300),
+                                placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                                fadeOutSpec = tween(200),
+                            ),
+                        )
+                    }
                 }
             }
         }
