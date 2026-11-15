@@ -736,24 +736,6 @@ async fn find_and_send(
         if *cancel.borrow() {
             return Ok(Outcome::Failed("cancelled".into()));
         }
-        // The session browse already knows this receiver from the peer card's
-        // FOUND event. Go straight to /Ask like the owly CLI; only wait for
-        // /Discover when there is no cached mDNS target.
-        if let Some(target) = target_mac {
-            let cached = mdns_cache.lock().unwrap().target(target);
-            if let Some(found) = cached {
-                let addr = SocketAddrV6::new(found.addr, found.port, 0, index);
-                let name = names
-                    .lock()
-                    .unwrap()
-                    .get(target)
-                    .cloned()
-                    .unwrap_or_else(|| found.host.clone());
-                println!("using cached mDNS receiver {name:?} at {addr}");
-                chosen = Some((addr, found.flags, name));
-                break;
-            }
-        }
         loop {
             match browse.events.try_recv() {
                 Ok(BrowseEvent::Found(found)) => {
@@ -785,7 +767,19 @@ async fn find_and_send(
             chosen = Some((target, found.flags, name));
             break;
         }
+        // Use the session's cached mDNS target, but still require /Discover to
+        // answer before /Ask. That is the receiver-port gate the CLI's knock
+        // loop provides; a cached address alone can be stale or have port 8770
+        // closed, which caused the 10 s send-connect timeout with no prompt.
+        if mdns_found.is_none() {
+            if let Some(target) = target_mac {
+                mdns_found = mdns_cache.lock().unwrap().target(target);
+            }
+        }
         let mut targets: Vec<(SocketAddrV6, u32, &str)> = Vec::new();
+        if let Some(found) = &mdns_found {
+            targets.push((SocketAddrV6::new(found.addr, found.port, 0, index), found.flags, "mDNS"));
+        }
         for peer in &peers {
             let mac = peer.mac.to_string();
             if let Some(target) = target_mac {
