@@ -25,6 +25,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -41,6 +42,7 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
@@ -77,6 +79,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -179,6 +182,8 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.documentfile.provider.DocumentFile
 import java.io.BufferedOutputStream
 import java.io.FileOutputStream
@@ -903,61 +908,77 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (!controller.kernel.monitorReady) {
-            item { KernelBanner(controller) }
+            item(key = "kernel-banner") {
+                KernelBanner(controller, Modifier.animateItem())
+            }
         }
-        item { SectionLabel("NEARBY AIRDROP") }
-        item {
-            NearbyPeersSection(
-                peers = peers,
-                selectedMac = sheetPeer?.mac,
-                isPinned = { controller.isPinned(it) },
-                onPeerClick = { openPeer(it) },
-            )
+        // Peers can only be discovered in monitor mode, so hide the section in Wi-Fi mode.
+        // Keyed + animateItem: it fades out and everything below slides up smoothly.
+        if (controller.kernel.state != MonitorState.STOCK) {
+            item(key = "nearby-label") {
+                SectionLabel("NEARBY AIRDROP", Modifier.animateItem())
+            }
+            item(key = "nearby-section") {
+                NearbyPeersSection(
+                    peers = peers,
+                    selectedMac = sheetPeer?.mac,
+                    isPinned = { controller.isPinned(it) },
+                    onPeerClick = { openPeer(it) },
+                    modifier = Modifier.animateItem(),
+                )
+            }
         }
-        item {
-            HomeTabs(
-                selected = homeTab,
-                sentCount = sentActive.size + sentDone.size,
-                receivedCount = receivedActive.size + receivedDone.size,
-                onSelected = { homeTab = it },
-            )
+        item(key = "home-tabs") {
+            Box(Modifier.animateItem()) {
+                HomeTabs(
+                    selected = homeTab,
+                    sentCount = sentActive.size + sentDone.size,
+                    receivedCount = receivedActive.size + receivedDone.size,
+                    onSelected = { homeTab = it },
+                )
+            }
         }
         when (homeTab) {
             HomeTab.SENT -> {
                 if (sentActive.isNotEmpty()) {
-                    item { SectionLabel("SENDING") }
+                    item(key = "sending-label") { SectionLabel("SENDING", Modifier.animateItem()) }
                     items(sentActive, key = { it.id }) { transfer ->
-                        TransferCard(
-                            transfer = transfer,
-                            onCancel = { controller.cancelTransfer(transfer.id) },
-                        )
+                        Box(Modifier.animateItem()) {
+                            TransferCard(
+                                transfer = transfer,
+                                onCancel = { controller.cancelTransfer(transfer.id) },
+                            )
+                        }
                     }
                 }
                 if (sentDone.isNotEmpty()) {
-                    item { SectionLabel("SENT") }
+                    item(key = "sent-label") { SectionLabel("SENT", Modifier.animateItem()) }
                     items(sentDone, key = { it.id }) { transfer ->
-                        TransferCard(transfer)
+                        Box(Modifier.animateItem()) { TransferCard(transfer) }
                     }
                 }
                 if (sentActive.isEmpty() && sentDone.isEmpty()) {
-                    item {
-                        EmptyTransfersCard(
-                            title = "Nothing sent yet",
-                            subtitle = "Tap a nearby phone to send a file.",
-                        )
+                    item(key = "sent-empty") {
+                        Box(Modifier.animateItem()) {
+                            EmptyTransfersCard(
+                                title = "Nothing sent yet",
+                                subtitle = "Tap a nearby phone to send a file.",
+                            )
+                        }
                     }
                 }
             }
             HomeTab.RECEIVED -> {
                 if (receivedActive.isNotEmpty()) {
-                    item { SectionLabel("RECEIVING") }
+                    item(key = "receiving-label") { SectionLabel("RECEIVING", Modifier.animateItem()) }
                     items(receivedActive, key = { it.id }) { transfer ->
-                        TransferCard(transfer)
+                        Box(Modifier.animateItem()) { TransferCard(transfer) }
                     }
                 }
                 if (receivedDone.isNotEmpty()) {
-                    item { SectionLabel("RECEIVED") }
+                    item(key = "received-label") { SectionLabel("RECEIVED", Modifier.animateItem()) }
                     items(receivedDone, key = { it.id }) { transfer ->
+                        Box(Modifier.animateItem()) {
                         TransferCard(
                             transfer = transfer,
                             onOpen = {
@@ -976,10 +997,13 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                                 }
                             },
                         )
+                        }
                     }
                 }
                 if (receivedActive.isEmpty() && receivedDone.isEmpty()) {
-                    item { EmptyReceivedCard() }
+                    item(key = "received-empty") {
+                        Box(Modifier.animateItem()) { EmptyReceivedCard() }
+                    }
                 }
             }
         }
@@ -2380,18 +2404,23 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (!controller.kernel.monitorReady) {
-            item { KernelBanner(controller) }
+            item(key = "kernel-banner") {
+                KernelBanner(controller, Modifier.animateItem())
+            }
         }
-        item {
-            NearbyPeersSection(
-                peers = controller.peers.toList(),
-                selectedMac = controller.selectedMac,
-                isPinned = { false },
-                onPeerClick = { controller.selectPeer(it) },
-            )
+        if (controller.kernel.state != MonitorState.STOCK) {
+            item(key = "nearby-section") {
+                NearbyPeersSection(
+                    peers = controller.peers.toList(),
+                    selectedMac = controller.selectedMac,
+                    isPinned = { false },
+                    onPeerClick = { controller.selectPeer(it) },
+                    modifier = Modifier.animateItem(),
+                )
+            }
         }
-        item { SectionLabel("SEND") }
-        item {
+        item(key = "send-label") { SectionLabel("SEND", Modifier.animateItem()) }
+        item(key = "send-card") {
             SendCard(
                 controller = controller,
                 onChooseFile = { picker.launch(arrayOf("*/*")) },
@@ -2413,11 +2442,13 @@ private fun NearbyPeersSection(
     selectedMac: String?,
     isPinned: (String) -> Boolean,
     onPeerClick: (Peer) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     // Keep the last non-empty list around so the row can still render while it fades out.
     val lastPeers = remember { arrayOf(peers) }
     if (peers.isNotEmpty()) lastPeers[0] = peers
     AnimatedContent(
+        modifier = modifier,
         targetState = peers.isEmpty(),
         transitionSpec = {
             (fadeIn(tween(300, delayMillis = 90)) + scaleIn(tween(300, delayMillis = 90), initialScale = 0.92f))
@@ -2447,8 +2478,37 @@ private fun NearbyPeersSection(
                         ),
                     )
                 }
+                // Keeps scanning at the end of the list while more phones may still show up.
+                item(key = "scanning-tile") {
+                    ScanningPeerTile(
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = tween(300),
+                            placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                            fadeOutSpec = tween(200),
+                        ),
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun ScanningPeerTile(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .width(120.dp)
+            .height(132.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        SearchingSignalIcon(bubbleSize = 48.dp, iconSize = 30.dp, waveReach = 18.dp)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Scanning…",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -2458,8 +2518,23 @@ private fun NearbyPeersSection(
  * signals".
  */
 @Composable
-private fun SearchingSignalIcon() {
+private fun SearchingSignalIcon(
+    bubbleSize: Dp = 72.dp,
+    iconSize: Dp = 44.dp,
+    waveReach: Dp = 24.dp,
+    waveCount: Int = 3,
+    wavePeriodMillis: Int = 2400,
+) {
     val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    // The launcher icon of this app (adaptive icons can't go through painterResource).
+    val appIcon = remember {
+        runCatching {
+            context.packageManager.getApplicationIcon(context.packageName)
+                .toBitmap(216, 216)
+                .asImageBitmap()
+        }.getOrNull()
+    }
     val waveColor = colors.primary
     val transition = rememberInfiniteTransition(label = "searchingSignal")
 
@@ -2503,21 +2578,26 @@ private fun SearchingSignalIcon() {
     val phase by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
+        animationSpec = infiniteRepeatable(
+            tween(wavePeriodMillis, easing = LinearEasing),
+            RepeatMode.Restart,
+        ),
         label = "wavePhase",
     )
 
     Box(contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(64.dp)) {
+        Canvas(Modifier.size(bubbleSize)) {
             val minR = size.minDimension / 2f
-            val maxR = minR + 22.dp.toPx()
-            repeat(3) { i ->
-                val t = (phase + i / 3f) % 1f
-                val eased = FastOutSlowInEasing.transform(t)
+            val maxR = minR + waveReach.toPx()
+            // Drawn past the canvas bounds on purpose: the parent card clips them, so on a
+            // big waveReach the waves wash over the whole card as a background.
+            repeat(waveCount) { i ->
+                val t = (phase + i / waveCount.toFloat()) % 1f
+                val eased = LinearOutSlowInEasing.transform(t)
                 drawCircle(
-                    color = waveColor.copy(alpha = (1f - t) * 0.4f),
+                    color = waveColor.copy(alpha = (1f - t) * (1f - t) * 0.35f),
                     radius = minR + (maxR - minR) * eased,
-                    style = Stroke(width = (2.5f * (1f - t) + 0.5f).dp.toPx()),
+                    style = Stroke(width = (3f * (1f - t) + 0.75f).dp.toPx()),
                 )
             }
         }
@@ -2525,7 +2605,7 @@ private fun SearchingSignalIcon() {
             shape = RoundedCornerShape(percent = cornerPercent.roundToInt()),
             color = colors.primaryContainer,
             modifier = Modifier
-                .size(64.dp)
+                .size(bubbleSize)
                 .graphicsLayer {
                     scaleX = pulse
                     scaleY = pulse
@@ -2533,15 +2613,30 @@ private fun SearchingSignalIcon() {
                 },
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_wifi_tethering),
-                    contentDescription = null,
-                    tint = colors.onPrimaryContainer,
-                    // Counter-rotate so the icon stays upright while the container turns.
-                    modifier = Modifier
-                        .size(32.dp)
-                        .graphicsLayer { rotationZ = -rotation },
-                )
+                // Counter-rotate so the icon stays upright while the container turns.
+                val upright = Modifier
+                    .size(iconSize)
+                    .graphicsLayer { rotationZ = -rotation }
+                if (appIcon != null) {
+                    Box(
+                        modifier = upright.clip(CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        // Adaptive icons carry an extra safe-zone margin; scale it away.
+                        Image(
+                            bitmap = appIcon,
+                            contentDescription = null,
+                            modifier = Modifier.requiredSize(iconSize * 1.5f),
+                        )
+                    }
+                } else {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_wifi_tethering),
+                        contentDescription = null,
+                        tint = colors.onPrimaryContainer,
+                        modifier = upright,
+                    )
+                }
             }
         }
     }
@@ -2550,9 +2645,7 @@ private fun SearchingSignalIcon() {
 @Composable
 private fun EmptyPeopleCard() {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(240.dp),
+        modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -2561,17 +2654,22 @@ private fun EmptyPeopleCard() {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight()
+                .heightIn(min = 240.dp)
                 .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            SearchingSignalIcon()
-            Spacer(Modifier.height(14.dp))
+            SearchingSignalIcon(
+                waveReach = 280.dp,
+                waveCount = 4,
+                wavePeriodMillis = 4400,
+            )
+            Spacer(Modifier.height(20.dp))
             Text(
                 text = "No one nearby yet",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(4.dp))
             Text(
@@ -2699,7 +2797,7 @@ private fun PeerCard(
 }
 
 @Composable
-private fun KernelBanner(controller: AirDroidController) {
+private fun KernelBanner(controller: AirDroidController, modifier: Modifier = Modifier) {
     val kernel = controller.kernel
     if (kernel.monitorReady) return
     val colors = MaterialTheme.colorScheme
@@ -2709,10 +2807,33 @@ private fun KernelBanner(controller: AirDroidController) {
         MonitorState.MONITOR -> return
     }
     val wifiMode = kernel.state == MonitorState.STOCK
-    val container = if (wifiMode) colors.secondaryContainer else colors.errorContainer
-    val onContainer = if (wifiMode) colors.onSecondaryContainer else colors.onErrorContainer
+    val container by animateColorAsState(
+        targetValue = if (wifiMode) colors.secondaryContainer else colors.errorContainer,
+        animationSpec = tween(350),
+        label = "bannerContainer",
+    )
+    val onContainer by animateColorAsState(
+        targetValue = if (wifiMode) colors.onSecondaryContainer else colors.onErrorContainer,
+        animationSpec = tween(350),
+        label = "bannerOnContainer",
+    )
+    // Springy pop-in of the card, and of its icon a beat later.
+    val appear = remember { Animatable(0f) }
+    val iconAppear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { appear.animateTo(1f, spring(dampingRatio = 0.75f, stiffness = 300f)) }
+        delay(120)
+        iconAppear.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 400f))
+    }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                val sc = 0.94f + 0.06f * appear.value
+                scaleX = sc
+                scaleY = sc
+            }
+            .animateContentSize(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = container),
     ) {
@@ -2722,12 +2843,19 @@ private fun KernelBanner(controller: AirDroidController) {
                 .padding(16.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            Icon(
-                painter = painterResource(if (wifiMode) R.drawable.ic_wifi_tethering else R.drawable.ic_warning),
-                contentDescription = null,
-                tint = onContainer,
-                modifier = Modifier.size(24.dp),
-            )
+            Crossfade(targetState = wifiMode, label = "bannerIcon") { wifi ->
+                Icon(
+                    painter = painterResource(if (wifi) R.drawable.ic_wifi_tethering else R.drawable.ic_warning),
+                    contentDescription = null,
+                    tint = onContainer,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .graphicsLayer {
+                            scaleX = iconAppear.value
+                            scaleY = iconAppear.value
+                        },
+                )
+            }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -3492,14 +3620,14 @@ private fun SettingsCard(
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Bold,
         letterSpacing = 1.2.sp,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 4.dp, top = 6.dp),
+        modifier = modifier.padding(start = 4.dp, top = 6.dp),
     )
 }
 
