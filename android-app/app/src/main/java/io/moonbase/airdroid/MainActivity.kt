@@ -1588,9 +1588,9 @@ private fun LargePeerHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Surface(
             shape = CircleShape,
@@ -1905,15 +1905,15 @@ private fun EmptyItemsState(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_attach_file),
                 contentDescription = null,
                 tint = colors.primary,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(24.dp),
             )
             Text(
                 text = "Nothing selected yet",
