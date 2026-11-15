@@ -255,7 +255,6 @@ class AirDroidController(private val context: Context) {
     /** AirDrop mDNS instance -> AWDL MAC. Used to hide a peer after its service is lost. */
     private val airdropInstances = mutableMapOf<String, String>()
     private val airdropLostMacs = mutableSetOf<String>()
-    private val airdropLostAt = mutableMapOf<String, Long>()
     private val airdropFoundJobs = mutableMapOf<String, Job>()
     var scanning by mutableStateOf(false)
         private set
@@ -1335,21 +1334,15 @@ class AirDroidController(private val context: Context) {
             val addr = between(line, "addr=", " port=")
             val mac = macFromLinkLocal(addr) ?: return
             if (instance.isNotBlank()) airdropInstances[instance] = mac
-            val lostAt = airdropLostAt.entries
-                .firstOrNull { it.key.equals(mac, ignoreCase = true) }
-                ?.value
-            val lostRecently = lostAt != null &&
-                System.currentTimeMillis() - lostAt < 1_500L
-            if (lostRecently && airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
-                // A quick LOST -> FOUND -> LOST flap is not a real return.
-                // Debounce only that case; a phone returning after AirDrop was
-                // off for a while should appear immediately.
+            if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
+                // LOST and FOUND can arrive in quick succession when AirDrop is
+                // turned off. Do not flash the peer back for one frame: only
+                // restore it if FOUND survives the short debounce.
                 airdropFoundJobs.remove(mac)?.cancel()
                 airdropFoundJobs[mac] = scope.launch {
                     delay(1_200)
                     if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                         airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
-                        airdropLostAt.remove(mac)
                         peers = peers.map {
                             if (it.mac.equals(mac, ignoreCase = true)) {
                                 it.copy(airdropReady = true)
@@ -1363,7 +1356,6 @@ class AirDroidController(private val context: Context) {
                 }
             } else {
                 airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
-                airdropLostAt.remove(mac)
                 peers = peers.map {
                     if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = true) else it
                 }
@@ -1376,7 +1368,6 @@ class AirDroidController(private val context: Context) {
             if (!stillAdvertised) {
                 airdropFoundJobs.remove(mac)?.cancel()
                 airdropLostMacs.add(mac)
-                airdropLostAt[mac] = System.currentTimeMillis()
                 peers = peers.map {
                     if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = false) else it
                 }
@@ -1389,7 +1380,6 @@ class AirDroidController(private val context: Context) {
 
     private fun clearAirdropForMac(mac: String) {
         airdropFoundJobs.remove(mac)?.cancel()
-        airdropLostAt.remove(mac)
         airdropInstances.entries.removeAll { it.value.equals(mac, ignoreCase = true) }
         // Keep the LOST mark until a fresh FOUND, otherwise an AWDL-only peer can
         // reappear after AirDrop was turned off.
@@ -1400,7 +1390,6 @@ class AirDroidController(private val context: Context) {
         airdropFoundJobs.clear()
         airdropInstances.clear()
         airdropLostMacs.clear()
-        airdropLostAt.clear()
     }
 
     /** A completed transfer can leave the last LOST mark stuck if no fresh FOUND follows. */
@@ -1409,7 +1398,6 @@ class AirDroidController(private val context: Context) {
         airdropFoundJobs.values.forEach { it.cancel() }
         airdropFoundJobs.clear()
         airdropLostMacs.clear()
-        airdropLostAt.clear()
         peers = peers.map { it.copy(airdropReady = true) }
         if (selectedMac == null) selectedMac = peers.firstOrNull()?.mac
     }
