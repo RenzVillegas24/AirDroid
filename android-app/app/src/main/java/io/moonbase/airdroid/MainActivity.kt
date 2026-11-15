@@ -44,9 +44,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.material3.FloatingActionButtonMenuItem
-import androidx.compose.material3.FloatingActionButtonMenu
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.heightIn
@@ -89,6 +86,10 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ToggleFloatingActionButtonDefaults
+import androidx.compose.material3.ToggleFloatingActionButton
+import androidx.compose.material3.FloatingActionButtonMenuItem
+import androidx.compose.material3.FloatingActionButtonMenu
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
@@ -129,11 +130,15 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.window.Popup
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
@@ -863,7 +868,6 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                             selected = sheetPeer?.mac == peer.mac,
                             pinned = controller.isPinned(peer.mac),
                             onClick = { openPeer(peer) },
-                            onSend = { openPeer(peer) },
                         )
                     }
                 }
@@ -1486,12 +1490,31 @@ private fun PeerActionsSheet(
             )
             TextButton(onClick = onTogglePin) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_badge),
+                    painter = painterResource(R.drawable.ic_pin),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(if (pinned) "Pinned phone" else "Pin this phone")
+            }
+            Button(
+                onClick = onSend,
+                enabled = items.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_send),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    when (items.size) {
+                        0 -> "Send"
+                        1 -> "Send 1 file"
+                        else -> "Send ${items.size} files"
+                    },
+                )
             }
             HorizontalDivider(color = colors.outlineVariant)
             Text(
@@ -1561,17 +1584,17 @@ private fun PeerActionsSheet(
                     }
                 }
             }
-            Box(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.BottomEnd,
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Button(
-                        onClick = if (items.isEmpty()) onAddFiles else onSend,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp),
+                        onClick = onAddFiles,
+                        modifier = Modifier.height(56.dp),
                         shape = RoundedCornerShape(
                             topStart = 28.dp,
                             bottomStart = 28.dp,
@@ -1580,23 +1603,21 @@ private fun PeerActionsSheet(
                         ),
                     ) {
                         Icon(
-                            painter = painterResource(
-                                if (items.isEmpty()) R.drawable.ic_attach_file else R.drawable.ic_send,
-                            ),
+                            painter = painterResource(R.drawable.ic_attach_file),
                             contentDescription = null,
                             modifier = Modifier.size(20.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text(if (items.isEmpty()) "Files" else "Send ${items.size}")
+                        Text("Files")
                     }
-                    FilledTonalIconButton(
-                        onClick = { fabExpanded = !fabExpanded },
+                    ToggleFloatingActionButton(
+                        checked = fabExpanded,
+                        onCheckedChange = { fabExpanded = it },
                         modifier = Modifier.size(56.dp),
-                        shape = RoundedCornerShape(
-                            topEnd = 28.dp,
-                            bottomEnd = 28.dp,
-                            topStart = 8.dp,
-                            bottomStart = 8.dp,
+                        contentAlignment = Alignment.Center,
+                        containerColor = ToggleFloatingActionButtonDefaults.containerColor(
+                            initialColor = colors.secondaryContainer,
+                            finalColor = colors.secondary,
                         ),
                     ) {
                         Icon(
@@ -1606,31 +1627,38 @@ private fun PeerActionsSheet(
                         )
                     }
                 }
-                FloatingActionButtonMenu(
-                    expanded = fabExpanded,
-                    button = {},
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 64.dp),
-                    horizontalAlignment = Alignment.End,
-                ) {
-                    PeerAction.entries
-                        .filter { it != PeerAction.FILES }
-                        .forEach { action ->
-                            FloatingActionButtonMenuItem(
-                                onClick = {
-                                    fabExpanded = false
-                                    onAction(action)
-                                },
-                                text = { Text(action.label) },
-                                icon = {
-                                    Icon(
-                                        painter = painterResource(action.icon),
-                                        contentDescription = null,
+                if (fabExpanded) {
+                    Popup(
+                        alignment = Alignment.BottomEnd,
+                        offset = IntOffset(0, -80),
+                        onDismissRequest = { fabExpanded = false },
+                        properties = PopupProperties(focusable = true),
+                    ) {
+                        FloatingActionButtonMenu(
+                            expanded = true,
+                            button = {},
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.End,
+                        ) {
+                            PeerAction.entries
+                                .filter { it != PeerAction.FILES }
+                                .forEach { action ->
+                                    FloatingActionButtonMenuItem(
+                                        onClick = {
+                                            fabExpanded = false
+                                            onAction(action)
+                                        },
+                                        text = { Text(action.label) },
+                                        icon = {
+                                            Icon(
+                                                painter = painterResource(action.icon),
+                                                contentDescription = null,
+                                            )
+                                        },
                                     )
-                                },
-                            )
+                                }
                         }
+                    }
                 }
             }
         }
@@ -1806,7 +1834,6 @@ private fun PeerCard(
     selected: Boolean,
     pinned: Boolean = false,
     onClick: () -> Unit,
-    onSend: (() -> Unit)? = null,
 ) {
     val surface = MaterialTheme.colorScheme
     val avatarColor = when (peer.devclass) {
@@ -1859,17 +1886,8 @@ private fun PeerCard(
                 }
                 if (pinned) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_badge),
+                        painter = painterResource(R.drawable.ic_pin),
                         contentDescription = "Pinned",
-                        tint = surface.primary,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .size(18.dp),
-                    )
-                } else if (selected) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_check_circle),
-                        contentDescription = "Selected",
                         tint = surface.primary,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -1878,33 +1896,15 @@ private fun PeerCard(
                 }
             }
             Spacer(Modifier.height(7.dp))
-            Row(
+            Text(
+                text = peer.displayName(),
+                style = MaterialTheme.typography.titleSmall,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = peer.displayName(),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = contentColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (onSend != null) {
-                    IconButton(
-                        onClick = onSend,
-                        modifier = Modifier.size(26.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_send),
-                            contentDescription = "Send to ${peer.displayName()}",
-                            tint = if (selected) contentColor else surface.primary,
-                            modifier = Modifier.size(17.dp),
-                        )
-                    }
-                }
-            }
+            )
             Text(
                 text = peer.typeLabel(),
                 style = MaterialTheme.typography.labelSmall,
