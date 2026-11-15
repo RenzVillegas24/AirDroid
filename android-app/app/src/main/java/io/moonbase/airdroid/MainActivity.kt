@@ -182,8 +182,6 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import androidx.core.graphics.drawable.toBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.documentfile.provider.DocumentFile
 import java.io.BufferedOutputStream
 import java.io.FileOutputStream
@@ -2526,15 +2524,6 @@ private fun SearchingSignalIcon(
     wavePeriodMillis: Int = 2400,
 ) {
     val colors = MaterialTheme.colorScheme
-    val context = LocalContext.current
-    // The launcher icon of this app (adaptive icons can't go through painterResource).
-    val appIcon = remember {
-        runCatching {
-            context.packageManager.getApplicationIcon(context.packageName)
-                .toBitmap(216, 216)
-                .asImageBitmap()
-        }.getOrNull()
-    }
     val waveColor = colors.primary
     val transition = rememberInfiniteTransition(label = "searchingSignal")
 
@@ -2617,24 +2606,18 @@ private fun SearchingSignalIcon(
                 val upright = Modifier
                     .size(iconSize)
                     .graphicsLayer { rotationZ = -rotation }
-                if (appIcon != null) {
-                    Box(
-                        modifier = upright.clip(CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        // Adaptive icons carry an extra safe-zone margin; scale it away.
-                        Image(
-                            bitmap = appIcon,
-                            contentDescription = null,
-                            modifier = Modifier.requiredSize(iconSize * 1.5f),
-                        )
-                    }
-                } else {
+                    .clip(CircleShape)
+                Box(
+                    modifier = upright,
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // The launcher foreground has adaptive-icon safe-zone padding. Draw it
+                    // oversized and clip to the bubble so the artwork itself fills the icon.
                     Icon(
-                        painter = painterResource(R.drawable.ic_wifi_tethering),
+                        painter = painterResource(R.drawable.ic_launcher_foreground),
                         contentDescription = null,
                         tint = colors.onPrimaryContainer,
-                        modifier = upright,
+                        modifier = Modifier.requiredSize(iconSize * 2.2f),
                     )
                 }
             }
