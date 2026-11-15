@@ -115,6 +115,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -1446,98 +1448,92 @@ private fun PeerActionsSheet(
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = colors.surfaceContainerLow,
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .heightIn(max = 600.dp),
         ) {
-            Surface(
-                shape = CircleShape,
-                color = avatarColor,
-                modifier = Modifier.size(56.dp),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 20.dp, end = 20.dp, bottom = 96.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Box(contentAlignment = Alignment.Center) {
+                Surface(
+                    shape = CircleShape,
+                    color = avatarColor,
+                    modifier = Modifier.size(56.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(icon),
+                            contentDescription = null,
+                            tint = avatarTint,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                }
+                Text(
+                    text = peer.displayName(),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = buildString {
+                        append(peer.typeLabel())
+                        append(" · ")
+                        append(peer.rssi)
+                        append(" dBm")
+                        if (channel != null) {
+                            append(" · channel ")
+                            append(channel)
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+                TextButton(onClick = onTogglePin) {
                     Icon(
-                        painter = painterResource(icon),
+                        painter = painterResource(R.drawable.ic_pin),
                         contentDescription = null,
-                        tint = avatarTint,
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (pinned) "Pinned phone" else "Pin this phone")
+                }
+                Button(
+                    onClick = onSend,
+                    enabled = items.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_send),
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        when (items.size) {
+                            0 -> "Send"
+                            1 -> "Send 1 file"
+                            else -> "Send ${items.size} files"
+                        },
                     )
                 }
-            }
-            Text(
-                text = peer.displayName(),
-                style = MaterialTheme.typography.headlineSmall,
-                color = colors.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = buildString {
-                    append(peer.typeLabel())
-                    append(" · ")
-                    append(peer.rssi)
-                    append(" dBm")
-                    if (channel != null) {
-                        append(" · channel ")
-                        append(channel)
-                    }
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant,
-            )
-            TextButton(onClick = onTogglePin) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_pin),
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(if (pinned) "Pinned phone" else "Pin this phone")
-            }
-            Button(
-                onClick = onSend,
-                enabled = items.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_send),
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
+                HorizontalDivider(color = colors.outlineVariant)
                 Text(
-                    when (items.size) {
-                        0 -> "Send"
-                        1 -> "Send 1 file"
-                        else -> "Send ${items.size} files"
-                    },
-                )
-            }
-            HorizontalDivider(color = colors.outlineVariant)
-            Text(
-                text = if (items.isEmpty()) "NO ITEMS SELECTED" else "SELECTED (${items.size})",
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (items.isEmpty()) {
-                Text(
-                    text = "Add files with the button below.",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = if (items.isEmpty()) "NO ITEMS SELECTED" else "SELECTED (${items.size})",
+                    style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth(),
                 )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 220.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
+                if (items.isEmpty()) {
+                    EmptyItemsState()
+                } else {
                     items.forEach { item ->
                         Surface(
                             shape = MaterialTheme.shapes.medium,
@@ -1584,83 +1580,112 @@ private fun PeerActionsSheet(
                     }
                 }
             }
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.BottomEnd,
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = 16.dp)
+                    .shadow(6.dp, RoundedCornerShape(28.dp)),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Button(
-                        onClick = onAddFiles,
-                        modifier = Modifier.height(56.dp),
-                        shape = RoundedCornerShape(
-                            topStart = 28.dp,
-                            bottomStart = 28.dp,
-                            topEnd = 8.dp,
-                            bottomEnd = 8.dp,
-                        ),
-                    ) {
+                ExtendedFloatingActionButton(
+                    onClick = onAddFiles,
+                    icon = {
                         Icon(
                             painter = painterResource(R.drawable.ic_attach_file),
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp),
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Files")
-                    }
-                    ToggleFloatingActionButton(
-                        checked = fabExpanded,
-                        onCheckedChange = { fabExpanded = it },
-                        modifier = Modifier.size(56.dp),
-                        contentAlignment = Alignment.Center,
-                        containerColor = ToggleFloatingActionButtonDefaults.containerColor(
-                            initialColor = colors.secondaryContainer,
-                            finalColor = colors.secondary,
-                        ),
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_expand_more),
-                            contentDescription = "More ways to add",
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
+                    },
+                    text = { Text("Files") },
+                )
+                ToggleFloatingActionButton(
+                    checked = fabExpanded,
+                    onCheckedChange = { fabExpanded = it },
+                    modifier = Modifier.size(56.dp),
+                    contentAlignment = Alignment.Center,
+                    containerColor = ToggleFloatingActionButtonDefaults.containerColor(
+                        initialColor = colors.secondaryContainer,
+                        finalColor = colors.secondary,
+                    ),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_expand_more),
+                        contentDescription = "More ways to add",
+                        modifier = Modifier.size(24.dp),
+                    )
                 }
-                if (fabExpanded) {
-                    Popup(
-                        alignment = Alignment.BottomEnd,
-                        offset = IntOffset(0, -80),
-                        onDismissRequest = { fabExpanded = false },
-                        properties = PopupProperties(focusable = true),
+            }
+
+            if (fabExpanded) {
+                var menuExpanded by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { menuExpanded = true }
+                Popup(
+                    alignment = Alignment.BottomEnd,
+                    offset = IntOffset(0, -80),
+                    onDismissRequest = { fabExpanded = false },
+                    properties = PopupProperties(focusable = true),
+                ) {
+                    FloatingActionButtonMenu(
+                        expanded = menuExpanded,
+                        button = {},
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.End,
                     ) {
-                        FloatingActionButtonMenu(
-                            expanded = true,
-                            button = {},
-                            modifier = Modifier.padding(16.dp),
-                            horizontalAlignment = Alignment.End,
-                        ) {
-                            PeerAction.entries
-                                .filter { it != PeerAction.FILES }
-                                .forEach { action ->
-                                    FloatingActionButtonMenuItem(
-                                        onClick = {
-                                            fabExpanded = false
-                                            onAction(action)
-                                        },
-                                        text = { Text(action.label) },
-                                        icon = {
-                                            Icon(
-                                                painter = painterResource(action.icon),
-                                                contentDescription = null,
-                                            )
-                                        },
+                    PeerAction.entries
+                        .filter { it != PeerAction.FILES }
+                        .forEach { action ->
+                            FloatingActionButtonMenuItem(
+                                onClick = {
+                                    fabExpanded = false
+                                    onAction(action)
+                                },
+                                text = { Text(action.label) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(action.icon),
+                                        contentDescription = null,
                                     )
-                                }
+                                },
+                            )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun EmptyItemsState() {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = colors.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_attach_file),
+                contentDescription = null,
+                tint = colors.primary,
+                modifier = Modifier.size(28.dp),
+            )
+            Text(
+                text = "Nothing selected yet",
+                style = MaterialTheme.typography.titleSmall,
+                color = colors.onSurface,
+            )
+            Text(
+                text = "Use Files or the chevron to add photos, videos, folders, or text.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
