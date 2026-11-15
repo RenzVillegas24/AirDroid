@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -254,6 +255,8 @@ class AirDroidController(private val context: Context) {
     /** AirDrop mDNS instance -> AWDL MAC. Used to hide a peer after its service is lost. */
     private val airdropInstances = mutableMapOf<String, String>()
     private val airdropLostMacs = mutableSetOf<String>()
+    private val airdropLostAt = mutableMapOf<String, Long>()
+    private val airdropFoundJobs = mutableMapOf<String, Job>()
     var scanning by mutableStateOf(false)
         private set
     var sending by mutableStateOf(false)
@@ -1332,17 +1335,48 @@ class AirDroidController(private val context: Context) {
             val addr = between(line, "addr=", " port=")
             val mac = macFromLinkLocal(addr) ?: return
             if (instance.isNotBlank()) airdropInstances[instance] = mac
-            airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
-            peers = peers.map {
-                if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = true) else it
+            val lostAt = airdropLostAt.entries
+                .firstOrNull { it.key.equals(mac, ignoreCase = true) }
+                ?.value
+            val lostRecently = lostAt != null &&
+                System.currentTimeMillis() - lostAt < 1_500L
+            if (lostRecently && airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
+                // A quick LOST -> FOUND -> LOST flap is not a real return.
+                // Debounce only that case; a phone returning after AirDrop was
+                // off for a while should appear immediately.
+                airdropFoundJobs.remove(mac)?.cancel()
+                airdropFoundJobs[mac] = scope.launch {
+                    delay(1_200)
+                    if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
+                        airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
+                        airdropLostAt.remove(mac)
+                        peers = peers.map {
+                            if (it.mac.equals(mac, ignoreCase = true)) {
+                                it.copy(airdropReady = true)
+                            } else {
+                                it
+                            }
+                        }
+                        if (selectedMac == null) selectedMac = mac
+                    }
+                    airdropFoundJobs.remove(mac)
+                }
+            } else {
+                airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
+                airdropLostAt.remove(mac)
+                peers = peers.map {
+                    if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = true) else it
+                }
+                if (selectedMac == null) selectedMac = mac
             }
-            if (selectedMac == null) selectedMac = mac
         } else if (line.startsWith("LOST ")) {
             val instance = between(line, "instance=\"", "\"")
             val mac = airdropInstances.remove(instance) ?: return
             val stillAdvertised = airdropInstances.values.any { it.equals(mac, ignoreCase = true) }
             if (!stillAdvertised) {
+                airdropFoundJobs.remove(mac)?.cancel()
                 airdropLostMacs.add(mac)
+                airdropLostAt[mac] = System.currentTimeMillis()
                 peers = peers.map {
                     if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = false) else it
                 }
@@ -1354,14 +1388,30 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun clearAirdropForMac(mac: String) {
+        airdropFoundJobs.remove(mac)?.cancel()
+        airdropLostAt.remove(mac)
         airdropInstances.entries.removeAll { it.value.equals(mac, ignoreCase = true) }
         // Keep the LOST mark until a fresh FOUND, otherwise an AWDL-only peer can
         // reappear after AirDrop was turned off.
     }
 
     private fun clearAirdropServices() {
+        airdropFoundJobs.values.forEach { it.cancel() }
+        airdropFoundJobs.clear()
         airdropInstances.clear()
         airdropLostMacs.clear()
+        airdropLostAt.clear()
+    }
+
+    /** A completed transfer can leave the last LOST mark stuck if no fresh FOUND follows. */
+    private fun recoverAirdropReadiness() {
+        if (airdropLostMacs.isEmpty() && peers.all { it.airdropReady }) return
+        airdropFoundJobs.values.forEach { it.cancel() }
+        airdropFoundJobs.clear()
+        airdropLostMacs.clear()
+        airdropLostAt.clear()
+        peers = peers.map { it.copy(airdropReady = true) }
+        if (selectedMac == null) selectedMac = peers.firstOrNull()?.mac
     }
 
     /** Extracts the AWDL MAC from an EUI-64 link-local address. */
@@ -2104,6 +2154,7 @@ class AirDroidController(private val context: Context) {
         if (status.isTerminal) originalTransferTotals.remove(id)
         if (next == current) return current
         upsertTransfer(next, notify)
+        if (status == TransferStatus.COMPLETE) recoverAirdropReadiness()
         return next
     }
 

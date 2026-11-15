@@ -112,6 +112,7 @@ import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
@@ -1307,12 +1308,12 @@ private fun BigPercent(progress: Float, color: Color) {
     val value = (progress * 100f).toInt().coerceIn(0, 100)
     Text(
         text = buildAnnotatedString {
-            withStyle(SpanStyle(fontSize = 52.sp, fontWeight = FontWeight.Bold, color = color)) {
+            withStyle(SpanStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, color = color)) {
                 append(value.toString())
             }
             withStyle(
                 SpanStyle(
-                    fontSize = 22.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = color.copy(alpha = 0.8f),
                 ),
@@ -1321,7 +1322,7 @@ private fun BigPercent(progress: Float, color: Color) {
         style = MaterialTheme.typography.displayMedium.copy(
             fontFeatureSettings = "tnum",
             letterSpacing = (-1).sp,
-            lineHeight = 56.sp,
+            lineHeight = 36.sp,
         ),
     )
 }
@@ -1370,7 +1371,7 @@ private fun MetaChip(text: String) {
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
@@ -1393,7 +1394,7 @@ private fun StatusChip(text: String, @DrawableRes icon: Int, container: Color, c
             Spacer(Modifier.width(6.dp))
             Text(
                 text = text,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 color = content,
             )
         }
@@ -1466,7 +1467,6 @@ private fun TransferCard(
             .animateContentSize(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
-        border = if (active) BorderStroke(1.dp, accent.copy(alpha = 0.28f)) else null,
     ) {
         Column(
             modifier = Modifier
@@ -1477,16 +1477,16 @@ private fun TransferCard(
             // Header: avatar, file name, "my phone -> their phone", cancel.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = CircleShape,
                     color = avatarContainer,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(40.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             painter = painterResource(icon),
                             contentDescription = null,
                             tint = avatarTint,
-                            modifier = Modifier.size(24.dp),
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                 }
@@ -1494,8 +1494,7 @@ private fun TransferCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = transfer.fileName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleSmall,
                         color = colors.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1541,33 +1540,22 @@ private fun TransferCard(
                                     } else {
                                         "Measuring speed…"
                                     },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleSmall,
                                     color = colors.onSurface,
                                 )
                                 Text(
                                     text = etaSeconds?.let { "${formatDuration(it)} left" }
                                         ?: "Estimating time…",
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant,
                                 )
-                                if (etaSeconds != null) {
-                                    Text(
-                                        text = "Done ≈ ${formatClockSeconds(System.currentTimeMillis() + etaSeconds * 1000)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = accent,
-                                    )
-                                }
                             }
                         }
-                        LinearProgressIndicator(
+                        LinearWavyProgressIndicator(
                             progress = { progress },
                             color = accent,
                             trackColor = colors.surfaceContainerHighest,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(10.dp)
-                                .clip(CircleShape),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
                             text = buildString {
@@ -1593,13 +1581,10 @@ private fun TransferCard(
                             style = MaterialTheme.typography.titleSmall,
                             color = colors.onSurface,
                         )
-                        LinearProgressIndicator(
+                        LinearWavyProgressIndicator(
                             color = accent,
                             trackColor = colors.surfaceContainerHighest,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(10.dp)
-                                .clip(CircleShape),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
@@ -1734,16 +1719,33 @@ private fun transferStatusLine(transfer: TransferItem): String = when (transfer.
             append(formatClock(it))
         }
     }
-    TransferStatus.FAILED -> transfer.error
-        ?.takeIf { it.isNotBlank() }
-        ?.let { error ->
-            if (error.startsWith("Failed", ignoreCase = true)) error else "Failed · $error"
-        }
-        ?: "Failed"
-    TransferStatus.CANCELLED -> transfer.error
-        ?.takeIf { it.isNotBlank() && !it.equals("Cancelled", ignoreCase = true) }
-        ?.let { "Cancelled · $it" }
-        ?: "Cancelled"
+    TransferStatus.FAILED -> humanizeTransferError(transfer.error)
+    TransferStatus.CANCELLED -> humanizeTransferError(transfer.error)
+}
+
+/** Short, plain-language failure text instead of raw helper/protocol errors. */
+private fun humanizeTransferError(error: String?): String {
+    val text = error?.trim().orEmpty()
+    if (text.isBlank()) return "Transfer failed. Try again."
+    val lower = text.lowercase(Locale.getDefault())
+    return when {
+        lower.contains("cancel") -> "Cancelled"
+        lower.contains("declin") -> "Declined"
+        lower.contains("timed out") || lower.contains("timeout") ->
+            "Couldn’t connect. Try again."
+        lower.contains("connection closed") ||
+            lower.contains("connection refused") ||
+            lower.contains("connection reset") ||
+            lower.contains("connection aborted") ->
+            "Connection lost. Try again."
+        lower.contains("no airdrop receiver") ||
+            lower.contains("no peer") ||
+            lower.contains("didn't respond") ->
+            "Phone didn’t respond. Try again."
+        lower.contains("helper session") ->
+            "Connection lost. Try again."
+        else -> "Transfer failed. Try again."
+    }
 }
 
 private fun formatClock(timestamp: Long): String =
@@ -2175,7 +2177,7 @@ private fun LargePeerHeader(
                             painter = painterResource(icon),
                             contentDescription = null,
                             tint = avatarTint,
-                            modifier = Modifier.size(24.dp),
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                 }
@@ -2920,7 +2922,7 @@ private fun AirDroidSplash() {
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "Looking for devices nearby…",
+                    text = "AirDrop for Android",
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -3415,8 +3417,10 @@ private fun SendCard(
             if (controller.sending || controller.sendCancelling) {
                 val percent = controller.sendProgressPercent
                 if (percent != null && !controller.sendCancelling) {
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { percent / 100f },
+                        color = colors.primary,
+                        trackColor = colors.surfaceContainerHighest,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
