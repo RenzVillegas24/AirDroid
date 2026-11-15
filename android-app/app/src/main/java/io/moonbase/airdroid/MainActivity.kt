@@ -883,7 +883,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     }
 
     var homeTab by remember { mutableStateOf(HomeTab.SENT) }
-    val peers = controller.peers.sortedWith(
+    val peers = controller.peers.filter { it.airdropReady }.sortedWith(
         compareByDescending<Peer> { controller.isPinned(it.mac) }
             .thenByDescending { it.rssi },
     )
@@ -1011,7 +1011,9 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     sheetPeer?.let { peer ->
         // The sheet stays open when the phone drops out of range. It keeps the last known
         // details, shows a "waiting" state and picks the live data up again if the phone returns.
-        val livePeer = controller.peers.firstOrNull { it.mac == peer.mac }
+        val livePeer = controller.peers.firstOrNull {
+            it.mac == peer.mac && it.airdropReady
+        }
         PeerActionsSheet(
             peer = livePeer ?: peer,
             lost = livePeer == null,
@@ -2410,7 +2412,7 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
         if (controller.kernel.state != MonitorState.STOCK) {
             item(key = "nearby-section") {
                 NearbyPeersSection(
-                    peers = controller.peers.toList(),
+                    peers = controller.peers.filter { it.airdropReady },
                     selectedMac = controller.selectedMac,
                     isPinned = { false },
                     onPeerClick = { controller.selectPeer(it) },
@@ -2982,7 +2984,7 @@ private fun SendCard(
                 onClick = onSend,
                 enabled = picked != null && target != null &&
                     controller.kernel.monitorReady && !controller.sending &&
-                    !controller.sendCancelling && !controller.receiverRunning,
+                    !controller.sendCancelling && !controller.receiveTransferring,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(

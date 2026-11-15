@@ -1140,12 +1140,11 @@ async fn session(
                     other => println!("SESSION_ERROR unknown_command={other}"),
                 }
             }
-            // Transfer priority: mDNS browse output is non-urgent. During a
-            // transfer it is drained and dropped so the browse task doesn't
-            // block, and discovery resumes from the AWDL peer watch after.
+            // AirDrop readiness still has to reach the app during a transfer:
+            // turning AirDrop off mid-send must remove the peer instead of
+            // leaving a stale card. Peer updates remain paused separately.
             event = browse.events.recv() => match event {
                 None => break,
-                Some(_) if transfer_paused => {}
                 Some(BrowseEvent::Found(found)) => println!(
                     "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
                     found.instance, found.host, found.addr, found.port, found.flags

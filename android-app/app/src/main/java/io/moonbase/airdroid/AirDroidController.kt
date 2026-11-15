@@ -26,6 +26,7 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
+import java.net.InetAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -38,6 +39,8 @@ data class Peer(
     val name: String,
     val devclass: Int,
     val rssi: Int,
+    /** False after an AirDrop mDNS LOST; raw AWDL-only peers stay visible by default. */
+    val airdropReady: Boolean = true,
 )
 
 data class AirDroidSettings(
@@ -248,6 +251,9 @@ class AirDroidController(private val context: Context) {
         private set
     var selectedMac by mutableStateOf<String?>(null)
         private set
+    /** AirDrop mDNS instance -> AWDL MAC. Used to hide a peer after its service is lost. */
+    private val airdropInstances = mutableMapOf<String, String>()
+    private val airdropLostMacs = mutableSetOf<String>()
     var scanning by mutableStateOf(false)
         private set
     var sending by mutableStateOf(false)
@@ -320,7 +326,9 @@ class AirDroidController(private val context: Context) {
     private val ble = BleAdvertiser(context)
 
     val selectedPeer: Peer?
-        get() = selectedMac?.let { mac -> peers.firstOrNull { it.mac == mac } }
+        get() = selectedMac?.let { mac ->
+            peers.firstOrNull { it.mac.equals(mac, ignoreCase = true) && it.airdropReady }
+        }
 
     val effectiveStatus: String
         get() = when {
@@ -479,6 +487,11 @@ class AirDroidController(private val context: Context) {
                 stopSession()
                 append("Live session dropped; the next operation uses channel $channel as $cleanName.")
                 status = if (kernel.monitorReady) "READY" else kernel.state.badge
+                // Changing the channel/name also drops discovery. Start it again so a
+                // later send cannot create a session on a channel that was never scanned.
+                if (kernel.monitorReady && !sending && !sendCancelling && !modeSwitching) {
+                    scan()
+                }
             }
         }
         if (bleArm != previous.bleArm && ble.isRunning()) {
@@ -544,6 +557,7 @@ class AirDroidController(private val context: Context) {
         lockedChannel = null
         peers = emptyList()
         selectedMac = null
+        clearAirdropServices()
         append("")
         runCatching { AirDroidService.start(context) }
         if (settings.channel == AUTO_CHANNEL) {
@@ -627,6 +641,7 @@ class AirDroidController(private val context: Context) {
         lockedChannel = null
         peers = emptyList()
         selectedMac = null
+        clearAirdropServices()
         resetReceiverState()
         runCatching { AirDroidService.stop(context) }
         status = when {
@@ -716,7 +731,22 @@ class AirDroidController(private val context: Context) {
         if (!requireMonitorKernel()) return
         val target = selectedPeer
         if (target == null) {
-            sendMessage = "Select a person first."
+            sendMessage = if (selectedMac != null) {
+                "Peer is no longer nearby. Scan again."
+            } else {
+                "Select a person first."
+            }
+            status = if (kernel.monitorReady) "READY" else kernel.state.badge
+            return
+        }
+        if (peers.none { it.mac.equals(target.mac, ignoreCase = true) && it.airdropReady }) {
+            sendMessage = "Peer is no longer nearby. Scan again."
+            status = if (kernel.monitorReady) "READY" else kernel.state.badge
+            return
+        }
+        if (lockedChannel == null || lockedChannel != activeChannel) {
+            sendMessage = "Peer is not locked to this channel. Scan again."
+            status = if (kernel.monitorReady) "READY" else kernel.state.badge
             return
         }
         val cleanPath = path.replace('\n', ' ').replace('\r', ' ')
@@ -916,6 +946,7 @@ class AirDroidController(private val context: Context) {
         resetReceiverState()
         peers = emptyList()
         selectedMac = null
+        clearAirdropServices()
         sendMessage = "Send cancelled; restarting discovery."
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
         append("Send cancelled; helper did not acknowledge, restarting discovery.")
@@ -1199,6 +1230,7 @@ class AirDroidController(private val context: Context) {
                 lockedChannel = null
                 peers = emptyList()
                 selectedMac = null
+                clearAirdropServices()
                 resetReceiverState()
             }
             val rc = execRoot(
@@ -1258,25 +1290,94 @@ class AirDroidController(private val context: Context) {
             val name = between(line, "name=", " devclass=")
             val devclass = between(line, "devclass=", " rssi=").toIntOrNull() ?: 0
             val rssi = line.substringAfter("rssi=").trim().toIntOrNull() ?: 0
+            val ready = !airdropLostMacs.any { it.equals(mac, ignoreCase = true) }
             val existing = peers.toMutableList()
-            existing.removeAll { it.mac == mac }
-            existing.add(Peer(mac, name, devclass, rssi))
+            existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
+            existing.add(Peer(mac, name, devclass, rssi, airdropReady = ready))
             peers = existing
-            if (selectedMac == null) selectedMac = mac
+            if (selectedMac == null && ready) selectedMac = mac
         } else if (line.startsWith("PEER_GONE ")) {
             val mac = line.substringAfter("mac=", "").substringBefore(' ').trim()
             if (mac.isNotBlank()) {
-                peers = peers.filterNot { it.mac == mac }
-                if (selectedMac == mac) selectedMac = peers.firstOrNull()?.mac
+                peers = peers.filterNot { it.mac.equals(mac, ignoreCase = true) }
+                clearAirdropForMac(mac)
+                if (selectedMac.equals(mac, ignoreCase = true)) {
+                    selectedMac = peers.firstOrNull { it.airdropReady }?.mac
+                }
             }
         } else if (line.startsWith("AWDL name:")) {
             val rest = line.removePrefix("AWDL name:").trim()
             val mac = rest.substringBefore("=").trim()
             val name = rest.substringAfter("=").trim()
             if (mac.isNotBlank() && name.isNotBlank()) {
-                peers = peers.map { if (it.mac == mac) it.copy(name = name) else it }
+                peers = peers.map {
+                    if (it.mac.equals(mac, ignoreCase = true)) it.copy(name = name) else it
+                }
             }
         }
+    }
+
+    /**
+     * mDNS AirDrop services are the readiness signal. A peer can remain visible as a raw
+     * AWDL peer (for Continuity) after AirDrop is turned off, so PEER/PEER_GONE alone
+     * cannot drive the nearby list.
+     */
+    private fun handleAirdropServiceLine(line: String) {
+        if (line.startsWith("FOUND ")) {
+            val instance = between(line, "instance=\"", "\"")
+            val addr = between(line, "addr=", " port=")
+            val mac = macFromLinkLocal(addr) ?: return
+            if (instance.isNotBlank()) airdropInstances[instance] = mac
+            airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
+            peers = peers.map {
+                if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = true) else it
+            }
+            if (selectedMac == null) selectedMac = mac
+        } else if (line.startsWith("LOST ")) {
+            val instance = between(line, "instance=\"", "\"")
+            val mac = airdropInstances.remove(instance) ?: return
+            val stillAdvertised = airdropInstances.values.any { it.equals(mac, ignoreCase = true) }
+            if (!stillAdvertised) {
+                airdropLostMacs.add(mac)
+                peers = peers.map {
+                    if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = false) else it
+                }
+                if (selectedMac.equals(mac, ignoreCase = true)) {
+                    selectedMac = peers.firstOrNull { it.airdropReady }?.mac
+                }
+            }
+        }
+    }
+
+    private fun clearAirdropForMac(mac: String) {
+        airdropInstances.entries.removeAll { it.value.equals(mac, ignoreCase = true) }
+        // Keep the LOST mark until a fresh FOUND, otherwise an AWDL-only peer can
+        // reappear after AirDrop was turned off.
+    }
+
+    private fun clearAirdropServices() {
+        airdropInstances.clear()
+        airdropLostMacs.clear()
+    }
+
+    /** Extracts the AWDL MAC from an EUI-64 link-local address. */
+    private fun macFromLinkLocal(addr: String): String? {
+        val raw = addr.substringBefore('%').trim()
+        if (raw.isBlank()) return null
+        val bytes = runCatching { InetAddress.getByName(raw).address }.getOrNull() ?: return null
+        if (bytes.size != 16) return null
+        // EUI-64: fc:7d:cd:ff:fe:64:f3:f8 -> 48-bit MAC fe:7d:cd:64:f3:f8.
+        // Drop the ff:fe marker and flip the U/L bit in the first octet.
+        val eui = bytes.copyOfRange(8, 16)
+        val mac = byteArrayOf(
+            (eui[0].toInt() xor 0x02).toByte(),
+            eui[1],
+            eui[2],
+            eui[5],
+            eui[6],
+            eui[7],
+        )
+        return mac.joinToString(":") { "%02x".format(it.toInt() and 0xff) }
     }
 
     private fun handleReceiveLine(session: ReceiveSession, line: String) {
@@ -2252,6 +2353,8 @@ class AirDroidController(private val context: Context) {
             }
             line.startsWith("PEER ") || line.startsWith("PEER_GONE ") ||
                 line.startsWith("AWDL name:") -> handlePeerLine(line)
+            line.startsWith("FOUND ") || line.startsWith("LOST ") ->
+                handleAirdropServiceLine(line)
             line.startsWith("RECEIVE_") || line.startsWith("RECEIVED ") ->
                 handleReceiveStateLine(line)
             line.startsWith("SEND_FILE_") -> handleSendFileEvent(line)
@@ -2372,6 +2475,7 @@ class AirDroidController(private val context: Context) {
         lockedChannel = null
         peers = emptyList()
         selectedMac = null
+        clearAirdropServices()
         receiverRunning = false
         receiverStarting = false
         receiverStopping = false
@@ -2450,6 +2554,11 @@ class AirDroidController(private val context: Context) {
         val session = helperSession
         if (session == null || (expected != null && session !== expected)) return
         helperSession = null
+        // The session owns the channel and its discovery state. Never let a selected peer
+        // survive a channel/session switch and turn into a send on the wrong channel.
+        peers = emptyList()
+        selectedMac = null
+        clearAirdropServices()
         pendingRequest?.let { pending ->
             if (!pending.completion.isCompleted) pending.completion.complete(-1)
             pendingRequest = null
