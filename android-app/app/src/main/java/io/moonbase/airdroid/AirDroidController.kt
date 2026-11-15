@@ -239,7 +239,10 @@ class AirDroidController(private val context: Context) {
         prefs.getStringSet("pinnedPeers", emptySet())?.toSet() ?: emptySet(),
     )
         private set
-    private var activeChannel = if (settings.channel > 0) settings.channel else 44
+    var activeChannel by mutableStateOf(if (settings.channel > 0) settings.channel else 44)
+        private set
+    var lockedChannel by mutableStateOf<Int?>(null)
+        private set
     private var lastAutoChannel = prefs.getInt("lastAutoChannel", 44)
     var peers by mutableStateOf<List<Peer>>(emptyList())
         private set
@@ -538,6 +541,7 @@ class AirDroidController(private val context: Context) {
         }
         scanning = true
         status = "SCANNING"
+        lockedChannel = null
         peers = emptyList()
         selectedMac = null
         append("")
@@ -547,6 +551,7 @@ class AirDroidController(private val context: Context) {
             return
         }
         activeChannel = settings.channel
+        lockedChannel = activeChannel
         append("Starting live AirDrop scan on channel $activeChannel...")
         val session = sessionMutex.withLock { ensureSessionLocked() }
         if (session == null) {
@@ -603,6 +608,7 @@ class AirDroidController(private val context: Context) {
                             prefs.edit().putInt("lastAutoChannel", channel).apply()
                         }
                         status = "SCANNING"
+                        lockedChannel = channel
                         sendMessage = "${peers.size} person(s) found on channel $channel."
                         append("Auto channel locked on $channel.")
                         return
@@ -618,6 +624,9 @@ class AirDroidController(private val context: Context) {
         append("Stopping live scan...")
         stopSession()
         scanning = false
+        lockedChannel = null
+        peers = emptyList()
+        selectedMac = null
         resetReceiverState()
         runCatching { AirDroidService.stop(context) }
         status = when {
@@ -629,27 +638,50 @@ class AirDroidController(private val context: Context) {
         append("Live scan stopped.")
     }
 
-    suspend fun pickFile(uri: Uri) {
-        val picked = withContext(Dispatchers.IO) {
-            try {
-                val displayName = queryDisplayName(uri) ?: "airdrop-file"
-                val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
-                Log.i("AirDroidSend", "pickFile display=$displayName clean=$cleanName uri=$uri")
-                val out = File(context.cacheDir, "outgoing-${System.currentTimeMillis()}-$cleanName")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(out).use { output -> input.copyTo(output) }
-                } ?: return@withContext null
-                out to cleanName
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { append("Could not read file: ${e.message}") }
-                null
-            }
+    /** Copies a picker result into the outgoing cache and returns (file, name). */
+    suspend fun stageFile(uri: Uri): Pair<File, String>? = withContext(Dispatchers.IO) {
+        try {
+            val displayName = queryDisplayName(uri) ?: "airdrop-file"
+            val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+            Log.i("AirDroidSend", "stageFile display=$displayName clean=$cleanName uri=$uri")
+            val out = File(context.cacheDir, "outgoing-${System.currentTimeMillis()}-$cleanName")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(out).use { output -> input.copyTo(output) }
+            } ?: return@withContext null
+            out to cleanName
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { append("Could not read file: ${e.message}") }
+            null
         }
+    }
+
+    suspend fun stageText(text: String): Pair<File, String>? {
+        if (text.isBlank()) return null
+        return withContext(Dispatchers.IO) {
+            val file = File(context.cacheDir, "clipboard-${System.currentTimeMillis()}.txt")
+            file.writeText(text)
+            file to "Clipboard.txt"
+        }
+    }
+
+    suspend fun pickFile(uri: Uri) {
+        val picked = stageFile(uri)
         pickedFile = picked?.first
         pickedDisplayName = picked?.second
         sendMessage = when {
             picked == null -> "Could not open that file."
             else -> "Ready to send ${picked.second}."
+        }
+    }
+
+    /** Sends a staged list sequentially over the existing helper session. */
+    fun sendStaged(items: List<Pair<String, String>>) {
+        if (items.isEmpty()) return
+        scope.launch {
+            for ((path, name) in items) {
+                sendFile(path, name)
+                if (sendCancelled) break
+            }
         }
     }
 
@@ -1164,6 +1196,9 @@ class AirDroidController(private val context: Context) {
             } else {
                 stopSession()
                 scanning = false
+                lockedChannel = null
+                peers = emptyList()
+                selectedMac = null
                 resetReceiverState()
             }
             val rc = execRoot(
@@ -2334,6 +2369,9 @@ class AirDroidController(private val context: Context) {
         }
         scanning = false
         sending = false
+        lockedChannel = null
+        peers = emptyList()
+        selectedMac = null
         receiverRunning = false
         receiverStarting = false
         receiverStopping = false
@@ -2821,8 +2859,8 @@ fun Peer.displayName(): String {
 }
 
 fun Peer.typeLabel(): String = when (devclass) {
-    2 -> "iPhone · AWDL"
-    1 -> "Computer · AWDL"
+    2 -> "iPhone"
+    1 -> "Computer"
     else -> "AirDrop device"
 }
 
