@@ -149,6 +149,10 @@ case "$1" in
         reboot
         ;;
     reboot-exit)
+        # enter_live disables Wi-Fi; re-enable the framework setting before
+        # rebooting so the next boot comes back with normal Wi-Fi even though
+        # con_mode resets to 0.
+        svc wifi enable
         rm -f "$FLAG"
         sync
         log "reboot-exit"
