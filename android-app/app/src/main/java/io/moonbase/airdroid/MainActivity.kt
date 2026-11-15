@@ -2613,7 +2613,6 @@ private fun SearchingSignalIcon(
                 val upright = Modifier
                     .size(iconSize)
                     .graphicsLayer { rotationZ = -rotation }
-                    .clip(CircleShape)
                 Box(
                     modifier = upright,
                     contentAlignment = Alignment.Center,
