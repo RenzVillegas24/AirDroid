@@ -618,6 +618,7 @@ class AirDroidController(private val context: Context) {
         append("Stopping live scan...")
         stopSession()
         scanning = false
+        resetReceiverState()
         runCatching { AirDroidService.stop(context) }
         status = when {
             peers.isEmpty() -> "NO PEERS"
@@ -728,7 +729,6 @@ class AirDroidController(private val context: Context) {
         if (sendCancelled) {
             finishTransfer(transfer.id, TransferStatus.CANCELLED, error = "Cancelled")
             activeSendTransferId = null
-            stopSession()
             sending = false
             sendCancelling = false
             sendProgressBytes = 0
@@ -837,34 +837,70 @@ class AirDroidController(private val context: Context) {
         }
     }
 
-    /** Cancels an in-flight send and tears down the helper session. */
+    /** Cancels an in-flight send without tearing down discovery/receiver. */
     fun cancelSend() {
         if (!sending || sendCancelling) return
         val generation = sendGeneration
+        val id = activeSendTransferId
         sendCancelled = true
         sendCancelling = true
         sendProgressBytes = 0
         sendProgressTotal = 0
         sendMessage = "Cancelling send..."
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        activeSendTransferId?.let { id ->
-            finishTransfer(id, TransferStatus.CANCELLED, error = "Cancelled")
-        }
+        id?.let { finishTransfer(it, TransferStatus.CANCELLED, error = "Cancelled") }
         activeSendTransferId = null
         append("")
-        append("Send cancelled; stopping the helper session...")
+        append("Send cancelled; asking the helper to abort the transfer...")
         scope.launch {
             if (sendGeneration != generation) return@launch
-            stopSession()
-            if (sendGeneration != generation) return@launch
-            if (sendCancelled) {
-                sending = false
-                sendCancelling = false
-                sendProgressBytes = 0
-                sendProgressTotal = 0
-                sendMessage = "Send cancelled."
-                status = if (kernel.monitorReady) "READY" else kernel.state.badge
-                append("Send cancelled; helper session stopped.")
+            val sent = id != null && writeSessionCommand("cancel $id")
+            if (!sent) {
+                fallbackCancel(generation)
+                return@launch
+            }
+            // The helper keeps the AWDL session and receiver alive; only the
+            // send task is aborted. If it does not acknowledge, fall back to a
+            // full session restart so discovery cannot stay stuck.
+            val acknowledged = withTimeoutOrNull(3_000) {
+                while (sending && sendGeneration == generation) delay(100)
+                true
+            } ?: false
+            if (!acknowledged && sendGeneration == generation) {
+                fallbackCancel(generation)
+            }
+        }
+    }
+
+    private suspend fun fallbackCancel(generation: Int) {
+        if (sendGeneration != generation) return
+        stopSession()
+        if (sendGeneration != generation) return
+        sending = false
+        sendCancelling = false
+        sendProgressBytes = 0
+        sendProgressTotal = 0
+        scanning = false
+        resetReceiverState()
+        peers = emptyList()
+        selectedMac = null
+        sendMessage = "Send cancelled; restarting discovery."
+        status = if (kernel.monitorReady) "READY" else kernel.state.badge
+        append("Send cancelled; helper did not acknowledge, restarting discovery.")
+        scan()
+    }
+
+    /** Writes a control line to the live helper session, if any. */
+    private suspend fun writeSessionCommand(command: String): Boolean {
+        val session = sessionMutex.withLock { helperSession } ?: return false
+        return withContext(Dispatchers.IO) {
+            try {
+                session.writer.write(command)
+                session.writer.newLine()
+                session.writer.flush()
+                true
+            } catch (_: Exception) {
+                false
             }
         }
     }
@@ -1128,6 +1164,7 @@ class AirDroidController(private val context: Context) {
             } else {
                 stopSession()
                 scanning = false
+                resetReceiverState()
             }
             val rc = execRoot(
                 label = "exit Transfer mode",
@@ -2199,13 +2236,15 @@ class AirDroidController(private val context: Context) {
             }
             "SEND_ERR" -> if (pending.kind == "send") {
                 val message = if (tokens.size >= 3) tokens[2].trim() else ""
-                if (message.isNotBlank()) sendMessage = message
-                activeSendTransferId?.let { id ->
-                    finishTransfer(
-                        id,
-                        TransferStatus.FAILED,
-                        error = message.ifBlank { "Send failed" },
-                    )
+                if (!sendCancelled) {
+                    if (message.isNotBlank()) sendMessage = message
+                    activeSendTransferId?.let { id ->
+                        finishTransfer(
+                            id,
+                            TransferStatus.FAILED,
+                            error = message.ifBlank { "Send failed" },
+                        )
+                    }
                 }
                 finishPending(pending, -1)
             }
@@ -2338,6 +2377,21 @@ class AirDroidController(private val context: Context) {
             "scan" -> scanning = false
             "send" -> sending = false
         }
+    }
+
+    /** Clears receiver UI/state when the shared helper session is gone. */
+    private fun resetReceiverState() {
+        receiverRunning = false
+        receiverStarting = false
+        receiverStopping = false
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        receiveProgressBytes = 0
+        receiveProgressTotal = 0
+        receiveMessage = "Receiver stopped"
+        notifications.cancelIncomingRequest()
     }
 
     /** Fails any in-flight command and shuts the session helper down. */

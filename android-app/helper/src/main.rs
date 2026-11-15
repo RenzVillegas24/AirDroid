@@ -451,11 +451,19 @@ fn outcome_reason(outcome: &Outcome) -> String {
 
 /// Held by the send task: clears `send_active` when the task ends, including
 /// on a panic, so a send can't stay "active" forever.
-struct SendActive(Arc<AtomicBool>);
+struct SendActive {
+    active: Arc<AtomicBool>,
+    id: String,
+    current: Arc<Mutex<Option<String>>>,
+}
 
 impl Drop for SendActive {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.active.store(false, Ordering::SeqCst);
+        let mut current = self.current.lock().unwrap();
+        if current.as_deref() == Some(self.id.as_str()) {
+            *current = None;
+        }
     }
 }
 
@@ -604,6 +612,7 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
         "SEND_FILE_START source_total={source_total} id=send name={} total={source_total}",
         display_name(&path)
     );
+    let (_cancel_tx, mut cancel_rx) = watch::channel(false);
     let result = find_and_send(
         &sender,
         index,
@@ -615,6 +624,7 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
         source_total,
         target.as_deref(),
         Some("send"),
+        &mut cancel_rx,
     )
     .await;
     match &result {
@@ -643,6 +653,7 @@ async fn find_and_send(
     source_total: u64,
     target_mac: Option<&str>,
     report_id: Option<&str>,
+    cancel: &mut watch::Receiver<bool>,
 ) -> Result<Outcome, Box<dyn Error>> {
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut mdns_found: Option<Found> = None;
@@ -651,6 +662,9 @@ async fn find_and_send(
     let mut waiting_logged = false;
 
     while Instant::now() < deadline && chosen.is_none() {
+        if *cancel.borrow() {
+            return Ok(Outcome::Failed("cancelled".into()));
+        }
         loop {
             match browse.events.try_recv() {
                 Ok(BrowseEvent::Found(found)) => {
@@ -695,7 +709,17 @@ async fn find_and_send(
         }
         for (target, flags, source) in targets {
             attempt += 1;
-            match timeout(Duration::from_secs(15), sender.discover(target)).await {
+            let discover = timeout(Duration::from_secs(15), sender.discover(target));
+            let discovered = tokio::select! {
+                _ = cancel.changed() => {
+                    if *cancel.borrow() {
+                        return Ok(Outcome::Failed("cancelled".into()));
+                    }
+                    continue;
+                }
+                result = discover => result,
+            };
+            match discovered {
                 Ok(Ok(Some(found))) => {
                     println!("receiver answered on attempt {attempt} via {source}: {:?} at {target}", found.computer_name);
                     chosen = Some((target, flags, found.computer_name));
@@ -722,6 +746,11 @@ async fn find_and_send(
                         println!("AWDL peers now: {} {:?}", peers.len(), peers);
                     }
                 }
+                _ = cancel.changed() => {
+                    if *cancel.borrow() {
+                        return Ok(Outcome::Failed("cancelled".into()));
+                    }
+                }
                 _ = sleep(Duration::from_millis(500)) => {}
             }
         }
@@ -739,6 +768,9 @@ async fn find_and_send(
     // the same for its own discovery).
     let mut last_report: Option<Instant> = None;
     let outcome = loop {
+        if *cancel.borrow() {
+            break Ok(Outcome::Failed("cancelled".into()));
+        }
         tokio::select! {
             event = events_rx.recv() => match event {
                 Some(Event::Accepted) => println!("receiver accepted; uploading..."),
@@ -769,6 +801,11 @@ async fn find_and_send(
                 }
                 None => {}
             },
+            _ = cancel.changed() => {
+                if *cancel.borrow() {
+                    break Ok(Outcome::Failed("cancelled".into()));
+                }
+            }
             result = &mut send_future => break result,
         }
     };
@@ -825,6 +862,8 @@ async fn session(
     sender_config.ask_timeout = Duration::from_secs(90);
     let sender = Arc::new(Sender::new(sender_config)?);
     let send_active = Arc::new(AtomicBool::new(false));
+    let active_send: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let (send_cancel_tx, send_cancel_rx) = watch::channel(false);
     let mut known: HashMap<String, KnownPeer> = HashMap::new();
     let mut requests: HashMap<u64, Request> = HashMap::new();
     // Accepted uploads that are still running. A non-empty map means a
@@ -972,7 +1011,13 @@ async fn session(
                         }
                         // Resets `send_active` when the task ends, including on
                         // a panic, so one stuck task can't block sends for good.
-                        let send_slot = SendActive(Arc::clone(&send_active));
+                        let _ = send_cancel_tx.send(false);
+                        *active_send.lock().unwrap() = Some(id.clone());
+                        let send_slot = SendActive {
+                            active: Arc::clone(&send_active),
+                            id: id.clone(),
+                            current: Arc::clone(&active_send),
+                        };
                         // One file per send task, so this card is the whole
                         // transfer. The file size is the uncompressed size;
                         // progress totals below are the compressed upload body.
@@ -987,6 +1032,7 @@ async fn session(
                         let sender = Arc::clone(&sender);
                         let mut send_peers = peers_rx.clone();
                         let send_names = Arc::clone(&names);
+                        let mut send_cancel_rx = send_cancel_rx.clone();
                         tokio::spawn(async move {
                             let _send_slot = send_slot;
                             let mdns = Mdns::new(index);
@@ -1012,6 +1058,7 @@ async fn session(
                                 source_total,
                                 Some(&mac),
                                 Some(&id),
+                                &mut send_cancel_rx,
                             ).await;
                             match result {
                                 Ok(Outcome::Delivered) => {
@@ -1077,6 +1124,16 @@ async fn session(
                                 println!("RECEIVE_DECLINED id={id}");
                             }
                             None => println!("RECEIVE_ERROR unknown_request"),
+                        }
+                    }
+                    "cancel" => {
+                        let id = parts.next().unwrap_or("").trim().to_string();
+                        let current = active_send.lock().unwrap().clone();
+                        if current.as_deref() == Some(id.as_str()) {
+                            let _ = send_cancel_tx.send(true);
+                            println!("SEND_CANCEL {id}");
+                        } else {
+                            println!("SEND_ERR {id} not active");
                         }
                     }
                     "quit" => break,
