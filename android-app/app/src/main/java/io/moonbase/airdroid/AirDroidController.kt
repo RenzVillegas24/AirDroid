@@ -205,6 +205,7 @@ class AirDroidController(private val context: Context) {
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
+        private const val WATCHDOG_PID_PATH = "/data/local/tmp/owly-watchdog.pid"
         private const val MODE_SWITCH_TIMEOUT_MS = 60_000L
         private const val OWNER_WRITE_TIMEOUT_MS = 5_000L
         private const val WATCHDOG_TIMEOUT_MS = 10_000L
@@ -985,7 +986,9 @@ class AirDroidController(private val context: Context) {
                 status = if (updated.monitorReady) "READY" else updated.state.badge
                 append("Kernel check: ${updated.state.badge} · ${updated.detail}")
                 if (updated.state == MonitorState.MONITOR) {
-                    setMonitorOwner(AndroidProcess.myPid())
+                    if (!setMonitorOwner(AndroidProcess.myPid())) {
+                        append("WARNING: root Wi-Fi watchdog did not start; only the kernel owner is armed.")
+                    }
                 }
                 if (updated.monitorReady && !scanning && !sending && !receiverRunning) {
                     scan()
@@ -1001,6 +1004,13 @@ class AirDroidController(private val context: Context) {
         if (modeSwitching || sending) return
         scope.launch {
             modeSwitching = true
+            // A boot-enter can race the launch-time kernel check; let it settle
+            // so it cannot start a scan in the middle of the switch.
+            var waited = 0
+            while (verifyingKernel && waited < 5_000) {
+                delay(100)
+                waited += 100
+            }
             status = if (reboot) "REBOOTING" else "ENTERING TRANSFER"
             val action = if (reboot) "reboot-enter" else "enter"
             modeAction = action
@@ -1010,9 +1020,18 @@ class AirDroidController(private val context: Context) {
                 // Install the assets first, then arm both watchdogs before the
                 // switch. The script also arms the kernel owner before
                 // con_mode=4; the root watchdog covers the Wi-Fi restore if the
-                // switch is interrupted.
+                // switch is interrupted. Without the root watchdog the switch
+                // must not start: a force-stop would leave monitor mode on.
                 prepare()
-                setMonitorOwner(AndroidProcess.myPid())
+                if (!setMonitorOwner(AndroidProcess.myPid())) {
+                    setMonitorOwner(0)
+                    modeAction = null
+                    modeSwitching = false
+                    status = "WIFI MODE"
+                    sendMessage = "Transfer-mode watchdog is not armed; staying on Wi-Fi."
+                    append("Kernel owner or root watchdog did not arm; not entering Transfer mode.")
+                    return@launch
+                }
             }
             val rc = execRoot(
                 label = "enter Transfer mode",
@@ -1029,10 +1048,44 @@ class AirDroidController(private val context: Context) {
             modeSwitching = false
             if (reboot && rc == 0) return@launch
             if (rc == 0) {
-                setMonitorOwner(AndroidProcess.myPid())
-                refreshKernelStatus()
-                append("Transfer mode: ${kernel.detail}")
-                scan()
+                if (!setMonitorOwner(AndroidProcess.myPid())) {
+                    append("WARNING: root Wi-Fi watchdog did not start; only the kernel owner is armed.")
+                }
+                var conMode = readConMode()
+                if (conMode != null && conMode != 4) {
+                    // An in-flight kernel revert can drop monitor mode right
+                    // after the switch; retry once instead of claiming success.
+                    append("Monitor mode dropped to con_mode=$conMode after enter; re-entering once.")
+                    val retryRc = execRoot(
+                        label = "re-enter Transfer mode",
+                        command = "$APP_TMP/owly-mode.sh enter ${AndroidProcess.myPid()}",
+                        timeoutMs = MODE_SWITCH_TIMEOUT_MS,
+                    )
+                    if (retryRc == 0) {
+                        setMonitorOwner(AndroidProcess.myPid())
+                        conMode = readConMode()
+                    }
+                }
+                if (conMode != null && conMode != 4) {
+                    // Not monitor after the retry: restore Wi-Fi and report a
+                    // failure instead of leaving the app in Transfer mode.
+                    execRoot(
+                        label = "restore Wi-Fi after failed enter",
+                        command = "$APP_TMP/owly-mode.sh exit",
+                        timeoutMs = MODE_SWITCH_TIMEOUT_MS,
+                    )
+                    setMonitorOwner(0)
+                    refreshKernelStatus()
+                    sendMessage = "Transfer mode did not stay active. Try again."
+                    append("Monitor mode did not stay active (con_mode=$conMode); Wi-Fi restored.")
+                } else {
+                    if (conMode == null) {
+                        append("Could not re-read con_mode; trusting the mode switch.")
+                    }
+                    refreshKernelStatus()
+                    append("Transfer mode: ${kernel.detail}")
+                    scan()
+                }
             } else {
                 refreshKernelStatus()
                 when {
@@ -1075,7 +1128,6 @@ class AirDroidController(private val context: Context) {
             } else {
                 stopSession()
                 scanning = false
-                runCatching { AirDroidService.stop(context) }
             }
             val rc = execRoot(
                 label = "exit Transfer mode",
@@ -1098,6 +1150,12 @@ class AirDroidController(private val context: Context) {
                 status = "TRANSFER"
                 sendMessage = "Could not restore Wi-Fi. Reboot to Wi-Fi mode."
                 append("Exit Transfer mode failed; reboot to restore Wi-Fi.")
+            }
+            if (!reboot) {
+                // Stop the service after the switch: onDestroy restores Wi-Fi
+                // when the controller is still in monitor mode, so stopping it
+                // earlier would run a second owly-mode.sh exit.
+                runCatching { AirDroidService.stop(context) }
             }
         }
     }
@@ -2404,10 +2462,10 @@ class AirDroidController(private val context: Context) {
         append("$ $label")
         return withContext(Dispatchers.IO) {
             try {
-                val process = ProcessBuilder("su", "-c", command)
-                    .redirectErrorStream(true)
-                    .start()
                 if (timeoutMs <= 0L) {
+                    val process = ProcessBuilder("su", "-c", command)
+                        .redirectErrorStream(true)
+                        .start()
                     process.inputStream.bufferedReader().useLines { lines ->
                         for (line in lines) {
                             withContext(Dispatchers.Main) {
@@ -2420,6 +2478,12 @@ class AirDroidController(private val context: Context) {
                     withContext(Dispatchers.Main) { append("[exit $rc]") }
                     return@withContext rc
                 }
+                // Android has no ProcessHandle.descendants(), so the shell
+                // records its own PID and the tree is killed through /proc.
+                val pidFile = File(context.cacheDir, "exec-${System.nanoTime()}.pid")
+                val process = ProcessBuilder("su", "-c", "echo \$\$ > '${pidFile.absolutePath}'; $command")
+                    .redirectErrorStream(true)
+                    .start()
                 // Drain on a helper thread: a stuck su can keep the pipe open,
                 // so reading inline would defeat the timeout.
                 val output = ConcurrentLinkedQueue<String>()
@@ -2431,7 +2495,15 @@ class AirDroidController(private val context: Context) {
                     }
                 }
                 val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
-                if (!finished) process.destroyForcibly()
+                if (!finished) {
+                    // Kill the su descendants too, otherwise the shell or the
+                    // mode script keeps running after su is gone.
+                    val shellPid = runCatching { pidFile.readText().trim().toLong() }.getOrNull()
+                    if (shellPid != null) killProcessTree(shellPid)
+                    process.destroyForcibly()
+                    runCatching { process.waitFor(2, TimeUnit.SECONDS) }
+                }
+                pidFile.delete()
                 drain.join(2_000)
                 val rc = if (finished) process.waitFor() else TIMEOUT_EXIT_CODE
                 withContext(Dispatchers.Main) {
@@ -2453,6 +2525,24 @@ class AirDroidController(private val context: Context) {
                 }
                 -1
             }
+        }
+    }
+
+    /**
+     * Kills a root command's process tree. Android has no
+     * `ProcessHandle.descendants()`, so /proc/<pid>/task/<pid>/children is
+     * walked from a root shell instead.
+     */
+    private fun killProcessTree(pid: Long) {
+        val script = "kill_tree() { " +
+            "for c in \$(cat /proc/\$1/task/\$1/children 2>/dev/null); do " +
+            "kill_tree \"\$c\"; kill -9 \"\$c\" 2>/dev/null; done; }; " +
+            "kill_tree $pid"
+        runCatching {
+            val killer = ProcessBuilder("su", "-c", script)
+                .redirectErrorStream(true)
+                .start()
+            if (!killer.waitFor(5, TimeUnit.SECONDS)) killer.destroyForcibly()
         }
     }
 
@@ -2484,33 +2574,71 @@ class AirDroidController(private val context: Context) {
         return if (separator >= 0) rest.substring(separator + 1) else cacheName
     }
 
-    /** Registers this app process with the kernel monitor watchdog. */
-    private suspend fun setMonitorOwner(pid: Int) {
-        execRoot(
+    /**
+     * Registers this app process with the kernel monitor watchdog and starts the
+     * root Wi-Fi watchdog. Returns false when the owner write or the root
+     * watchdog did not take effect. A kernel without owly_owner_pid is logged
+     * and stays non-fatal.
+     */
+    private suspend fun setMonitorOwner(pid: Int): Boolean {
+        var ownerNodeAbsent = false
+        val ownerRc = execRoot(
             label = "monitor owner",
-            command = "echo $pid > $MONITOR_OWNER_PATH",
+            command = "if [ -e $MONITOR_OWNER_PATH ]; then echo $pid > $MONITOR_OWNER_PATH; " +
+                "else echo 'owner node absent (old kernel)'; fi",
             requirePrepared = false,
             timeoutMs = OWNER_WRITE_TIMEOUT_MS,
-        )
-        if (pid > 0) {
-            execRoot(
-                label = "start Wi-Fi watchdog",
-                command = "old=$(cat /data/local/tmp/owly-watchdog.pid 2>/dev/null); " +
-                    "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
-                    "setsid $APP_TMP/owly-watchdog.sh $pid >/dev/null 2>&1 < /dev/null &",
-                requirePrepared = false,
-                timeoutMs = WATCHDOG_TIMEOUT_MS,
-            )
-        } else {
+        ) { line ->
+            if (line.contains("owner node absent")) ownerNodeAbsent = true
+        }
+        if (ownerRc != 0 && !ownerNodeAbsent) {
+            append("Kernel owner write failed; the kernel watchdog is not armed.")
+            return false
+        }
+        if (pid <= 0) {
             execRoot(
                 label = "stop Wi-Fi watchdog",
-                command = "old=$(cat /data/local/tmp/owly-watchdog.pid 2>/dev/null); " +
+                command = "old=$(cat $WATCHDOG_PID_PATH 2>/dev/null); " +
                     "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
-                    "rm -f /data/local/tmp/owly-watchdog.pid; true",
+                    "rm -f $WATCHDOG_PID_PATH; true",
                 requirePrepared = false,
                 timeoutMs = WATCHDOG_TIMEOUT_MS,
             )
+            return true
         }
+        var started = false
+        execRoot(
+            label = "start Wi-Fi watchdog",
+            command = "old=$(cat $WATCHDOG_PID_PATH 2>/dev/null); " +
+                "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
+                "rm -f $WATCHDOG_PID_PATH; " +
+                "setsid $APP_TMP/owly-watchdog.sh $pid >/dev/null 2>&1 < /dev/null & " +
+                "i=0; while [ \$i -lt 20 ]; do " +
+                "p=\$(cat $WATCHDOG_PID_PATH 2>/dev/null); " +
+                "if [ -n \"\$p\" ] && kill -0 \"\$p\" 2>/dev/null; then " +
+                "echo \"watchdog_pid=\$p\"; exit 0; fi; " +
+                "sleep 0.1; i=\$((i+1)); done; " +
+                "echo watchdog_pid=none; exit 1",
+            requirePrepared = false,
+            timeoutMs = WATCHDOG_TIMEOUT_MS,
+        ) { line ->
+            if (line.startsWith("watchdog_pid=") && line != "watchdog_pid=none") started = true
+        }
+        return started
+    }
+
+    /** Reads the live con_mode value through root; null when the read failed. */
+    private suspend fun readConMode(): Int? {
+        var mode: Int? = null
+        val rc = execRoot(
+            label = "read con_mode",
+            command = "printf 'CON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; echo",
+            requirePrepared = false,
+            timeoutMs = OWNER_WRITE_TIMEOUT_MS,
+        ) { line ->
+            if (line.startsWith("CON_MODE=")) mode = line.removePrefix("CON_MODE=").trim().toIntOrNull()
+        }
+        return if (rc == 0) mode else null
     }
 
     private fun restoreWifiOnCloseBlocking() {

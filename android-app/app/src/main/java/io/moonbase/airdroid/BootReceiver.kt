@@ -3,13 +3,16 @@ package io.moonbase.airdroid
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import java.util.concurrent.TimeUnit
 
 /**
  * Applies the Transfer-mode boot flag after Android has finished booting.
  *
  * KernelSU's service.d scripts are not executed on this K20 build, so the
- * reboot-enter path uses a normal BOOT_COMPLETED receiver with root instead.
+ * reboot-enter path uses a normal BOOT_COMPLETED receiver. The receiver never
+ * writes con_mode itself: it starts the foreground service, which enters
+ * through the normal owner/watchdog-armed path.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -17,36 +20,32 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                val command = """
-                    FLAG=/data/adb/owly-transfer-mode
-                    CON_MODE=/sys/module/wlan/parameters/con_mode
-                    LOG=/data/local/tmp/owly-mode-boot.log
-                    [ -e "${'$'}FLAG" ] || exit 0
-                    echo "boot receiver started ${'$'}(date 2>/dev/null)" >> "${'$'}LOG"
-                    svc wifi disable
-                    sleep 2
-                    ip link set wlan0 down 2>/dev/null
-                    echo 4 > "${'$'}CON_MODE" 2>> "${'$'}LOG"
-                    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-                        [ "${'$'}(cat /sys/class/net/wlan0/type 2>/dev/null)" = "803" ] && break
-                        sleep 1
-                    done
-                    ip link set wlan0 up 2>/dev/null
-                    echo "boot mode=${'$'}(cat "${'$'}CON_MODE" 2>/dev/null) type=${'$'}(cat /sys/class/net/wlan0/type 2>/dev/null)" >> "${'$'}LOG"
-                """.trimIndent()
-                val process = ProcessBuilder("su", "-c", command)
-                    .redirectErrorStream(true)
-                    .start()
-                process.inputStream.bufferedReader().use { it.readText() }
-                if (!process.waitFor(30, TimeUnit.SECONDS)) {
-                    process.destroyForcibly()
+                if (transferFlagPresent()) {
+                    Log.i("AirDroidLog", "boot: Transfer-mode flag present, starting service")
+                    AirDroidService.startBootEnter(context)
                 }
-            } catch (_: Exception) {
-                // The next app launch still verifies con_mode and can fall back
-                // to the live switch.
+            } catch (e: Exception) {
+                Log.w("AirDroidLog", "boot: could not apply Transfer-mode flag: ${e.message}")
             } finally {
                 pending.finish()
             }
         }.start()
+    }
+
+    /** Reads /data/adb/owly-transfer-mode through root. */
+    private fun transferFlagPresent(): Boolean {
+        return try {
+            val process = ProcessBuilder("su", "-c", "test -e /data/adb/owly-transfer-mode")
+                .redirectErrorStream(true)
+                .start()
+            if (process.waitFor(10, TimeUnit.SECONDS)) {
+                process.exitValue() == 0
+            } else {
+                process.destroyForcibly()
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 }

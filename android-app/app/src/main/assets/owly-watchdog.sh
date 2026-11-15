@@ -10,9 +10,23 @@ log() {
     echo "$(date 2>/dev/null) $*" >> "$LOG"
 }
 
+# Field 22 of /proc/<pid>/stat (starttime) catches PID reuse while polling.
+start_time() {
+    [ -r "/proc/$1/stat" ] || return 1
+    sed 's/^.*) //' "/proc/$1/stat" 2>/dev/null | cut -d' ' -f20
+}
+
 [ -n "$APP_PID" ] || exit 2
 echo $$ > "$PID_FILE"
+APP_START=$(start_time "$APP_PID")
 while kill -0 "$APP_PID" 2>/dev/null; do
+    if [ -n "$APP_START" ]; then
+        now=$(start_time "$APP_PID")
+        if [ "$now" != "$APP_START" ]; then
+            log "app $APP_PID pid reused (starttime ${APP_START} -> ${now:-gone})"
+            break
+        fi
+    fi
     sleep 1
 done
 log "app $APP_PID exited"
