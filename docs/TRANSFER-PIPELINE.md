@@ -10,8 +10,9 @@ This branch replaces the send/receive retry patches with one transport flow.
 - The app sends intents; the helper owns the transfer state machine.
 - Every terminal transfer event means the peer connection is closed.
 - Only one outgoing send is active at a time.
-- Auto scan uses 5 GHz (149/44). Channel 6 remains a manual fallback because
-  the fixed-channel monitor path collapses on 2.4 GHz.
+- Auto is the default. Selecting a fixed channel shows a user-facing warning.
+- Auto scan prefers 149 then 44; channel 6 is the last fallback for
+  2.4 GHz-only networks.
 
 ## Send states
 
@@ -60,9 +61,9 @@ OFFERED
 
 ## Channel policy
 
-- Auto scan order is 149 then 44.
+- Auto scan order is 149 then 44, with 6 as the last fallback.
 - A named/ready peer locks the channel; blank transient peers are ignored.
-- Channel 6 is never selected by auto scan.
+- Channel 6 is selected only when no usable 5 GHz peer is found.
 - The helper uses the iPhone's HT rate (MCS 7, short GI) and A-MSDU where the
   peer advertises support.
 
@@ -72,7 +73,7 @@ OFFERED
 2. Cancel a send at ~512 KB and confirm the iPhone stops immediately.
 3. Cancel a receive at ~5 MB and confirm the iPhone stops immediately.
 4. Receive a file to completion.
-5. Auto scan from channel 0: must lock 149 or 44, never 6.
+5. Auto scan: lock 149/44 when available; lock 6 only when no 5 GHz peer is found.
 6. Settings toggles changed during Transfer mode.
 7. AirDrop off/on and peer card recovery.
 8. No-ACK A/B remains an investigation-only experiment; production uses the

@@ -45,7 +45,7 @@ data class Peer(
 )
 
 data class AirDroidSettings(
-    val channel: Int = 44,
+    val channel: Int = 0,
     // V2 is the best wake arm for the K20/iPhone pair.
     val bleArm: Int = 1,
     val deviceName: String = "AirDroid K20",
@@ -206,9 +206,9 @@ class AirDroidController(private val context: Context) {
         const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
         private const val AUTO_CHANNEL_DWELL_MS = 6_000L
-        // Channel 6 is a manual fallback only: Owly's fixed-channel monitor
-        // path collapses on 2.4 GHz. Auto scan stays on 5 GHz.
-        private val AUTO_CHANNELS = intArrayOf(149, 44)
+        // Prefer 5 GHz, but keep 6 as a last fallback for 2.4 GHz-only
+        // networks. Blank/transient peers are ignored before locking.
+        private val AUTO_CHANNELS = intArrayOf(149, 44, 6)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
@@ -259,6 +259,7 @@ class AirDroidController(private val context: Context) {
     /** AirDrop mDNS instance -> AWDL MAC. Used to hide a peer after its service is lost. */
     private val airdropInstances = mutableMapOf<String, String>()
     private val airdropSeenMacs = mutableSetOf<String>()
+    private val airdropLastFoundAt = mutableMapOf<String, Long>()
     private val airdropLostMacs = mutableSetOf<String>()
     private val airdropFoundJobs = mutableMapOf<String, Job>()
     var scanning by mutableStateOf(false)
@@ -484,8 +485,9 @@ class AirDroidController(private val context: Context) {
     ) {
         val previous = settings
         val cleanName = deviceName.trim().ifBlank { "AirDroid K20" }
+        val effectiveChannel = channel
         settings = AirDroidSettings(
-            channel,
+            effectiveChannel,
             bleArm,
             cleanName,
             themeMode,
@@ -496,11 +498,11 @@ class AirDroidController(private val context: Context) {
         // Auto means "whatever channel the live scan locked". Saving an
         // unrelated toggle must not move activeChannel away from the helper's
         // actual channel, or the next send fails the locked-channel check.
-        if (channel != previous.channel) {
-            activeChannel = if (channel > 0) channel else 44
+        if (effectiveChannel != previous.channel) {
+            activeChannel = if (effectiveChannel > 0) effectiveChannel else 44
         }
         prefs.edit()
-            .putInt("channel", channel)
+            .putInt("channel", effectiveChannel)
             .putInt("bleArm", bleArm)
             .putString("deviceName", cleanName)
             .putString("themeMode", themeMode.name)
@@ -508,7 +510,7 @@ class AirDroidController(private val context: Context) {
             .putBoolean("pauseDiscoveryDuringTransfer", pauseDiscoveryDuringTransfer)
             .putBoolean("visibleDuringTransfer", visibleDuringTransfer)
             .apply()
-        val channelLabel = if (channel == AUTO_CHANNEL) "Auto" else channel.toString()
+        val channelLabel = if (effectiveChannel == AUTO_CHANNEL) "Auto" else effectiveChannel.toString()
         sendMessage = "Settings saved · channel $channelLabel"
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
         append(
@@ -526,12 +528,12 @@ class AirDroidController(private val context: Context) {
         // Channel and identity are fixed when the session helper starts awdl0.
         // Drop the live session so the next scan/send recreates it with the new
         // values; a BLE-arm change only needs the advertisement restarted.
-        val identityChanged = channel != previous.channel || cleanName != previous.deviceName
+        val identityChanged = effectiveChannel != previous.channel || cleanName != previous.deviceName
         if (identityChanged) {
             scanning = false
             scope.launch {
                 stopSession()
-                append("Live session dropped; the next operation uses channel $channel as $cleanName.")
+                append("Live session dropped; the next operation uses channel $effectiveChannel as $cleanName.")
                 status = if (kernel.monitorReady) "READY" else kernel.state.badge
                 // Changing the channel/name also drops discovery. Start it again so a
                 // later send cannot create a session on a channel that was never scanned.
@@ -546,7 +548,7 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun loadSettings(): AirDroidSettings = AirDroidSettings(
-        channel = prefs.getInt("channel", 44),
+        channel = prefs.getInt("channel", AUTO_CHANNEL),
         bleArm = prefs.getInt("bleArm", 1),
         deviceName = prefs.getString("deviceName", "AirDroid K20") ?: "AirDroid K20",
         themeMode = prefs.getString("themeMode", ThemeMode.SYSTEM.name)
@@ -1343,10 +1345,17 @@ class AirDroidController(private val context: Context) {
             val rssi = line.substringAfter("rssi=").trim().toIntOrNull() ?: 0
             // A named AWDL peer is enough to send via /Discover; mDNS is the
             // readiness signal when it arrives, but the iPhone's mDNS is not
-            // reliable enough to make every send depend on it.
-            val ready = !airdropLostMacs.any { it.equals(mac, ignoreCase = true) } &&
-                (name.isNotBlank() ||
-                    airdropSeenMacs.any { it.equals(mac, ignoreCase = true) })
+            // reliable enough to make every send depend on it. Once a service
+            // has been seen, keep it ready through short LOST flaps.
+            val lost = airdropLostMacs.any { it.equals(mac, ignoreCase = true) }
+            val ready = if (lost) {
+                // mDNS can flap briefly on 2.4 GHz; keep a recently seen
+                // service alive through the flap.
+                recentlyFound(mac)
+            } else {
+                name.isNotBlank() ||
+                    airdropSeenMacs.any { it.equals(mac, ignoreCase = true) }
+            }
             val existing = peers.toMutableList()
             existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
             existing.add(Peer(mac, name, devclass, rssi, airdropReady = ready))
@@ -1384,6 +1393,7 @@ class AirDroidController(private val context: Context) {
             val addr = between(line, "addr=", " port=")
             val mac = macFromLinkLocal(addr) ?: return
             airdropSeenMacs.add(mac)
+            airdropLastFoundAt[mac.lowercase()] = System.currentTimeMillis()
             if (instance.isNotBlank()) airdropInstances[instance] = mac
             if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                 // LOST and FOUND can arrive in quick succession when AirDrop is
@@ -1419,8 +1429,14 @@ class AirDroidController(private val context: Context) {
             if (!stillAdvertised) {
                 airdropFoundJobs.remove(mac)?.cancel()
                 airdropLostMacs.add(mac)
-                peers = peers.map {
-                    if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = false) else it
+                if (!recentlyFound(mac)) {
+                    peers = peers.map {
+                        if (it.mac.equals(mac, ignoreCase = true)) {
+                            it.copy(airdropReady = false)
+                        } else {
+                            it
+                        }
+                    }
                 }
                 if (selectedMac.equals(mac, ignoreCase = true)) {
                     selectedMac = peers.firstOrNull { it.airdropReady }?.mac
@@ -1429,10 +1445,19 @@ class AirDroidController(private val context: Context) {
         }
     }
 
+    /** mDNS on the fixed 2.4 GHz channel flaps FOUND/LOST every few seconds. */
+    private fun recentlyFound(mac: String): Boolean {
+        val now = System.currentTimeMillis()
+        return airdropLastFoundAt.entries.any {
+            it.key.equals(mac, ignoreCase = true) && now - it.value < 10_000
+        }
+    }
+
     private fun clearAirdropForMac(mac: String) {
         airdropFoundJobs.remove(mac)?.cancel()
         airdropInstances.entries.removeAll { it.value.equals(mac, ignoreCase = true) }
         airdropSeenMacs.removeAll { it.equals(mac, ignoreCase = true) }
+        airdropLastFoundAt.remove(mac.lowercase())
         // Keep the LOST mark until a fresh FOUND, otherwise an AWDL-only peer can
         // reappear after AirDrop was turned off.
     }
@@ -1442,6 +1467,7 @@ class AirDroidController(private val context: Context) {
         airdropFoundJobs.clear()
         airdropInstances.clear()
         airdropSeenMacs.clear()
+        airdropLastFoundAt.clear()
         airdropLostMacs.clear()
     }
 

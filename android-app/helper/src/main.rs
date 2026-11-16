@@ -520,6 +520,15 @@ fn tx_no_ack() -> bool {
     }
 }
 
+fn set_radio_channel(channel: u8) {
+    if !std::path::Path::new(SET_CHANNEL).exists() {
+        return;
+    }
+    if let Some(freq) = channel_freq(channel) {
+        let _ = Command::new(SET_CHANNEL).args([MONITOR, freq]).status();
+    }
+}
+
 async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiver<Vec<PeerInfo>>), Box<dyn Error>> {
     if !std::path::Path::new("/dev/net/tun").exists()
         && !std::path::Path::new("/dev/tun").exists()
@@ -530,11 +539,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     let _ = Command::new("ip").args(["link", "set", MONITOR, "up"]).status();
     let addr = read_hidden_mac().await?;
     println!("INJECT_MAC {addr:?}");
-    if std::path::Path::new(SET_CHANNEL).exists() {
-        if let Some(freq) = channel_freq(channel) {
-            let _ = Command::new(SET_CHANNEL).args([MONITOR, freq]).status();
-        }
-    }
+    set_radio_channel(channel);
 
     let radio = RadioConstraints { channel: Channel(channel), presence: Presence::Fixed };
     let mut cfg = Config::new(addr, "airdroid-k20", radio);

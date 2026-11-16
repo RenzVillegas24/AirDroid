@@ -3527,6 +3527,7 @@ private fun SettingsScreen(controller: AirDroidController) {
     var tintMode by remember { mutableStateOf(controller.settings.tintMode) }
     var pauseDiscovery by remember { mutableStateOf(controller.settings.pauseDiscoveryDuringTransfer) }
     var visibleDuringTransfer by remember { mutableStateOf(controller.settings.visibleDuringTransfer) }
+    var pendingChannel by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(deviceName) {
         if (deviceName != controller.settings.deviceName) {
@@ -3842,10 +3843,24 @@ private fun SettingsScreen(controller: AirDroidController) {
                             }
                         },
                         onSelected = {
-                            channel = it
-                            controller.saveSettings(it, bleArm, deviceName, themeMode, tintMode)
+                            if (it == 0) {
+                                channel = 0
+                                controller.saveSettings(0, bleArm, deviceName, themeMode, tintMode)
+                            } else {
+                                pendingChannel = it
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = when (channel) {
+                            0 -> "Auto uses 5 GHz when available and falls back to 2.4 GHz when needed."
+                            6 -> "Using channel 6 · 2.4 GHz. Auto is recommended."
+                            else -> "Using channel $channel · 5 GHz. Auto is recommended."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
                     )
                 }
                 SettingsCard(grouped = true) {
@@ -3987,6 +4002,57 @@ private fun SettingsScreen(controller: AirDroidController) {
                 )
             }
         }
+    }
+
+    pendingChannel?.let { target ->
+        val is24 = target == 6
+        AlertDialog(
+            onDismissRequest = { pendingChannel = null },
+            title = {
+                Text(if (is24) "Use 2.4 GHz Wi-Fi?" else "Use a fixed 5 GHz channel?")
+            },
+            text = {
+                Text(
+                    if (is24) {
+                        "Channel 6 uses the older 2.4 GHz Wi-Fi band. It has longer range " +
+                            "but is slower, and transfers may stall if the iPhone is using " +
+                            "5 GHz. Use Auto unless your Wi-Fi only supports 2.4 GHz."
+                    } else {
+                        "Auto is recommended because it chooses the best channel for the " +
+                            "iPhone. A fixed 5 GHz channel may be less reliable if the " +
+                            "iPhone changes channels."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        channel = target
+                        controller.saveSettings(
+                            target,
+                            bleArm,
+                            deviceName,
+                            themeMode,
+                            tintMode,
+                        )
+                        pendingChannel = null
+                    },
+                ) {
+                    Text(if (is24) "Use 2.4 GHz" else "Use channel $target")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        channel = 0
+                        controller.saveSettings(0, bleArm, deviceName, themeMode, tintMode)
+                        pendingChannel = null
+                    },
+                ) {
+                    Text("Use Auto")
+                }
+            },
+        )
     }
 }
 
