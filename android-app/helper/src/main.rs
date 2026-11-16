@@ -353,10 +353,11 @@ fn print_peers(peers: &[PeerInfo], names: &HashMap<String, String>) {
         let mac = peer.mac.to_string();
         let name = names.get(&mac).cloned().unwrap_or_else(|| peer.name.clone());
         println!(
-            "PEER mac={mac} name={} devclass={} rssi={}",
+            "PEER mac={mac} name={} devclass={} rssi={} channel={}",
             name,
             peer.devclass,
-            peer.rssi.unwrap_or(0)
+            peer.rssi.unwrap_or(0),
+            peer.dominant_channel
         );
     }
 }
@@ -391,9 +392,10 @@ fn emit_peer_updates(
         });
         if changed {
             println!(
-                "PEER mac={mac} name={name} devclass={} rssi={}",
+                "PEER mac={mac} name={name} devclass={} rssi={} channel={}",
                 peer.devclass,
-                peer.rssi.unwrap_or(0)
+                peer.rssi.unwrap_or(0),
+                peer.dominant_channel
             );
         }
         current.insert(
