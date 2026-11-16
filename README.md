@@ -100,6 +100,8 @@ normal mode.
 
 - The internal QCA6750 path is blocked by signed WPSS firmware and monitor-TX
   behavior.
+- The K20 kernel changes are not directly portable; see
+  [docs/chenfeng/K20-APPLICABILITY.md](docs/chenfeng/K20-APPLICABILITY.md).
 - The K20 Pro remains the working production target.
 
 ### Android app
