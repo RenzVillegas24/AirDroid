@@ -542,7 +542,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     cfg.max_frame = 2304;
     // The iPhone advertises HT rates and A-MSDU support. The legacy 12 Mbit/s
     // BASIC rate plus one frame per TCP segment is what produced the 512 KiB
-    // then stall pattern; let the AWDL layer pick MCS 7 and aggregate where
+    // then stall pattern; use the one-stream MCS 7 rate and aggregate where
     // the peer accepts it.
     cfg.rate = TxRate::Ht { mcs: 7, sgi: true };
     cfg.amsdu = true;
