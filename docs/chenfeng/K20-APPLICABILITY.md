@@ -104,6 +104,114 @@ Civi kernel monitor RX (works)
 
 The K20 Pro remains the production target.
 
+## Internet research
+
+The public qcacld-3.0 work points to two different injection strategies.
+
+### Direct monitor-vdev TX
+
+The older approach adds `ndo_start_xmit` to the monitor netdev and passes raw
+radiotap frames into the driver. It works on some older qcacld-2.0/3.0 devices,
+but on newer FullMAC firmware the monitor vdev often does not radiate TX at
+all. The host sees a successful transmit, while nothing appears on air.
+
+Relevant references:
+
+- [kimocoder/qualcomm_android_monitor_mode](https://github.com/kimocoder/qualcomm_android_monitor_mode)
+- [QCACLD-2.0 injection commit](https://gitlab.com/Codeaurora/platform_vendor_qcom-opensource_wlan_qcacld-2.0/-/commit/3d3ad7877d1b4d097b4302a4293a1cbb2478e7bf)
+
+### Hidden STA / self-peer bypass
+
+The newer approach creates an invisible Station vdev and a self-peer inside
+the firmware, then rewrites the monitor frame's vdev id to the hidden STA id
+before handing it to WMI. The firmware's management-TX check then sees an
+authorized vdev instead of the isolated monitor vdev.
+
+References:
+
+- [Achieving Frame Injection on QCACLD-3.0](https://medium.com/h7w/they-said-packet-injection-on-qcacld-3-0-was-impossible-i-proved-them-wrong-588fa55ee702)
+- [Loukious packet-injection patchset](https://github.com/Loukious/android_kernel_xiaomi_sm8150/commit/65c6a05ecd9b25ebf0742d39987c6a8a042227f1)
+- [Loukious 6.6 GKI WLAN branch](https://github.com/Loukious/konoha-kernel-gki/commits/nethunter-ksunext-upstream/)
+
+The Civi workspace already contains a hidden-STA prototype:
+
+```text
+source/monitor-tx/hidden_tx.c
+source/monitor-tx/monitor_tx.c
+source/patches/chenfeng-monitor-tx.patch
+```
+
+This is the right direction for a QCA6750 FullMAC device. The remaining
+question is whether this firmware accepts the hidden STA/WMI path.
+
+### Firmware limitation
+
+The Civi WPSS firmware is signed. A modified WPSS image cannot be flashed
+without breaking the signature chain. Any solution must stay on the host
+driver side and work with the stock firmware.
+
+A similar WCN7851/FullMAC result is documented in
+[spiral009/aviumui-wlan-tools](https://github.com/spiral009/aviumui-wlan-tools):
+monitor capture works, the kernel TX path works, but the firmware does not
+radiate monitor-vdev TX. The hidden STA bypass is the next test.
+
+## ADB inspection
+
+The connected Civi 4 Pro reports:
+
+```text
+model:          24069RA21C
+device:         chenfeng
+kernel:         6.1.138-android14-11
+driver:         qca_cld3_qca6750
+module:         /vendor/lib/modules/qca_cld3_qca6750.ko
+con_mode:       0
+```
+
+The module parameter is:
+
+```text
+/sys/module/qca_cld3_qca6750/parameters/con_mode
+```
+
+The running module reports:
+
+```text
+vermagic: 6.1.68-android14-11-maybe-dirty
+```
+
+while the running kernel is `6.1.138`. That mismatch is important for any
+replacement module build. The replacement must match the running kernel's
+vermagic/ABI, not just the source branch version.
+
+`/vendor` and `/vendor_dlkm` are read-only, so a replacement module needs a
+KernelSU overlay or a flashed vendor_dlkm image, followed by a reboot.
+
+## Implementation sequence
+
+1. Obtain the Civi kernel and WLAN source matching the running build.
+   - Kernel: [MiCode/Xiaomi_Kernel_OpenSource](https://github.com/MiCode/Xiaomi_Kernel_OpenSource), branch `chenfeng-u-oss`
+   - WLAN: [MiCode/vendor_qcom_opensource_wlan](https://github.com/MiCode/vendor_qcom_opensource_wlan), branch `chenfeng-u-oss`
+2. Build `qca_cld3_qca6750.ko` against the exact running kernel/ABI and confirm
+   `vermagic` matches.
+3. Start from the hidden-STA prototype and integrate:
+   - hidden STA vdev create/start
+   - self-peer create
+   - monitor TX vdev-id swap
+   - raw frame/radiotap handling
+   - firmware TX completion handling
+4. Deploy through a KernelSU module overlay, keeping the stock module and boot
+   image as rollback.
+5. Test monitor RX and a raw management-frame TX with a second receiver before
+   involving Owly.
+6. If raw TX appears on air, verify AWDL PSF/MIF and then AirDrop.
+7. Only then adapt the helper constants:
+   - monitor interface
+   - hidden STA name
+   - channel setter
+   - root paths
+   - receive directory
+
 ## Branch contents
 
 This branch contains documentation only. Civi build artifacts and raw
