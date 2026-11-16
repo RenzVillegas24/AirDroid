@@ -274,6 +274,46 @@ test in stages:
 The test module and build tree remain in the ignored local workspace. No
 device changes were persisted.
 
+## In-tree hidden-STA implementation
+
+The raw-offset kprobe prototype is retired. A new in-tree path was added to
+the Civi qcacld source:
+
+- `wlan_hdd_owly_hidden.c` creates a firmware-only STA vdev on the monitor
+  channel using `vdev_create_params`, `vdev_start_params`,
+  `peer_create_params`, and `vdev_up_params`.
+- The monitor netdev now has `.ndo_start_xmit`; it strips the radiotap header
+  and sends the frame through `wmi_mgmt_unified_cmd_send()` on the hidden
+  vdev.
+- The hidden vdev is created after the monitor channel is set and destroyed
+  when monitor mode is disabled.
+- The hidden MAC is derived from the monitor interface MAC with the local bit
+  set; no peer MAC is hardcoded.
+
+The full `qca_cld3_qca6750.ko` was built against the ACK 6.1.138 tree and the
+device config with the exact vermagic. Build compatibility needed vendor
+`cnss`/`hwid` headers and `-D__ANDROID_COMMON_KERNEL__`; the stripped module
+is about 16 MB.
+
+A direct `rmmod`/`insmod` swap of the built module was tested. The module
+loaded, but the driver probe emitted a `wiphy_new_nm` warning and failed to
+load `WCNSS_qcom_cfg.ini` (`-13`), so Wi-Fi did not start. The stock module was
+restored immediately and Wi-Fi is connected again. Direct swapping is not a
+valid test path for this driver; the next test must use the KernelSU
+boot-time overlay so `firmware_mnt` and the vendor module context are
+available.
+
+Remaining work:
+
+1. verify the patched module initializes at boot
+2. verify monitor RX
+3. verify hidden STA creation without TX
+4. send one raw management frame
+5. test AWDL PSF/MIF and AirDrop
+
+The test module and build tree remain in the ignored local workspace. No
+device changes were persisted.
+
 ## Branch contents
 
 This branch contains documentation only. Civi build artifacts and raw
