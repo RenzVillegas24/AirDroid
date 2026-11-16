@@ -153,6 +153,94 @@ See [docs/SETUP.md](docs/SETUP.md) for device setup,
 and [docs/TRANSFER-PIPELINE.md](docs/TRANSFER-PIPELINE.md) for the transfer
 state machine and test matrix.
 
+## Using on a phone
+
+### 1. Flash the AirDroid kernel
+
+The app needs the monitor-mode/injection kernel. A normal K20 kernel will
+install the APK but cannot start the AirDrop radio.
+
+Build or obtain the AirDroid kernel first, then flash its boot image. Keep a
+backup of the stock boot image.
+
+```bash
+adb reboot bootloader
+fastboot flash boot boot.img
+fastboot reboot
+```
+
+The bootloader must be unlocked. If you are not rebuilding the kernel, use a
+boot image built from the AirDroid kernel branch.
+
+### 2. Install the app
+
+```bash
+adb install -r android-app/app/build/outputs/apk/release/app-release.apk
+adb shell am start -n io.moonbase.airdroid/.MainActivity
+```
+
+Open the app and grant root when KernelSU asks. The app needs root to switch
+the radio between normal Wi-Fi and Transfer mode.
+
+### 3. Enter Transfer mode
+
+In the app:
+
+```text
+Settings → Radio mode → Enter Transfer mode
+```
+
+This disables normal Wi-Fi, switches the kernel to `con_mode=4`, and starts
+the monitor plus hidden injection STA. The app shows the active channel and
+nearby peers.
+
+On the iPhone:
+
+```text
+Control Center → AirDrop → Everyone for 10 Minutes
+```
+
+### 4. Send from Android
+
+1. Wait for the iPhone to appear under **Nearby AirDrop**.
+2. Tap the phone.
+3. Choose a file or paste text.
+4. Press **Send**.
+5. Accept the transfer on the iPhone.
+
+Use **Auto** channel selection unless you are troubleshooting. Auto prefers
+5 GHz and falls back to 2.4 GHz when needed.
+
+### 5. Receive from iPhone
+
+1. Keep the app in Transfer mode.
+2. On the iPhone, choose **AirDrop → AirDroid K20**.
+3. Accept the offer on the Android phone.
+4. Received files are saved under `/sdcard/Download/AirDroid`.
+
+The transfer card has a **Stop** action for an active receive. It aborts only
+that transfer; the receiver stays available.
+
+### 6. Leave Transfer mode
+
+```text
+Settings → Radio mode → Exit Transfer mode
+```
+
+Normal Wi-Fi returns. If the app is force-stopped while in Transfer mode, the
+root watchdog restores Wi-Fi; reboot if the radio is still in monitor mode.
+
+### 7. Useful checks
+
+```bash
+scripts/airdroid-adb.sh status
+scripts/airdroid-adb.sh log
+scripts/airdroid-adb.sh follow
+```
+
+See [docs/raphael/ADB-DEBUG.md](docs/raphael/ADB-DEBUG.md) for the full ADB
+command set.
+
 ## Kernel
 
 - Upstream base:
@@ -169,6 +257,77 @@ git submodule update --init kernel
 The monitor/injection boot-image workflow is kept on the investigation
 branches. The app only switches the already-flashed kernel between normal
 Wi-Fi and Transfer mode.
+
+### Kernel build (manual)
+
+Kernel building is **not automated** by `scripts/build-app.sh`. The pinned
+submodule is the exact source, but the K20 boot image must be built and packed
+manually.
+
+Prerequisites:
+
+- aarch64 kernel toolchain compatible with the 4.14 tree
+- the K20 `raphael` defconfig from the AirDroid kernel fork
+- Android SDK build-tools (`unpack_bootimg`, `mkbootimg`) or an equivalent
+  boot-image packer
+- an unlocked bootloader and a stock boot-image backup
+
+Build the kernel:
+
+```bash
+git submodule update --init kernel
+cd kernel
+
+export ARCH=arm64
+export SUBARCH=arm64
+export CROSS_COMPILE=aarch64-linux-gnu-
+
+# Use the exact raphael/K20 defconfig shipped in the fork.
+ls arch/arm64/configs | grep -i raphael
+make O=out ARCH=arm64 <raphael_defconfig>
+make O=out ARCH=arm64 -j"$(nproc)"
+
+ls -lh out/arch/arm64/boot/Image.gz
+```
+
+Replace `<raphael_defconfig>` with the K20 config name found by the `ls`
+command. Do not mix GCC and Clang toolchains in one build.
+
+Pack the boot image:
+
+```bash
+# Recommended: use the investigation branch's pack-base-mission.sh with the
+# stock boot image and the freshly built Image.gz.
+#
+# Manual alternative:
+unpack_bootimg --boot_img stock-boot.img --out boot-unpacked
+# replace boot-unpacked/kernel with out/arch/arm64/boot/Image.gz
+# repack with mkbootimg using the stock image's original offsets, ramdisk,
+# DTB/DTBO and cmdline.
+```
+
+The exact pack/flash scripts and historical configs are kept on the
+investigation branches:
+
+```text
+investigation/exclusive
+investigation/shared
+experiments/investigation-tools
+```
+
+They are intentionally not part of the production build.
+
+Flash only after checking the boot-image header, ramdisk and DTB/DTBO against
+the stock image:
+
+```bash
+fastboot flash boot boot.img
+fastboot reboot
+```
+
+A KernelSU or Magisk module can package the app and userspace helper, but it
+cannot supply the monitor-mode kernel patches. Those must be in the boot
+image.
 
 ## Credits
 

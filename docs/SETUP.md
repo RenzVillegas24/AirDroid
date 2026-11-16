@@ -63,7 +63,7 @@ The AirDroid kernel fork is pinned in `kernel/`:
 
 ```text
 RenzVillegas24/kernel_xiaomi_raphael
-branch: owly-k20
+branch: AirDroid/main
 ```
 
 ### Kernel build status
