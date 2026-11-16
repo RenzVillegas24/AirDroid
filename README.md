@@ -19,6 +19,34 @@ built as a Jetpack Compose Android app with a Rust radio/AirDrop helper.
 The K20's internal WCN3990 radio is the target. External USB Wi-Fi is out of
 scope.
 
+## How it works
+
+AirDroid is split into four layers:
+
+```text
+Compose app
+  └─ foreground service + controller
+       └─ owly-k20-helper (Rust)
+            └─ Owly AWDL/AirDrop stack
+                 └─ K20 kernel monitor/injection support
+```
+
+- The **app** owns the UI, transfer cards, settings, notifications and the
+  root commands that switch radio modes.
+- The **helper** owns the live session: radio, receiver, mDNS, peer cache,
+  channel and transfer state.
+- **Owly** implements the AWDL frames and AirDrop protocol.
+- The **kernel** provides the monitor interface and the hidden injection STA.
+
+When Transfer mode starts, normal Wi-Fi is disabled and `wlan0` becomes a
+monitor interface. The kernel also creates `wlan_inj*`, which is used only as
+the WMI TX tag for injected frames. Owly creates the `awdl0` TAP interface
+for IPv6 and TCP traffic. The monitor MAC is the AWDL identity; the hidden
+STA MAC is not used as the peer address.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full session,
+discovery, send, receive and cancellation flow.
+
 ## Transfer behavior
 
 ### Channel selection
@@ -324,10 +352,6 @@ the stock image:
 fastboot flash boot boot.img
 fastboot reboot
 ```
-
-A KernelSU or Magisk module can package the app and userspace helper, but it
-cannot supply the monitor-mode kernel patches. Those must be in the boot
-image.
 
 ## Credits
 
