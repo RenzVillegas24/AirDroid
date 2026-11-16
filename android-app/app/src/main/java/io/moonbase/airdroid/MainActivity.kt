@@ -916,7 +916,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         if (controller.receiveTransferring) homeTab = HomeTab.RECEIVED
     }
     val myName = controller.settings.deviceName.ifBlank { Build.MODEL }
-    val peers = controller.peers.filter { it.airdropReady }.sortedWith(
+    val peers = controller.peers.filter { it.name.isNotBlank() || it.airdropReady }.sortedWith(
         compareByDescending<Peer> { controller.isPinned(it.mac) }
             .thenByDescending { it.rssi },
     )
@@ -1058,7 +1058,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         // The sheet stays open when the phone drops out of range. It keeps the last known
         // details, shows a "waiting" state and picks the live data up again if the phone returns.
         val livePeer = controller.peers.firstOrNull {
-            it.mac == peer.mac && it.airdropReady
+            it.mac == peer.mac
         }
         PeerActionsSheet(
             peer = livePeer ?: peer,
@@ -2228,7 +2228,7 @@ private fun LargePeerHeader(
         }
         Button(
             onClick = onSend,
-            enabled = itemCount > 0 && !lost,
+            enabled = itemCount > 0 && !lost && peer.airdropReady,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(
@@ -2322,7 +2322,7 @@ private fun CompactPeerHeader(
                 Spacer(Modifier.width(8.dp))
                 FilledTonalButton(
                     onClick = onSend,
-                    enabled = itemCount > 0 && !lost,
+                    enabled = itemCount > 0 && !lost && peer.airdropReady,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 ) {
                     Text(if (itemCount == 0) "Send" else "Send $itemCount")
@@ -2335,14 +2335,22 @@ private fun CompactPeerHeader(
 
 private const val PEER_LOST_MESSAGE = "No longer nearby · waiting for the signal…"
 
-private fun peerSubtitle(peer: Peer, channel: Int?): String = buildString {
-    append(peer.typeLabel())
-    append(" · ")
-    append(peer.rssi)
-    append(" dBm")
-    if (channel != null) {
-        append(" · channel ")
-        append(channel)
+private fun peerSubtitle(peer: Peer, channel: Int?): String {
+    if (peer.airdropState == AirdropState.NOT_READY) {
+        return "Nearby · AirDrop not ready"
+    }
+    if (peer.airdropState == AirdropState.UNKNOWN) {
+        return "Nearby · checking AirDrop…"
+    }
+    return buildString {
+        append(peer.typeLabel())
+        append(" · ")
+        append(peer.rssi)
+        append(" dBm")
+        if (channel != null) {
+            append(" · channel ")
+            append(channel)
+        }
     }
 }
 
@@ -2772,7 +2780,7 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
         if (controller.kernel.state != MonitorState.STOCK) {
             item(key = "nearby-section") {
                 NearbyPeersSection(
-                    peers = controller.peers.filter { it.airdropReady },
+                    peers = controller.peers.filter { it.name.isNotBlank() || it.airdropReady },
                     selectedMac = controller.selectedMac,
                     isPinned = { false },
                     onPeerClick = { controller.selectPeer(it) },

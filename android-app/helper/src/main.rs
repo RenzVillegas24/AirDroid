@@ -486,7 +486,7 @@ const RECEIVE_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// transfer even while its AWDL peer stays visible. Ten-second attempts make
 /// the next request look 20+ seconds late; retry the small discover exchange
 /// sooner instead.
-const SEND_DISCOVER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
+const SEND_DISCOVER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Pauses or resumes background discovery for a transfer. Prints only on a
 /// change, so the UI can show "discovery paused" without log spam.
@@ -782,14 +782,10 @@ async fn find_and_send(
                 mdns_found = mdns_cache.lock().unwrap().target(target);
             }
         }
+        // Prefer the direct AWDL peer address. A cached mDNS address can be
+        // stale; trying it first added a full discover timeout before the
+        // known peer was even attempted.
         let mut targets: Vec<(SocketAddrV6, u32, &str)> = Vec::new();
-        if let Some(found) = &mdns_found {
-            targets.push((
-                SocketAddrV6::new(found.addr, found.port, 0, index),
-                found.flags,
-                "mDNS",
-            ));
-        }
         for peer in &peers {
             let mac = peer.mac.to_string();
             if let Some(target) = target_mac {
@@ -801,8 +797,20 @@ async fn find_and_send(
             if let Some(name) = names_snapshot.get(&mac) {
                 println!("AWDL peer {mac} is {name:?}");
             }
+            let (flags, source) = mdns_found
+                .as_ref()
+                .filter(|found| {
+                    SocketAddrV6::new(found.addr, found.port, 0, index) == addr
+                })
+                .map_or((RECEIVER_FLAGS | SUPPORTS_DVZIP, "peer"), |found| {
+                    (found.flags, "mDNS")
+                });
+            targets.push((addr, flags, source));
+        }
+        if let Some(found) = &mdns_found {
+            let addr = SocketAddrV6::new(found.addr, found.port, 0, index);
             if !targets.iter().any(|(a, _, _)| *a == addr) {
-                targets.push((addr, RECEIVER_FLAGS | SUPPORTS_DVZIP, "peer"));
+                targets.push((addr, found.flags, "mDNS"));
             }
         }
         if peers.is_empty() {

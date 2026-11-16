@@ -35,16 +35,24 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
+enum class AirdropState {
+    READY,
+    NOT_READY,
+    UNKNOWN,
+}
+
 data class Peer(
     val mac: String,
     val name: String,
     val devclass: Int,
     val rssi: Int,
-    /** False after an AirDrop mDNS LOST; raw AWDL-only peers stay visible by default. */
-    val airdropReady: Boolean = true,
-    /** Channel with the most slots in the peer's advertised AWDL sequence. */
+    val airdropState: AirdropState = AirdropState.UNKNOWN,
+    /** Best supported social channel in the peer's advertised sequence. */
     val awdlChannel: Int = 0,
-)
+) {
+    val airdropReady: Boolean
+        get() = airdropState == AirdropState.READY
+}
 
 data class AirDroidSettings(
     val channel: Int = 0,
@@ -712,7 +720,7 @@ class AirDroidController(private val context: Context) {
                         )
                         continue
                     }
-                    delay(1_200)
+                    delay(600)
                     if (peers.any { it.mac == candidate.mac && it.airdropReady }) {
                         lastAutoChannel = channel
                         prefs.edit().putInt("lastAutoChannel", channel).apply()
@@ -826,16 +834,14 @@ class AirDroidController(private val context: Context) {
         if (!requireMonitorKernel()) return
         val target = selectedPeer
         if (target == null) {
-            sendMessage = if (selectedMac != null) {
-                "Peer is no longer nearby. Scan again."
-            } else {
-                "Select a person first."
+            val nearby = selectedMac?.let { mac ->
+                peers.firstOrNull { it.mac.equals(mac, ignoreCase = true) }
             }
-            status = if (kernel.monitorReady) "READY" else kernel.state.badge
-            return
-        }
-        if (peers.none { it.mac.equals(target.mac, ignoreCase = true) && it.airdropReady }) {
-            sendMessage = "Peer is no longer nearby. Scan again."
+            sendMessage = when {
+                nearby != null -> "Peer is nearby but AirDrop is not ready."
+                selectedMac != null -> "Peer is no longer nearby. Scan again."
+                else -> "Select a person first."
+            }
             status = if (kernel.monitorReady) "READY" else kernel.state.badge
             return
         }
@@ -1382,30 +1388,28 @@ class AirDroidController(private val context: Context) {
 
     private fun handlePeerLine(line: String) {
         if (line.startsWith("PEER ")) {
-            val mac = between(line, "mac=", " name=")
-            if (mac.isBlank()) return
-            val name = between(line, "name=", " devclass=")
-            val devclass = between(line, "devclass=", " rssi=").toIntOrNull() ?: 0
-            val rssi = between(line, "rssi=", " channel=").toIntOrNull()
-                ?: line.substringAfter("rssi=").substringBefore(' ').trim().toIntOrNull()
+            val mac = between(line, "mac=", " name=").lowercase()
+            if (!validMac(mac)) return
+            val name = between(line, "name=", " devclass=").trim().take(80)
+            val devclass = between(line, "devclass=", " rssi=").toIntOrNull()
+                ?.coerceIn(0, 255)
                 ?: 0
-            val awdlChannel = line.substringAfter("channel=", "")
+            val rssi = (
+                between(line, "rssi=", " channel=").toIntOrNull()
+                    ?: line.substringAfter("rssi=").substringBefore(' ').trim().toIntOrNull()
+                )?.coerceIn(-120, 0) ?: 0
+            val rawChannel = line.substringAfterLast("channel=", "")
                 .substringBefore(' ')
                 .trim()
                 .toIntOrNull()
                 ?: 0
-            // A named AWDL peer is enough to send via /Discover; mDNS is the
-            // readiness signal when it arrives, but the iPhone's mDNS is not
-            // reliable enough to make every send depend on it. Once a service
-            // has been seen, keep it ready through short LOST flaps.
+            val awdlChannel = if (rawChannel in setOf(6, 44, 149)) rawChannel else 0
+            val seen = airdropSeenMacs.any { it.equals(mac, ignoreCase = true) }
             val lost = airdropLostMacs.any { it.equals(mac, ignoreCase = true) }
-            val ready = if (lost) {
-                // mDNS can flap briefly on 2.4 GHz; keep a recently seen
-                // service alive through the flap.
-                recentlyFound(mac)
-            } else {
-                name.isNotBlank() ||
-                    airdropSeenMacs.any { it.equals(mac, ignoreCase = true) }
+            val state = when {
+                name.isNotBlank() || seen -> AirdropState.READY
+                lost -> AirdropState.NOT_READY
+                else -> AirdropState.UNKNOWN
             }
             val existing = peers.toMutableList()
             existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
@@ -1415,15 +1419,15 @@ class AirDroidController(private val context: Context) {
                     name,
                     devclass,
                     rssi,
-                    airdropReady = ready,
+                    airdropState = state,
                     awdlChannel = awdlChannel,
                 ),
             )
             peers = existing
-            if (selectedMac == null && ready) selectedMac = mac
+            if (selectedMac == null && state == AirdropState.READY) selectedMac = mac
         } else if (line.startsWith("PEER_GONE ")) {
-            val mac = line.substringAfter("mac=", "").substringBefore(' ').trim()
-            if (mac.isNotBlank()) {
+            val mac = line.substringAfter("mac=", "").substringBefore(' ').trim().lowercase()
+            if (validMac(mac)) {
                 peers = peers.filterNot { it.mac.equals(mac, ignoreCase = true) }
                 clearAirdropForMac(mac)
                 if (selectedMac.equals(mac, ignoreCase = true)) {
@@ -1432,11 +1436,22 @@ class AirDroidController(private val context: Context) {
             }
         } else if (line.startsWith("AWDL name:")) {
             val rest = line.removePrefix("AWDL name:").trim()
-            val mac = rest.substringBefore("=").trim()
-            val name = rest.substringAfter("=").trim()
-            if (mac.isNotBlank() && name.isNotBlank()) {
+            val mac = rest.substringBefore("=").trim().lowercase()
+            val name = rest.substringAfter("=").trim().take(80)
+            if (validMac(mac) && name.isNotBlank()) {
+                val seen = airdropSeenMacs.any { it.equals(mac, ignoreCase = true) }
+                val lost = airdropLostMacs.any { it.equals(mac, ignoreCase = true) }
+                val state = when {
+                    name.isNotBlank() || seen -> AirdropState.READY
+                    lost -> AirdropState.NOT_READY
+                    else -> AirdropState.UNKNOWN
+                }
                 peers = peers.map {
-                    if (it.mac.equals(mac, ignoreCase = true)) it.copy(name = name) else it
+                    if (it.mac.equals(mac, ignoreCase = true)) {
+                        it.copy(name = name, airdropState = state)
+                    } else {
+                        it
+                    }
                 }
             }
         }
@@ -1466,7 +1481,7 @@ class AirDroidController(private val context: Context) {
                         airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
                         peers = peers.map {
                             if (it.mac.equals(mac, ignoreCase = true)) {
-                                it.copy(airdropReady = true)
+                                it.copy(airdropState = AirdropState.READY)
                             } else {
                                 it
                             }
@@ -1478,7 +1493,7 @@ class AirDroidController(private val context: Context) {
             } else {
                 airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
                 peers = peers.map {
-                    if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropReady = true) else it
+                    if (it.mac.equals(mac, ignoreCase = true)) it.copy(airdropState = AirdropState.READY) else it
                 }
                 if (selectedMac == null) selectedMac = mac
             }
@@ -1491,8 +1506,8 @@ class AirDroidController(private val context: Context) {
                 airdropLostMacs.add(mac)
                 if (!recentlyFound(mac)) {
                     peers = peers.map {
-                        if (it.mac.equals(mac, ignoreCase = true)) {
-                            it.copy(airdropReady = false)
+                        if (it.mac.equals(mac, ignoreCase = true) && it.name.isBlank()) {
+                            it.copy(airdropState = AirdropState.NOT_READY)
                         } else {
                             it
                         }
@@ -1518,8 +1533,7 @@ class AirDroidController(private val context: Context) {
         airdropInstances.entries.removeAll { it.value.equals(mac, ignoreCase = true) }
         airdropSeenMacs.removeAll { it.equals(mac, ignoreCase = true) }
         airdropLastFoundAt.remove(mac.lowercase())
-        // Keep the LOST mark until a fresh FOUND, otherwise an AWDL-only peer can
-        // reappear after AirDrop was turned off.
+        airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
     }
 
     private fun clearAirdropServices() {
@@ -1541,13 +1555,16 @@ class AirDroidController(private val context: Context) {
         // AWDL peer must not become a send target through this recovery path.
         peers = peers.map {
             if (airdropSeenMacs.any { mac -> mac.equals(it.mac, ignoreCase = true) }) {
-                it.copy(airdropReady = true)
+                it.copy(airdropState = AirdropState.READY)
             } else {
                 it
             }
         }
         if (selectedMac == null) selectedMac = peers.firstOrNull { it.airdropReady }?.mac
     }
+
+    private fun validMac(mac: String): Boolean =
+        Regex("""^[0-9a-f]{2}(:[0-9a-f]{2}){5}$""").matches(mac)
 
     /** Extracts the AWDL MAC from an EUI-64 link-local address. */
     private fun macFromLinkLocal(addr: String): String? {

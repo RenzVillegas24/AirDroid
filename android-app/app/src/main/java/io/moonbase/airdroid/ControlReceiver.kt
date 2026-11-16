@@ -164,20 +164,23 @@ class ControlReceiver : BroadcastReceiver() {
         Log.i(
             "AirDroidDebug",
             "status=${controller.status} scanning=${controller.scanning} " +
-                "receiver=${controller.receiverRunning} peers=${controller.peers.size} " +
+                "receiver=${controller.receiverRunning} " +
+                "peers=${controller.peers.count { it.name.isNotBlank() || it.airdropReady }} " +
                 "sent=${controller.completedTransfers.count { it.direction == TransferDirection.SENT }} " +
                 "received=${controller.completedTransfers.count { it.direction == TransferDirection.RECEIVED }}",
         )
         controller.selectedPeer?.let {
             Log.i(
                 "AirDroidDebug",
-                "selected=${it.mac} ${it.name} rssi=${it.rssi} channel=${it.awdlChannel}",
+                "selected=${it.mac} ${it.name} rssi=${it.rssi} " +
+                    "channel=${it.awdlChannel} airdrop=${it.airdropState}",
             )
         }
         controller.peers.forEach { peer ->
             Log.i(
                 "AirDroidDebug",
-                "peer=${peer.mac} name=${peer.name} rssi=${peer.rssi} channel=${peer.awdlChannel}",
+                "peer=${peer.mac} name=${peer.name} rssi=${peer.rssi} " +
+                    "channel=${peer.awdlChannel} airdrop=${peer.airdropState}",
             )
         }
         controller.activeTransfers.forEach { t ->
