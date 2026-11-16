@@ -33,3 +33,7 @@ android-app/local.properties
 # Signing material
 *.jks
 *.keystore
+
+# Local OpenCode tooling and signing credentials.
+.opencode/agents/release-installer.md
+.opencode/release-signing.env
