@@ -30,7 +30,7 @@ use owly_airdrop::proto::mdns::{
 };
 use owly_airdrop::proto::receiver::Config as ReceiverConfig;
 use owly_airdrop::proto::sender::Config as SenderConfig;
-use owly_awdl::{Channel, Config, MacAddr, Presence, RadioConstraints};
+use owly_awdl::{Channel, Config, MacAddr, Presence, RadioConstraints, TxRate};
 use owly_radio::native::Native;
 use owly_radio::radio::PeerInfo;
 use tokio::sync::watch;
@@ -540,9 +540,18 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     let mut cfg = Config::new(addr, "airdroid-k20", radio);
     cfg.rssi_threshold = Some(-85);
     cfg.max_frame = 2304;
+    // The iPhone advertises HT rates and A-MSDU support. The legacy 12 Mbit/s
+    // BASIC rate plus one frame per TCP segment is what produced the 512 KiB
+    // then stall pattern; let the AWDL layer pick MCS 7 and aggregate where
+    // the peer accepts it.
+    cfg.rate = TxRate::Ht { mcs: 7, sgi: true };
+    cfg.amsdu = true;
     // The ACK/retry experiment, see `TX_NO_ACK_DEFAULT`.
     cfg.no_ack = tx_no_ack();
-    println!("RADIO_CONFIG no_ack={}", cfg.no_ack);
+    println!(
+        "RADIO_CONFIG no_ack={} rate={} amsdu={}",
+        cfg.no_ack, cfg.rate, cfg.amsdu
+    );
     let (peers_tx, peers_rx) = watch::channel(Vec::new());
     let native = Native::start(MONITOR, AWDL_IFACE, cfg, peers_tx)
         .map_err(|e| format!("could not start AWDL on {MONITOR}: {e}"))?;
@@ -609,7 +618,6 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
     sender_config.ask_timeout = Duration::from_secs(90);
     let sender = Sender::new(sender_config)?;
     let mdns_cache = Arc::new(Mutex::new(MdnsCache::default()));
-    let mut known: HashMap<String, KnownPeer> = HashMap::new();
     // One file per send, so the send ID is fixed for this command.
     //
     // New fields go before `id=` so the existing `total=`-last and
@@ -623,10 +631,9 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
     let result = find_and_send(
         &sender,
         index,
-        &mut browse,
+        Some(&mut browse),
         &mut peers_rx,
         &names,
-        &mut known,
         &path,
         source_total,
         target.as_deref(),
@@ -715,10 +722,9 @@ fn retryable_connect(e: &std::io::Error) -> bool {
 async fn find_and_send(
     sender: &Sender,
     index: u32,
-    browse: &mut owly_airdrop::driver::mdns::Browse,
+    browse: Option<&mut owly_airdrop::driver::mdns::Browse>,
     peers_rx: &mut watch::Receiver<Vec<PeerInfo>>,
     names: &Arc<Mutex<HashMap<String, String>>>,
-    known: &mut HashMap<String, KnownPeer>,
     path: &Path,
     source_total: u64,
     target_mac: Option<&str>,
@@ -726,6 +732,7 @@ async fn find_and_send(
     report_id: Option<&str>,
     cancel: &mut watch::Receiver<bool>,
 ) -> Result<Outcome, Box<dyn Error>> {
+    let mut browse = browse;
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut mdns_found: Option<Found> = None;
     let mut attempt = 0u32;
@@ -736,41 +743,33 @@ async fn find_and_send(
         if *cancel.borrow() {
             return Ok(Outcome::Failed("cancelled".into()));
         }
-        loop {
-            match browse.events.try_recv() {
-                Ok(BrowseEvent::Found(found)) => {
-                    println!(
-                        "mDNS FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
-                        found.instance, found.host, found.addr, found.port, found.flags
-                    );
-                    if mdns_matches_target(&found, target_mac) {
-                        mdns_found = Some(found);
+        // Standalone `send` owns a browse. The session send job does not:
+        // the session loop feeds `mdns_cache` while this job waits.
+        if let Some(browse) = browse.as_deref_mut() {
+            loop {
+                match browse.events.try_recv() {
+                    Ok(BrowseEvent::Found(found)) => {
+                        println!(
+                            "mDNS FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
+                            found.instance, found.host, found.addr, found.port, found.flags
+                        );
+                        if mdns_matches_target(&found, target_mac) {
+                            mdns_found = Some(found);
+                        }
                     }
+                    Ok(BrowseEvent::Lost(instance)) => {
+                        println!("mDNS LOST instance={instance:?}");
+                        mdns_found = None;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
                 }
-                Ok(BrowseEvent::Lost(instance)) => println!("mDNS LOST instance={instance:?}"),
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
         let peers = peers_rx.borrow().clone();
         let names_snapshot = names.lock().unwrap().clone();
-        emit_peer_updates(known, &peers, &names_snapshot);
-        // The CLI sends directly to the mDNS-resolved receiver; it does not
-        // wait for a /Discover connection first. Do the same when the selected
-        // peer is already advertised, and fall back to /Discover otherwise.
-        if let Some(found) = mdns_found.as_ref() {
-            let target = SocketAddrV6::new(found.addr, found.port, 0, index);
-            let name = target_mac
-                .and_then(|mac| names_snapshot.get(mac).cloned())
-                .unwrap_or_else(|| found.host.clone());
-            println!("using mDNS receiver {:?} at {target}", found.host);
-            chosen = Some((target, found.flags, name));
-            break;
-        }
-        // Use the session's cached mDNS target, but still require /Discover to
-        // answer before /Ask. That is the receiver-port gate the CLI's knock
-        // loop provides; a cached address alone can be stale or have port 8770
-        // closed, which caused the 10 s send-connect timeout with no prompt.
+        // A cached mDNS service is only an address. Every attempt still has
+        // to pass /Discover before /Ask; that is the receiver-port gate.
         if mdns_found.is_none() {
             if let Some(target) = target_mac {
                 mdns_found = mdns_cache.lock().unwrap().target(target);
@@ -778,12 +777,18 @@ async fn find_and_send(
         }
         let mut targets: Vec<(SocketAddrV6, u32, &str)> = Vec::new();
         if let Some(found) = &mdns_found {
-            targets.push((SocketAddrV6::new(found.addr, found.port, 0, index), found.flags, "mDNS"));
+            targets.push((
+                SocketAddrV6::new(found.addr, found.port, 0, index),
+                found.flags,
+                "mDNS",
+            ));
         }
         for peer in &peers {
             let mac = peer.mac.to_string();
             if let Some(target) = target_mac {
-                if !mac.eq_ignore_ascii_case(target) { continue; }
+                if !mac.eq_ignore_ascii_case(target) {
+                    continue;
+                }
             }
             let addr = SocketAddrV6::new(peer.mac.link_local(), AIRDROP_PORT, 0, index);
             if let Some(name) = names_snapshot.get(&mac) {
@@ -815,7 +820,10 @@ async fn find_and_send(
             };
             match discovered {
                 Ok(Ok(Some(found))) => {
-                    println!("receiver answered on attempt {attempt} via {source}: {:?} at {target}", found.computer_name);
+                    println!(
+                        "receiver answered on attempt {attempt} via {source}: {:?} at {target}",
+                        found.computer_name
+                    );
                     chosen = Some((target, flags, found.computer_name));
                     break;
                 }
@@ -825,8 +833,14 @@ async fn find_and_send(
             }
         }
         if chosen.is_none() {
+            let browse_event = async {
+                match browse.as_deref_mut() {
+                    Some(browse) => browse.events.recv().await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
-                event = browse.events.recv() => match event {
+                event = browse_event => match event {
                     Some(BrowseEvent::Found(found)) => {
                         if mdns_matches_target(&found, target_mac) {
                             mdns_found = Some(found);
@@ -837,8 +851,6 @@ async fn find_and_send(
                 changed = peers_rx.changed() => {
                     if changed.is_ok() {
                         let peers = peers_rx.borrow().clone();
-                        let names_snapshot = names.lock().unwrap().clone();
-                        emit_peer_updates(known, &peers, &names_snapshot);
                         println!("AWDL peers now: {} {:?}", peers.len(), peers);
                     }
                 }
@@ -855,10 +867,22 @@ async fn find_and_send(
     let (target, flags, name) = chosen.ok_or_else(|| std::io::Error::other("no AirDrop receiver answered within 120 s"))?;
     println!("sending to {name:?} at {target} flags=0x{flags:x}");
     let payload = Payload::Files(vec![path.to_path_buf()]);
-    let mut connect_retry = true;
+    let mut connect_retries = 2u32;
     let outcome = loop {
+        if *cancel.borrow() {
+            break Ok(Outcome::Failed("cancelled".into()));
+        }
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let send_future = sender.send(target, &payload, flags, Some(events_tx));
+        // Cancellation is owned by the sender so it can close the TLS/TCP
+        // connection abortively. Dropping this future from the helper would
+        // leave the peer reading until its idle timeout.
+        let send_future = sender.send_with_cancel(
+            target,
+            &payload,
+            flags,
+            Some(events_tx),
+            cancel.clone(),
+        );
         tokio::pin!(send_future);
         // Transfer priority: once the receiver is chosen, only the upload and its
         // progress are handled. Peer updates and mDNS browse events would compete
@@ -866,9 +890,6 @@ async fn find_and_send(
         // the same for its own discovery).
         let mut last_report: Option<Instant> = None;
         let attempt = loop {
-            if *cancel.borrow() {
-                break Ok(Outcome::Failed("cancelled".into()));
-            }
             tokio::select! {
                 event = events_rx.recv() => match event {
                     Some(Event::Accepted) => println!("receiver accepted; uploading..."),
@@ -899,23 +920,20 @@ async fn find_and_send(
                     }
                     None => {}
                 },
-                _ = cancel.changed() => {
-                    if *cancel.borrow() {
-                        break Ok(Outcome::Failed("cancelled".into()));
-                    }
-                }
                 result = &mut send_future => break result,
             }
         };
         match attempt {
-            Err(e) if connect_retry && retryable_connect(&e) => {
-                connect_retry = false;
-                println!("send connect failed: {e}; waiting for receiver port...");
-                let probe = timeout(Duration::from_secs(5), sender.discover(target)).await;
-                match probe {
-                    Ok(Ok(Some(_))) => continue,
-                    _ => break Err(e),
-                }
+            Ok(Outcome::Failed(reason)) if reason == "cancelled" => {
+                break Ok(Outcome::Failed(reason));
+            }
+            Err(e) if connect_retries > 0 && retryable_connect(&e) => {
+                connect_retries -= 1;
+                println!("send connect failed: {e}; retrying /Ask...");
+                // Do not probe /Discover again: it just answered, and another
+                // probe can consume the receiver port the /Ask needs.
+                sleep(Duration::from_millis(700)).await;
+                continue;
             }
             other => break other,
         }
@@ -967,7 +985,7 @@ async fn session(
         addr: local,
         flags: RECEIVER_FLAGS,
     };
-    let _registration = mdns.register(service).await?;
+    let mut registration = Some(mdns.register(service.clone()).await?);
     let _receiver_task = tokio::spawn(receiver.run());
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
@@ -982,6 +1000,8 @@ async fn session(
     // Accepted uploads that are still running. A non-empty map means a
     // receive is active for transfer priority.
     let mut active_receives: HashMap<u64, ActiveReceive> = HashMap::new();
+    let mut pause_discovery_on_transfer = true;
+    let mut visible_during_transfer = true;
     let mut transfer_paused = false;
     let mut progress_ticker = tokio::time::interval(Duration::from_millis(500));
     progress_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -1042,6 +1062,15 @@ async fn session(
                 Some(ReceiverEvent::Urls { id, urls }) => {
                     println!("RECEIVE_URLS id={id} urls={urls:?}");
                 }
+                Some(ReceiverEvent::Progress { id, path, bytes }) => {
+                    if let Some(state) = active_receives.get_mut(&id) {
+                        state.last_progress = Instant::now();
+                    }
+                    println!(
+                        "RECEIVE_FILE_PROGRESS id={id} name={} bytes={bytes} total=0",
+                        display_name(&path)
+                    );
+                }
                 Some(ReceiverEvent::Received { id, paths }) => {
                     requests.remove(&id);
                     active_receives.remove(&id);
@@ -1069,12 +1098,29 @@ async fn session(
                     active_receives.remove(&id);
                     println!("RECEIVE_WITHDRAWN id={id}");
                 }
+                Some(ReceiverEvent::Aborted { id }) => {
+                    requests.remove(&id);
+                    active_receives.remove(&id);
+                    println!("RECEIVE_ABORTED id={id}");
+                }
                 None => {}
             },
             command = cmd_rx.recv() => {
                 let Some(line) = command else { break };
                 let mut parts = line.splitn(4, ' ');
                 match parts.next().unwrap_or("") {
+                    "set-transfer-policy" => {
+                        for arg in line.split_whitespace().skip(1) {
+                            if let Some(value) = arg.strip_prefix("pause_discovery=") {
+                                pause_discovery_on_transfer = value != "0";
+                            } else if let Some(value) = arg.strip_prefix("visible_during_transfer=") {
+                                visible_during_transfer = value != "0";
+                            }
+                        }
+                        println!(
+                            "TRANSFER_POLICY pause_discovery={pause_discovery_on_transfer} visible_during_transfer={visible_during_transfer}"
+                        );
+                    }
                     "scan" => {
                         let seconds = parts.next().and_then(|s| s.parse().ok()).unwrap_or(10);
                         let id = parts.next().unwrap_or("scan");
@@ -1156,25 +1202,12 @@ async fn session(
                         let mut send_cancel_rx = send_cancel_rx.clone();
                         tokio::spawn(async move {
                             let _send_slot = send_slot;
-                            let mdns = Mdns::new(index);
-                            let mut send_browse = match mdns.browse().await {
-                                Ok(browse) => browse,
-                                Err(e) => {
-                                    println!(
-                                        "SEND_FILE_ERR source_total={source_total} id={id} reason=mdns: {e}"
-                                    );
-                                    println!("SEND_ERR {id} mdns: {e}");
-                                    return;
-                                }
-                            };
-                            let mut send_known = HashMap::new();
                             let result = find_and_send(
                                 sender.as_ref(),
                                 index,
-                                &mut send_browse,
+                                None,
                                 &mut send_peers,
                                 &send_names,
-                                &mut send_known,
                                 &path,
                                 source_total,
                                 Some(&mac),
@@ -1189,6 +1222,12 @@ async fn session(
                                         path.display()
                                     );
                                     println!("SEND_OK {id}");
+                                }
+                                Ok(Outcome::Failed(reason)) if reason == "cancelled" => {
+                                    println!(
+                                        "SEND_FILE_CANCELLED source_total={source_total} id={id}"
+                                    );
+                                    println!("SEND_CANCELLED {id}");
                                 }
                                 Ok(outcome) => {
                                     let reason = outcome_reason(&outcome);
@@ -1252,8 +1291,9 @@ async fn session(
                         let id = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
                         match id {
                             Some(id) if receiver_control.abort_request(id) => {
-                                active_receives.remove(&id);
-                                println!("RECEIVE_ABORTED id={id}");
+                                // The receiver emits Aborted only after the
+                                // connection has been closed abortively.
+                                println!("RECEIVE_ABORTING id={id}");
                             }
                             Some(id) => println!("RECEIVE_ABORT_ERR id={id} not active"),
                             None => println!("RECEIVE_ABORT_ERR missing id"),
@@ -1333,8 +1373,17 @@ async fn session(
         // The transfer state is send-task activity plus accepted uploads.
         // Changing it stops or restarts the name sniffer and is announced so
         // the UI can show that discovery is paused.
-        let paused_now = send_active.load(Ordering::SeqCst) || !active_receives.is_empty();
+        let transfer_active = send_active.load(Ordering::SeqCst) || !active_receives.is_empty();
+        let paused_now = pause_discovery_on_transfer && transfer_active;
         update_transfer_pause(&mut sniffer, &mut transfer_paused, paused_now);
+        let should_advertise = visible_during_transfer || !transfer_active;
+        if should_advertise && registration.is_none() {
+            registration = Some(mdns.register(service.clone()).await?);
+            println!("VISIBILITY visible=true");
+        } else if !should_advertise && registration.is_some() {
+            registration = None;
+            println!("VISIBILITY visible=false");
+        }
     }
 
     sniffer.stop();
@@ -1466,6 +1515,12 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
                     requests.insert(id, request);
                 }
                 Some(ReceiverEvent::Urls { id, urls }) => println!("RECEIVE_URLS id={id} urls={urls:?}"),
+                Some(ReceiverEvent::Progress { id, path, bytes }) => {
+                    println!(
+                        "RECEIVE_FILE_PROGRESS id={id} name={} bytes={bytes} total=0",
+                        display_name(&path)
+                    );
+                }
                 Some(ReceiverEvent::Received { id, paths }) => {
                     requests.remove(&id);
                     active.remove(&id);
@@ -1490,6 +1545,11 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
                     requests.remove(&id);
                     active.remove(&id);
                     println!("RECEIVE_WITHDRAWN id={id}");
+                }
+                Some(ReceiverEvent::Aborted { id }) => {
+                    requests.remove(&id);
+                    active.remove(&id);
+                    println!("RECEIVE_ABORTED id={id}");
                 }
                 None => break,
             },

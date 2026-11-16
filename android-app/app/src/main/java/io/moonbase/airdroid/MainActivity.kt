@@ -125,6 +125,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
@@ -954,7 +955,8 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                     selectedMac = sheetPeer?.mac,
                     isPinned = { controller.isPinned(it) },
                     onPeerClick = { openPeer(it) },
-                    scanningPaused = controller.sending || controller.receiveTransferring,
+                    scanningPaused = controller.settings.pauseDiscoveryDuringTransfer &&
+                        (controller.sending || controller.receiveTransferring),
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -2774,7 +2776,8 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
                     selectedMac = controller.selectedMac,
                     isPinned = { false },
                     onPeerClick = { controller.selectPeer(it) },
-                    scanningPaused = controller.sending || controller.receiveTransferring,
+                    scanningPaused = controller.settings.pauseDiscoveryDuringTransfer &&
+                        (controller.sending || controller.receiveTransferring),
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -3522,11 +3525,21 @@ private fun SettingsScreen(controller: AirDroidController) {
     var deviceName by remember { mutableStateOf(controller.settings.deviceName) }
     var themeMode by remember { mutableStateOf(controller.settings.themeMode) }
     var tintMode by remember { mutableStateOf(controller.settings.tintMode) }
+    var pauseDiscovery by remember { mutableStateOf(controller.settings.pauseDiscoveryDuringTransfer) }
+    var visibleDuringTransfer by remember { mutableStateOf(controller.settings.visibleDuringTransfer) }
 
     LaunchedEffect(deviceName) {
         if (deviceName != controller.settings.deviceName) {
             delay(650)
-            controller.saveSettings(channel, bleArm, deviceName, themeMode, tintMode)
+            controller.saveSettings(
+                channel,
+                bleArm,
+                deviceName,
+                themeMode,
+                tintMode,
+                pauseDiscovery,
+                visibleDuringTransfer,
+            )
         }
     }
 
@@ -3864,6 +3877,83 @@ private fun SettingsScreen(controller: AirDroidController) {
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+            }
+        }
+        item { SectionLabel("TRANSFER") }
+        item {
+            SettingsListGroup {
+                SettingsCard(grouped = true) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SettingsIconBubble(R.drawable.ic_sensors)
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Pause peer discovery",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "Stop nearby peer updates while transferring",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = pauseDiscovery,
+                            onCheckedChange = {
+                                pauseDiscovery = it
+                                controller.saveSettings(
+                                    channel,
+                                    bleArm,
+                                    deviceName,
+                                    themeMode,
+                                    tintMode,
+                                    it,
+                                    visibleDuringTransfer,
+                                )
+                            },
+                        )
+                    }
+                }
+                SettingsCard(grouped = true) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SettingsIconBubble(R.drawable.ic_wifi_tethering)
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Stay visible in AirDrop",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "Keep this phone advertised while transferring",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = visibleDuringTransfer,
+                            onCheckedChange = {
+                                visibleDuringTransfer = it
+                                controller.saveSettings(
+                                    channel,
+                                    bleArm,
+                                    deviceName,
+                                    themeMode,
+                                    tintMode,
+                                    pauseDiscovery,
+                                    it,
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }

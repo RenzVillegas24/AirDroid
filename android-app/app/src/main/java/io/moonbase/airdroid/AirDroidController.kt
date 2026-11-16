@@ -51,6 +51,8 @@ data class AirDroidSettings(
     val deviceName: String = "AirDroid K20",
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val tintMode: TintMode = TintMode.CUSTOM,
+    val pauseDiscoveryDuringTransfer: Boolean = true,
+    val visibleDuringTransfer: Boolean = true,
 )
 
 /**
@@ -203,8 +205,10 @@ class AirDroidController(private val context: Context) {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
-        private const val AUTO_CHANNEL_DWELL_MS = 4_000L
-        private val AUTO_CHANNELS = intArrayOf(44, 149, 6)
+        private const val AUTO_CHANNEL_DWELL_MS = 6_000L
+        // Channel 6 is a manual fallback only: Owly's fixed-channel monitor
+        // path collapses on 2.4 GHz. Auto scan stays on 5 GHz.
+        private val AUTO_CHANNELS = intArrayOf(149, 44)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
@@ -247,13 +251,14 @@ class AirDroidController(private val context: Context) {
         private set
     var lockedChannel by mutableStateOf<Int?>(null)
         private set
-    private var lastAutoChannel = prefs.getInt("lastAutoChannel", 44)
+    private var lastAutoChannel = prefs.getInt("lastAutoChannel", 149)
     var peers by mutableStateOf<List<Peer>>(emptyList())
         private set
     var selectedMac by mutableStateOf<String?>(null)
         private set
     /** AirDrop mDNS instance -> AWDL MAC. Used to hide a peer after its service is lost. */
     private val airdropInstances = mutableMapOf<String, String>()
+    private val airdropSeenMacs = mutableSetOf<String>()
     private val airdropLostMacs = mutableSetOf<String>()
     private val airdropFoundJobs = mutableMapOf<String, Job>()
     var scanning by mutableStateOf(false)
@@ -474,22 +479,49 @@ class AirDroidController(private val context: Context) {
         deviceName: String,
         themeMode: ThemeMode = settings.themeMode,
         tintMode: TintMode = settings.tintMode,
+        pauseDiscoveryDuringTransfer: Boolean = settings.pauseDiscoveryDuringTransfer,
+        visibleDuringTransfer: Boolean = settings.visibleDuringTransfer,
     ) {
         val previous = settings
         val cleanName = deviceName.trim().ifBlank { "AirDroid K20" }
-        settings = AirDroidSettings(channel, bleArm, cleanName, themeMode, tintMode)
-        activeChannel = if (channel > 0) channel else 44
+        settings = AirDroidSettings(
+            channel,
+            bleArm,
+            cleanName,
+            themeMode,
+            tintMode,
+            pauseDiscoveryDuringTransfer,
+            visibleDuringTransfer,
+        )
+        // Auto means "whatever channel the live scan locked". Saving an
+        // unrelated toggle must not move activeChannel away from the helper's
+        // actual channel, or the next send fails the locked-channel check.
+        if (channel != previous.channel) {
+            activeChannel = if (channel > 0) channel else 44
+        }
         prefs.edit()
             .putInt("channel", channel)
             .putInt("bleArm", bleArm)
             .putString("deviceName", cleanName)
             .putString("themeMode", themeMode.name)
             .putString("tintMode", tintMode.name)
+            .putBoolean("pauseDiscoveryDuringTransfer", pauseDiscoveryDuringTransfer)
+            .putBoolean("visibleDuringTransfer", visibleDuringTransfer)
             .apply()
         val channelLabel = if (channel == AUTO_CHANNEL) "Auto" else channel.toString()
         sendMessage = "Settings saved · channel $channelLabel"
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        append("Settings saved: channel=$channelLabel bleArm=$bleArm name=$cleanName theme=${themeMode.name} tint=${tintMode.name}")
+        append(
+            "Settings saved: channel=$channelLabel bleArm=$bleArm name=$cleanName " +
+                "theme=${themeMode.name} tint=${tintMode.name} " +
+                "pauseDiscovery=$pauseDiscoveryDuringTransfer visibleDuringTransfer=$visibleDuringTransfer",
+        )
+        scope.launch {
+            writeSessionCommand(
+                "set-transfer-policy pause_discovery=${if (pauseDiscoveryDuringTransfer) 1 else 0} " +
+                    "visible_during_transfer=${if (visibleDuringTransfer) 1 else 0}",
+            )
+        }
 
         // Channel and identity are fixed when the session helper starts awdl0.
         // Drop the live session so the next scan/send recreates it with the new
@@ -523,6 +555,8 @@ class AirDroidController(private val context: Context) {
         tintMode = prefs.getString("tintMode", TintMode.CUSTOM.name)
             ?.let { runCatching { TintMode.valueOf(it) }.getOrNull() }
             ?: TintMode.CUSTOM,
+        pauseDiscoveryDuringTransfer = prefs.getBoolean("pauseDiscoveryDuringTransfer", true),
+        visibleDuringTransfer = prefs.getBoolean("visibleDuringTransfer", true),
     )
 
     suspend fun prepare() {
@@ -622,22 +656,23 @@ class AirDroidController(private val context: Context) {
                 }
                 append("Auto scan on channel $channel")
                 val started = System.currentTimeMillis()
-                while (scanning && peers.isEmpty() &&
+                // A blank raw peer is often a Continuity device, not an
+                // AirDrop sender. A named peer is enough for /Discover.
+                while (scanning && peers.none { it.airdropReady } &&
                     System.currentTimeMillis() - started < AUTO_CHANNEL_DWELL_MS
                 ) {
                     delay(250)
                 }
-                if (peers.isNotEmpty()) {
-                    val candidate = peers.first().mac
+                val candidates = peers.filter { it.airdropReady }
+                if (candidates.isNotEmpty()) {
+                    val candidate = candidates.first().mac
                     delay(1_200)
-                    if (peers.any { it.mac == candidate }) {
-                        if (channel != 6) {
-                            lastAutoChannel = channel
-                            prefs.edit().putInt("lastAutoChannel", channel).apply()
-                        }
+                    if (peers.any { it.mac == candidate && it.airdropReady }) {
+                        lastAutoChannel = channel
+                        prefs.edit().putInt("lastAutoChannel", channel).apply()
                         status = "SCANNING"
                         lockedChannel = channel
-                        sendMessage = "${peers.size} person(s) found on channel $channel."
+                        sendMessage = "${candidates.size} person(s) found on channel $channel."
                         append("Auto channel locked on $channel.")
                         return
                     }
@@ -928,8 +963,6 @@ class AirDroidController(private val context: Context) {
         sendProgressTotal = 0
         sendMessage = "Cancelling send..."
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        id?.let { finishTransfer(it, TransferStatus.CANCELLED, error = "Cancelled") }
-        activeSendTransferId = null
         append("")
         append("Send cancelled; asking the helper to abort the transfer...")
         scope.launch {
@@ -1308,7 +1341,12 @@ class AirDroidController(private val context: Context) {
             val name = between(line, "name=", " devclass=")
             val devclass = between(line, "devclass=", " rssi=").toIntOrNull() ?: 0
             val rssi = line.substringAfter("rssi=").trim().toIntOrNull() ?: 0
-            val ready = !airdropLostMacs.any { it.equals(mac, ignoreCase = true) }
+            // A named AWDL peer is enough to send via /Discover; mDNS is the
+            // readiness signal when it arrives, but the iPhone's mDNS is not
+            // reliable enough to make every send depend on it.
+            val ready = !airdropLostMacs.any { it.equals(mac, ignoreCase = true) } &&
+                (name.isNotBlank() ||
+                    airdropSeenMacs.any { it.equals(mac, ignoreCase = true) })
             val existing = peers.toMutableList()
             existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
             existing.add(Peer(mac, name, devclass, rssi, airdropReady = ready))
@@ -1345,6 +1383,7 @@ class AirDroidController(private val context: Context) {
             val instance = between(line, "instance=\"", "\"")
             val addr = between(line, "addr=", " port=")
             val mac = macFromLinkLocal(addr) ?: return
+            airdropSeenMacs.add(mac)
             if (instance.isNotBlank()) airdropInstances[instance] = mac
             if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                 // LOST and FOUND can arrive in quick succession when AirDrop is
@@ -1393,6 +1432,7 @@ class AirDroidController(private val context: Context) {
     private fun clearAirdropForMac(mac: String) {
         airdropFoundJobs.remove(mac)?.cancel()
         airdropInstances.entries.removeAll { it.value.equals(mac, ignoreCase = true) }
+        airdropSeenMacs.removeAll { it.equals(mac, ignoreCase = true) }
         // Keep the LOST mark until a fresh FOUND, otherwise an AWDL-only peer can
         // reappear after AirDrop was turned off.
     }
@@ -1401,6 +1441,7 @@ class AirDroidController(private val context: Context) {
         airdropFoundJobs.values.forEach { it.cancel() }
         airdropFoundJobs.clear()
         airdropInstances.clear()
+        airdropSeenMacs.clear()
         airdropLostMacs.clear()
     }
 
@@ -1410,8 +1451,16 @@ class AirDroidController(private val context: Context) {
         airdropFoundJobs.values.forEach { it.cancel() }
         airdropFoundJobs.clear()
         airdropLostMacs.clear()
-        peers = peers.map { it.copy(airdropReady = true) }
-        if (selectedMac == null) selectedMac = peers.firstOrNull()?.mac
+        // Restore only peers that have advertised AirDrop at least once. A raw
+        // AWDL peer must not become a send target through this recovery path.
+        peers = peers.map {
+            if (airdropSeenMacs.any { mac -> mac.equals(it.mac, ignoreCase = true) }) {
+                it.copy(airdropReady = true)
+            } else {
+                it
+            }
+        }
+        if (selectedMac == null) selectedMac = peers.firstOrNull { it.airdropReady }?.mac
     }
 
     /** Extracts the AWDL MAC from an EUI-64 link-local address. */
@@ -1456,6 +1505,9 @@ class AirDroidController(private val context: Context) {
             }
             line.startsWith("RECEIVE_REQUEST ") -> handleIncomingRequest(line)
             line.startsWith("RECEIVE_REQUEST_FILES ") -> handleIncomingRequestFiles(line)
+            line.startsWith("RECEIVE_ABORTING") -> {
+                receiveMessage = "Stopping receive..."
+            }
             line.startsWith("RECEIVE_ABORTED") -> handleReceiveAborted(line)
             line.startsWith("RECEIVE_ABORT_ERR") -> {
                 receiveMessage = "Could not stop the receive."
@@ -2186,7 +2238,9 @@ class AirDroidController(private val context: Context) {
         if (status.isTerminal) originalTransferTotals.remove(id)
         if (next == current) return current
         upsertTransfer(next, notify)
-        if (status == TransferStatus.COMPLETE) recoverAirdropReadiness()
+        // A cancel/failure can leave the last LOST mark stuck, hiding a peer
+        // that is still in the AWDL peer list. Recover on every terminal state.
+        if (status.isTerminal) recoverAirdropReadiness()
         return next
     }
 
@@ -2388,9 +2442,10 @@ class AirDroidController(private val context: Context) {
         startBle(fresh = false)
         val channel = activeChannel
         val name = helperName()
-        // ACK-less TX avoids a per-frame 802.11 ACK stall on the AWDL link.
-        // The AirDrop protocol still has its own response/retry handling.
-        val command = "OWLY_TX_NO_ACK=1 $APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
+        // Let the hidden STA vdev do normal 802.11 ACK/retry. The ACK-less
+        // path turns every lost unicast frame into a TCP retransmission and
+        // collapses to the observed 64 KiB staircase.
+        val command = "OWLY_TX_NO_ACK=0 $APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
         append("")
         append("$ starting helper session")
         val process = try {
@@ -2414,6 +2469,15 @@ class AirDroidController(private val context: Context) {
             append("Helper session did not become ready.")
             if (helperSession === session) stopSessionLocked(session) else quitSession(session)
             return null
+        }
+        runCatching {
+            session.writer.write(
+                "set-transfer-policy " +
+                    "pause_discovery=${if (settings.pauseDiscoveryDuringTransfer) 1 else 0} " +
+                    "visible_during_transfer=${if (settings.visibleDuringTransfer) 1 else 0}",
+            )
+            session.writer.newLine()
+            session.writer.flush()
         }
         return session
     }
@@ -2473,6 +2537,9 @@ class AirDroidController(private val context: Context) {
                 }
                 finishPending(pending, -1)
             }
+            "SEND_CANCELLED" -> if (pending.kind == "send") {
+                finishPending(pending, -1)
+            }
         }
     }
 
@@ -2515,7 +2582,17 @@ class AirDroidController(private val context: Context) {
                     localPath = path.ifBlank { null },
                 )
             }
+            line.startsWith("SEND_FILE_CANCELLED ") -> {
+                val helperId = eventId(line)
+                val transferId = resolveSendTransferId(helperId) ?: return
+                finishTransfer(
+                    transferId,
+                    TransferStatus.CANCELLED,
+                    error = "Cancelled",
+                )
+            }
             line.startsWith("SEND_FILE_ERR ") -> {
+                if (sendCancelled) return
                 val helperId = eventId(line)
                 val reason = line.substringAfter("reason=", "Send failed").trim()
                 val transferId = resolveSendTransferId(helperId) ?: return
