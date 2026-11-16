@@ -303,13 +303,46 @@ valid test path for this driver; the next test must use the KernelSU
 boot-time overlay so `firmware_mnt` and the vendor module context are
 available.
 
+The first overlay build used the wrong firmware prefix:
+
+```text
+wlan/qca_cld/qca_cld3_qca6750/WCNSS_qcom_cfg.ini
+```
+
+The stock module uses:
+
+```text
+wlan/qca_cld/qca6750/WCNSS_qcom_cfg.ini
+qca6750/athwlan.bin
+```
+
+The driver was rebuilt with `DYNAMIC_SINGLE_CHIP=qca6750`,
+`MULTI_IF_NAME=qca6750`, and `DEVNAME=qca6750`. The resulting module's strings
+now match stock, and the stock config symlink exists at
+`/vendor/firmware/wlan/qca_cld/qca6750/WCNSS_qcom_cfg.ini`.
+
+A one-shot KernelSU overlay test with that corrected module was then run:
+
+- the module loaded and reached the driver service stage
+- the phone rebooted again
+- no pstore entry was available
+- the one-shot flag was consumed
+- the next boot came back with the stock module
+- Wi-Fi is enabled again
+
+So the firmware-path issue is fixed, but the rebuilt driver still crashes
+after loading. This is now a driver/config compatibility problem, not a
+missing-firmware problem. Do not repeat the boot test until the remaining
+crash is understood.
+
 Remaining work:
 
-1. verify the patched module initializes at boot
-2. verify monitor RX
-3. verify hidden STA creation without TX
-4. send one raw management frame
-5. test AWDL PSF/MIF and AirDrop
+1. capture the crash reason (pstore/serial or a safer test build)
+2. match the remaining driver configuration to the stock vendor module
+3. verify monitor RX
+4. verify hidden STA creation without TX
+5. send one raw management frame
+6. test AWDL PSF/MIF and AirDrop
 
 The test module and build tree remain in the ignored local workspace. No
 device changes were persisted.
