@@ -212,6 +212,68 @@ KernelSU overlay or a flashed vendor_dlkm image, followed by a reboot.
    - root paths
    - receive directory
 
+## Safe 6.1.138 module test
+
+A fresh `owly_hidden_tx.ko` was built against the ACK 6.1.138 tree with the
+device config and exact vermagic:
+
+```text
+6.1.138-android14-11-g0c3d559bcd85-ab14529422
+```
+
+The build used the device `/proc/config.gz` and `/sys/kernel/kheaders.tar.xz`.
+The module was kept in `/data/local/tmp`; nothing was written to `/vendor` or
+a KernelSU overlay.
+
+Result with normal Wi-Fi (`con_mode=0`):
+
+```text
+owly_hidden_tx: wma=... wmi=... qdf_ctx=...
+owly_hidden_tx: wlan0 is not radiotap monitor (type=1)
+```
+
+The module loaded, resolved its symbols, and failed cleanly at the monitor
+check. This confirms the module ABI/vermagic and kprobe symbol lookup are
+usable on the running kernel.
+
+Result with monitor mode (`con_mode=4`, channel 149) and the hidden-STA
+module loaded:
+
+- the device disconnected immediately
+- it rebooted
+- no pstore entry was available
+- the module was not persisted
+- Wi-Fi was restored after reboot
+
+That means the current hidden-STA prototype is **not safe on 6.1.138**. The
+hand-built WMI command buffers and offsets were made for the older 6.1.57
+prototype. They must not be reused blindly.
+
+## Next safe implementation step
+
+Do not load the raw-offset module again. Move the hidden-STA logic into the
+matching qcacld source and use the driver's real structures:
+
+```text
+struct vdev_create_params
+struct vdev_start_params
+struct peer_create_params
+struct mgmt_tx_params
+```
+
+Build the resulting `qca_cld3_qca6750.ko` against the exact 6.1.138 ABI, then
+test in stages:
+
+1. load with normal Wi-Fi and confirm clean failure
+2. monitor RX only
+3. hidden STA creation without TX
+4. one raw management TX
+5. AWDL frames
+6. AirDrop
+
+The test module and build tree remain in the ignored local workspace. No
+device changes were persisted.
+
 ## Branch contents
 
 This branch contains documentation only. Civi build artifacts and raw
