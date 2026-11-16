@@ -11,12 +11,44 @@ built as a Jetpack Compose Android app with a Rust radio/AirDrop helper.
 - Sends files and text to a selected peer.
 - Receives AirDrop offers with a foreground dialog or a background
   Accept/Decline notification.
-- Tracks sent and received files separately.
-- Runs the radio session in a foreground service while backgrounded.
-- Provides an ADB control/log interface for debugging.
+- Tracks sent and received files separately, with per-file progress.
+- Supports per-transfer cancellation without stopping the radio or receiver.
+- Keeps the radio session in a foreground service while backgrounded.
+- Provides ADB control/log commands for debugging.
 
 The K20's internal WCN3990 radio is the target. External USB Wi-Fi is out of
 scope.
+
+## Transfer behavior
+
+### Channel selection
+
+Auto is the default and recommended mode:
+
+```text
+149 → 44 → 6
+```
+
+- Auto prefers 5 GHz.
+- Channel 6 is used only as a fallback for 2.4 GHz-only peers.
+- Auto reads the peer's advertised AWDL channel sequence and matches a
+  supported social channel (`149`, `44`, or `6`) before locking.
+- A fixed channel can be selected manually, but the app shows a warning
+  because the iPhone may move to a different channel.
+- The locked channel is shown in Settings and in the log.
+
+A fixed channel is useful for troubleshooting. It is not the recommended
+normal mode.
+
+### Sending and receiving
+
+- Every send passes `/Discover` before `/Ask`.
+- The direct AWDL peer address is tried before a cached mDNS address.
+- Cancelling a send closes the connection and keeps the session alive.
+- Stopping a receive aborts only that request; the receiver keeps listening.
+- Named peers stay visible while their mDNS service briefly flaps. A peer is
+  removed only after the AWDL peer actually disappears.
+- Per-file receive progress comes from the receiver data stream.
 
 ## Investigation results
 
@@ -27,17 +59,14 @@ scope.
   its address is read at runtime. It is not hardcoded.
 - Injected probe requests, AWDL PSF/MIF frames, and peer discovery were
   verified with monitor captures.
-- The first controlled upload succeeded against an Arch Owly receiver on
-  5 GHz channel 44.
-- The first iPhone AirDrop transfer succeeded with the same setup, using the
-  driver-provided hidden-STA address and the AWDL Service Response name.
-- Live Wi-Fi ↔ AirDrop switching works after the invalid-vdev and cached-vdev
-  teardown fixes; normal boot stays on Wi-Fi.
 - The fixed-channel TX scheduler in the Owly fork removed the observed
-  ~11.4-second transmit holes. A 20 MB random upload then reached 12.7 MB
-  continuously before the test was stopped.
-- Receive progress was steady in the captured sample (~150 KB/s); receive
-  throughput optimization is still pending.
+  ~11.4-second transmit holes.
+- A 20 MB upload completed on 5 GHz channel 149.
+- Channel 6 remains available for 2.4 GHz-only operation, but a fixed 6 link
+  can stall when the iPhone is actually using 5 GHz. Auto avoids that case by
+  matching the peer's advertised supported channel.
+- Send cancellation and receive stop were verified against an iPhone on
+  5 GHz.
 
 ### Civi / `chenfeng`
 
@@ -51,6 +80,7 @@ scope.
 - Foreground incoming-request dialog and background Accept/Decline
   notification.
 - Foreground service keeps the receiver/controller alive while backgrounded.
+- Settings for pausing peer discovery and staying visible during transfers.
 - ADB control/log interface (`scripts/airdroid-adb.sh`, `AirDroidLog`,
   `AirDroidDebug`).
 - Open/Share uses the received directory directly; no cache copy.
@@ -71,7 +101,7 @@ android-app/       Android app and Rust helper source
 kernel/            Evolution-X kernel_xiaomi_raphael fork (git submodule)
 third_party/owly/  AirDroid Owly fork with K20 radio fixes (git submodule)
 scripts/           build-app.sh and airdroid-adb.sh
-docs/              setup and ADB debugging instructions
+docs/              setup, ADB debugging, release, and transfer notes
 ```
 
 Radio bring-up, monitor/injection experiments, captures, and historical tools
@@ -96,7 +126,7 @@ Prerequisites:
 
 ```bash
 git clone https://github.com/RenzVillegas24/AirDroid.git
-cd airdroid
+cd AirDroid
 git submodule update --init third_party/owly
 scripts/build-app.sh debug
 ```
@@ -118,8 +148,10 @@ scripts/sign-release.sh
 ```
 
 See [docs/RELEASE.md](docs/RELEASE.md) for keystore creation and signing.
-See [docs/SETUP.md](docs/SETUP.md) for device setup and
-[docs/raphael/ADB-DEBUG.md](docs/raphael/ADB-DEBUG.md) for the ADB controls.
+See [docs/SETUP.md](docs/SETUP.md) for device setup,
+[docs/raphael/ADB-DEBUG.md](docs/raphael/ADB-DEBUG.md) for the ADB controls,
+and [docs/TRANSFER-PIPELINE.md](docs/TRANSFER-PIPELINE.md) for the transfer
+state machine and test matrix.
 
 ## Kernel
 
@@ -127,7 +159,7 @@ See [docs/SETUP.md](docs/SETUP.md) for device setup and
   [Evolution-X-Devices/kernel_xiaomi_raphael](https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael)
 - AirDroid fork:
   [RenzVillegas24/kernel_xiaomi_raphael](https://github.com/RenzVillegas24/kernel_xiaomi_raphael),
-  branch `owly-k20`
+  branch `AirDroid/main`
 - Submodule: `kernel/`
 
 ```bash
