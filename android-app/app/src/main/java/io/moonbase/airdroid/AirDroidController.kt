@@ -42,6 +42,8 @@ data class Peer(
     val rssi: Int,
     /** False after an AirDrop mDNS LOST; raw AWDL-only peers stay visible by default. */
     val airdropReady: Boolean = true,
+    /** Channel with the most slots in the peer's advertised AWDL sequence. */
+    val awdlChannel: Int = 0,
 )
 
 data class AirDroidSettings(
@@ -667,9 +669,51 @@ class AirDroidController(private val context: Context) {
                 }
                 val candidates = peers.filter { it.airdropReady }
                 if (candidates.isNotEmpty()) {
-                    val candidate = candidates.first().mac
+                    val candidate = candidates.first()
+                    // The iPhone can be visible on 6 while its advertised
+                    // sequence spends most slots on 149. A fixed monitor must
+                    // move to that dominant channel; otherwise TCP stalls at
+                    // the few slots where the phone visits 6.
+                    val target = candidate.awdlChannel
+                    if (target in AUTO_CHANNELS && target != channel) {
+                        append(
+                            "Peer advertises channel $target while scanning $channel; matching it.",
+                        )
+                        activeChannel = target
+                        stopSession()
+                        val switched = sessionMutex.withLock { ensureSessionLocked() }
+                        if (switched == null) {
+                            scanning = false
+                            status = "CHECK LOG"
+                            sendMessage = "Live scan could not start; check the log."
+                            runCatching { AirDroidService.stop(context) }
+                            return
+                        }
+                        val switchedAt = System.currentTimeMillis()
+                        while (scanning &&
+                            System.currentTimeMillis() - switchedAt < AUTO_CHANNEL_DWELL_MS &&
+                            peers.none {
+                                it.mac == candidate.mac && it.airdropReady
+                            }
+                        ) {
+                            delay(250)
+                        }
+                        if (peers.any { it.mac == candidate.mac && it.airdropReady }) {
+                            lastAutoChannel = target
+                            prefs.edit().putInt("lastAutoChannel", target).apply()
+                            status = "SCANNING"
+                            lockedChannel = target
+                            sendMessage = "Matched AirDrop channel $target."
+                            append("Auto channel locked on $target (peer advertised $target).")
+                            return
+                        }
+                        append(
+                            "Peer did not appear on advertised channel $target; continuing.",
+                        )
+                        continue
+                    }
                     delay(1_200)
-                    if (peers.any { it.mac == candidate && it.airdropReady }) {
+                    if (peers.any { it.mac == candidate.mac && it.airdropReady }) {
                         lastAutoChannel = channel
                         prefs.edit().putInt("lastAutoChannel", channel).apply()
                         status = "SCANNING"
@@ -1342,7 +1386,14 @@ class AirDroidController(private val context: Context) {
             if (mac.isBlank()) return
             val name = between(line, "name=", " devclass=")
             val devclass = between(line, "devclass=", " rssi=").toIntOrNull() ?: 0
-            val rssi = line.substringAfter("rssi=").trim().toIntOrNull() ?: 0
+            val rssi = between(line, "rssi=", " channel=").toIntOrNull()
+                ?: line.substringAfter("rssi=").substringBefore(' ').trim().toIntOrNull()
+                ?: 0
+            val awdlChannel = line.substringAfter("channel=", "")
+                .substringBefore(' ')
+                .trim()
+                .toIntOrNull()
+                ?: 0
             // A named AWDL peer is enough to send via /Discover; mDNS is the
             // readiness signal when it arrives, but the iPhone's mDNS is not
             // reliable enough to make every send depend on it. Once a service
@@ -1358,7 +1409,16 @@ class AirDroidController(private val context: Context) {
             }
             val existing = peers.toMutableList()
             existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
-            existing.add(Peer(mac, name, devclass, rssi, airdropReady = ready))
+            existing.add(
+                Peer(
+                    mac,
+                    name,
+                    devclass,
+                    rssi,
+                    airdropReady = ready,
+                    awdlChannel = awdlChannel,
+                ),
+            )
             peers = existing
             if (selectedMac == null && ready) selectedMac = mac
         } else if (line.startsWith("PEER_GONE ")) {

@@ -64,6 +64,10 @@ OFFERED
 - Auto scan order is 149 then 44, with 6 as the last fallback.
 - A named/ready peer locks the channel; blank transient peers are ignored.
 - Channel 6 is selected only when no usable 5 GHz peer is found.
+- The peer's advertised AWDL sequence exposes its dominant channel. If
+  Auto sees a peer on a different channel, it switches to the dominant
+  channel before locking. This prevents a fixed 2.4 GHz monitor from
+  staying on channel 6 while the iPhone spends most slots on 149.
 - The helper uses the iPhone's HT rate (MCS 7, short GI) and A-MSDU where the
   peer advertises support.
 

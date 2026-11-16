@@ -168,9 +168,17 @@ class ControlReceiver : BroadcastReceiver() {
                 "sent=${controller.completedTransfers.count { it.direction == TransferDirection.SENT }} " +
                 "received=${controller.completedTransfers.count { it.direction == TransferDirection.RECEIVED }}",
         )
-        controller.selectedPeer?.let { Log.i("AirDroidDebug", "selected=${it.mac} ${it.name} rssi=${it.rssi}") }
+        controller.selectedPeer?.let {
+            Log.i(
+                "AirDroidDebug",
+                "selected=${it.mac} ${it.name} rssi=${it.rssi} channel=${it.awdlChannel}",
+            )
+        }
         controller.peers.forEach { peer ->
-            Log.i("AirDroidDebug", "peer=${peer.mac} name=${peer.name} rssi=${peer.rssi}")
+            Log.i(
+                "AirDroidDebug",
+                "peer=${peer.mac} name=${peer.name} rssi=${peer.rssi} channel=${peer.awdlChannel}",
+            )
         }
         controller.activeTransfers.forEach { t ->
             Log.i(
