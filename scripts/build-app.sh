@@ -28,11 +28,19 @@ if [[ -z "$CARGO" ]]; then
   fi
 fi
 
-echo "== helper =="
-cd "$ROOT/android-app/helper"
-"$CARGO" build --release --target aarch64-unknown-linux-musl
-mkdir -p ../assets
-cp target/aarch64-unknown-linux-musl/release/owly-k20-helper ../assets/owly-k20-helper
+if [[ "${SKIP_HELPER_BUILD:-0}" == "1" ]]; then
+  echo "== helper (prebuilt) =="
+  [[ -x "$ROOT/android-app/assets/owly-k20-helper" ]] || {
+    echo "missing android-app/assets/owly-k20-helper" >&2
+    exit 1
+  }
+else
+  echo "== helper =="
+  cd "$ROOT/android-app/helper"
+  "$CARGO" build --release --target aarch64-unknown-linux-musl
+  mkdir -p ../assets
+  cp target/aarch64-unknown-linux-musl/release/owly-k20-helper ../assets/owly-k20-helper
+fi
 
 echo "== APK ($MODE) =="
 cd "$ROOT/android-app"

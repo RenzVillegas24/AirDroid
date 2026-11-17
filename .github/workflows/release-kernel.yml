@@ -1,0 +1,138 @@
+name: Release Kernel
+
+# Manual only. This workflow is never triggered by push, tag, or schedule.
+# It builds the K20 production kernel and packs the boot image used by the
+# AirDroid app. The artifact is named boot-airdroid-<version>.img.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 1.5.0"
+        required: true
+        type: string
+      tag:
+        description: "Release tag (default: v<version>)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark this release as a prerelease"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-kernel-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version }}
+  TAG: ${{ inputs.tag || format('v{0}', inputs.version) }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Validate release name
+        shell: bash
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "invalid version: $VERSION" >&2
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "invalid tag: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Install kernel build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex libelf-dev libssl-dev lz4 \
+            gcc-aarch64-linux-gnu
+
+      - name: Get AOSP boot-image tools
+        shell: bash
+        run: |
+          git clone --depth 1 \
+            https://android.googlesource.com/platform/system/tools/mkbootimg \
+            "$RUNNER_TEMP/mkbootimg"
+
+      - name: Configure kernel
+        shell: bash
+        run: |
+          KOUT="$GITHUB_WORKSPACE/kernel-out"
+          make -C kernel O="$KOUT" ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            vendor/sm8150-perf_defconfig
+          cat kernel/arch/arm64/configs/vendor/xiaomi/raphael.config \
+            >> "$KOUT/.config"
+          make -C kernel O="$KOUT" ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          KOUT="$GITHUB_WORKSPACE/kernel-out"
+          make -C kernel O="$KOUT" ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j"$(nproc)" Image.gz
+
+      - name: Pack boot image
+        shell: bash
+        run: |
+          KOUT="$GITHUB_WORKSPACE/kernel-out"
+          IMAGE="$RUNNER_TEMP/boot-airdroid-${VERSION}.img"
+          CMDLINE='androidboot.hardware=qcom androidboot.console=ttyMSM0 androidboot.memcg=1 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 androidboot.fstab_suffix=qcom androidboot.init_fatal_reboot_target=recovery androidboot.super_partition=system buildvariant=user'
+
+          python3 "$RUNNER_TEMP/mkbootimg/mkbootimg.py" \
+            --kernel "$KOUT/arch/arm64/boot/Image.gz" \
+            --ramdisk "$GITHUB_WORKSPACE/out/ramdisk" \
+            --dtb "$GITHUB_WORKSPACE/out/dtb" \
+            --header_version 2 --pagesize 4096 --base 0x0 \
+            --kernel_offset 0x00008000 \
+            --ramdisk_offset 0x01000000 \
+            --tags_offset 0x00000100 \
+            --dtb_offset 0x01f00000 \
+            --os_version 17.0.0 --os_patch_level 2026-11 \
+            --cmdline "$CMDLINE" \
+            -o "$IMAGE"
+
+          python3 "$RUNNER_TEMP/mkbootimg/unpack_bootimg.py" \
+            --boot_img "$IMAGE" | sed -n '1,20p'
+          sha256sum "$IMAGE" > "$IMAGE.sha256"
+          echo "IMAGE_PATH=$IMAGE" >> "$GITHUB_ENV"
+          echo "IMAGE_SHA_PATH=$IMAGE.sha256" >> "$GITHUB_ENV"
+
+      - name: Upload boot image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-airdroid-${{ env.VERSION }}
+          path: |
+            ${{ env.IMAGE_PATH }}
+            ${{ env.IMAGE_SHA_PATH }}
+          if-no-files-found: error
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: AirDroid ${{ env.VERSION }}
+          files: |
+            ${{ env.IMAGE_PATH }}
+            ${{ env.IMAGE_SHA_PATH }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          overwrite_files: true

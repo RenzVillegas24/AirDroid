@@ -3,6 +3,7 @@ workspaces/raphael/kernel/
 # Large local artifacts / generated outputs.
 workspaces/raphael/boot-images/
 workspaces/raphael/boot-artifacts/
+workspaces/raphael/backups/
 workspaces/raphael/captures/
 workspaces/raphael/logs/
 workspaces/raphael/out/
@@ -11,6 +12,7 @@ workspaces/raphael/references/
 workspaces/raphael/tools/
 workspaces/shared/
 workspaces/chenfeng/
+workspaces/release/
 android-app/build/
 android-app/out/
 android-app/tools/

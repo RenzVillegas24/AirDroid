@@ -75,6 +75,59 @@ Android requires the same signing key for updates. If you install a release
 APK over a debug build signed with a different key, uninstall the old app
 first (which removes app data).
 
+## GitHub releases
+
+Releases are **manual only**. There is no push, tag, or schedule trigger.
+Nothing is published until one of these workflows is started from the GitHub
+Actions tab:
+
+```text
+Release App
+Release Kernel
+```
+
+Both workflows take a `version` and an optional `tag`. If `tag` is empty,
+`v<version>` is used. The app asset is `AirDroid-<version>.apk`; the kernel
+asset is `boot-airdroid-<version>.img`.
+
+### Repository secrets for the app workflow
+
+Add these under **Settings → Secrets and variables → Actions**:
+
+```text
+AIRDROID_KEYSTORE_BASE64
+AIRDROID_KEYSTORE_PASSWORD
+AIRDROID_KEY_PASSWORD
+AIRDROID_KEY_ALIAS              (optional; defaults to airdroid)
+```
+
+Create the base64 value locally without printing the key:
+
+```bash
+base64 -w0 "$HOME/.android/airdroid-release.jks" > /tmp/airdroid-release.b64
+```
+
+Paste the file contents into `AIRDROID_KEYSTORE_BASE64`. Never commit the
+keystore, the base64 value, or either password.
+
+The app workflow builds the ARM64 helper with `cross`, builds the release APK,
+zipaligns and signs it, uploads an artifact, and creates or updates the GitHub
+release.
+
+### Kernel workflow
+
+`Release Kernel` builds the pinned K20 `kernel/` submodule with the
+`sm8150-perf_defconfig` plus the `vendor/xiaomi/raphael.config` fragment. It
+packs the result with the tracked `out/ramdisk` and `out/dtb` and publishes:
+
+```text
+boot-airdroid-<version>.img
+boot-airdroid-<version>.img.sha256
+```
+
+This workflow is intentionally manual because kernel output is device-specific
+and must be checked before distribution. It does not flash anything.
+
 ## Rules
 
 - Never commit `*.jks`, `*.keystore`, passwords, or signing environment files.
@@ -82,3 +135,5 @@ first (which removes app data).
 - Bump `versionCode`/`versionName` in
   `android-app/app/build.gradle.kts` before each release.
 - The local `android-app/debug.keystore` is not a release key.
+- Only publish from the manual release workflows; do not add automatic release
+  triggers.

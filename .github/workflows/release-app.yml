@@ -1,0 +1,139 @@
+name: Release App
+
+# Manual only. A release is never created by a push, tag, or schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "App version, for example 1.5.0"
+        required: true
+        type: string
+      tag:
+        description: "Release tag (default: v<version>)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark this release as a prerelease"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-app-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version }}
+  TAG: ${{ inputs.tag || format('v{0}', inputs.version) }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Validate release name
+        shell: bash
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "invalid version: $VERSION" >&2
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "invalid tag: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.1"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Build ARM64 helper
+        working-directory: android-app/helper
+        run: |
+          cross build --release --target aarch64-unknown-linux-musl
+          mkdir -p ../assets
+          cp target/aarch64-unknown-linux-musl/release/owly-k20-helper \
+            ../assets/owly-k20-helper
+
+      - name: Decode release keystore
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.AIRDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$KEYSTORE_B64" ]]; then
+            echo "missing repository secret AIRDROID_KEYSTORE_BASE64" >&2
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/airdroid-release.jks"
+          chmod 600 "$RUNNER_TEMP/airdroid-release.jks"
+
+      - name: Build unsigned release APK
+        env:
+          SKIP_HELPER_BUILD: "1"
+        run: scripts/build-app.sh release
+
+      - name: Sign release APK
+        shell: bash
+        env:
+          AIRDROID_KEYSTORE: ${{ runner.temp }}/airdroid-release.jks
+          AIRDROID_KEY_ALIAS: ${{ secrets.AIRDROID_KEY_ALIAS || 'airdroid' }}
+          AIRDROID_KEYSTORE_PASSWORD: ${{ secrets.AIRDROID_KEYSTORE_PASSWORD }}
+          AIRDROID_KEY_PASSWORD: ${{ secrets.AIRDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$AIRDROID_KEYSTORE_PASSWORD" ]]; then
+            echo "missing repository secret AIRDROID_KEYSTORE_PASSWORD" >&2
+            exit 1
+          fi
+          if [[ -z "$AIRDROID_KEY_PASSWORD" ]]; then
+            echo "missing repository secret AIRDROID_KEY_PASSWORD" >&2
+            exit 1
+          fi
+          APK_OUT="$RUNNER_TEMP/AirDroid-${VERSION}.apk"
+          scripts/sign-release.sh \
+            android-app/app/build/outputs/apk/release/app-release-unsigned.apk \
+            "$APK_OUT"
+          echo "APK_PATH=$APK_OUT" >> "$GITHUB_ENV"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirDroid-${{ env.VERSION }}-apk
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: AirDroid ${{ env.VERSION }}
+          files: ${{ env.APK_PATH }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          overwrite_files: true
