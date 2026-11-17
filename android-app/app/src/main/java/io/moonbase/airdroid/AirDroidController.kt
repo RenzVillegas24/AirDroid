@@ -2380,15 +2380,22 @@ class AirDroidController(private val context: Context) {
             sent.coerceIn(0L, sourceTotal)
         }
         var remaining = sourceProgress
+        val completedNow = System.currentTimeMillis()
         return files.map { file ->
             val take = remaining.coerceAtMost(file.totalBytes)
             remaining -= take
+            val status = when {
+                file.totalBytes > 0 && take >= file.totalBytes -> TransferStatus.COMPLETE
+                take > 0 -> TransferStatus.TRANSFERRING
+                else -> TransferStatus.WAITING
+            }
             file.copy(
                 transferredBytes = take,
-                status = when {
-                    file.totalBytes > 0 && take >= file.totalBytes -> TransferStatus.COMPLETE
-                    take > 0 -> TransferStatus.TRANSFERRING
-                    else -> TransferStatus.WAITING
+                status = status,
+                completedAt = if (status.isTerminal) {
+                    file.completedAt ?: completedNow
+                } else {
+                    file.completedAt
                 },
             )
         }
@@ -2422,12 +2429,18 @@ class AirDroidController(private val context: Context) {
             },
             completedAt = current.completedAt ?: System.currentTimeMillis(),
             files = current.files.map { file ->
+                val nextStatus = if (status.isTerminal) status else file.status
                 file.copy(
-                    status = if (status.isTerminal) status else file.status,
+                    status = nextStatus,
                     transferredBytes = if (status == TransferStatus.COMPLETE) {
                         file.totalBytes
                     } else {
                         file.transferredBytes
+                    },
+                    completedAt = if (nextStatus.isTerminal) {
+                        file.completedAt ?: System.currentTimeMillis()
+                    } else {
+                        file.completedAt
                     },
                 )
             },

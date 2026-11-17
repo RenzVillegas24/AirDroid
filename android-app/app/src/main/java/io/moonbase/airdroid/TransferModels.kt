@@ -36,6 +36,7 @@ data class TransferFile(
     val transferredBytes: Long = 0,
     val status: TransferStatus = TransferStatus.WAITING,
     val localPath: String? = null,
+    val completedAt: Long? = null,
 )
 
 /**

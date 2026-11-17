@@ -1541,6 +1541,7 @@ private fun groupReceivedTransfers(
                         transferredBytes = item.transferredBytes,
                         status = item.status,
                         localPath = item.localPath,
+                        completedAt = item.completedAt,
                     )
                 },
             )
@@ -2079,7 +2080,10 @@ private fun TransferFileList(
     val hasHeader = files.size > 1 && onToggle != null
     // Keep the file that is moving at the top, queued files next, and
     // finished files at the bottom of an expanded group.
-    val orderedFiles = files.sortedWith(compareBy<TransferFile> { fileQueueRank(it) })
+    val orderedFiles = files.sortedWith(
+        compareBy<TransferFile> { fileQueueRank(it) }
+            .thenByDescending { it.completedAt ?: 0L },
+    )
     val scope = rememberCoroutineScope()
     var recentDone by remember { mutableStateOf<RecentDone?>(null) }
     val expandedBlinks = remember { mutableStateMapOf<String, Long>() }
