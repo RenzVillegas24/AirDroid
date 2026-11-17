@@ -397,8 +397,17 @@ has to be created inside the driver, not through nl80211 userspace.
 
 The public qca branches checked (`chenfeng-u-oss`, `peridot-u-oss`, and
 related Xiaomi branches) top out at `5.2.1.86B`. The stock `5.2.1.91G` source
-was not found publicly. Without that source or the exact vendor build
-environment, an in-tree K20-style hidden-STA port cannot be built safely.
+was found later in the newer MiCode branches `bsp-zorn-v-oss`,
+`flourite-v-oss`, `muyu-v-oss`, and `uke-v-oss`.
+
+A clean `5.2.1.91G` module was built from `muyu-v-oss` against the 6.1.68
+kernel tree, with exact vermagic and firmware paths. It still rebooted during
+boot. The stock module returned and Wi-Fi is enabled again.
+
+So the qca source version alone is not enough. The stock module also depends
+on the exact Civi vendor kernel configuration/patches, which are not in the
+public generic 6.1.68 tree. Without that exact vendor build environment, the
+in-tree K20 hidden-STA port cannot be built safely.
 
 Remaining work:
 
