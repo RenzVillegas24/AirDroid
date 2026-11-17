@@ -3,6 +3,7 @@ workspaces/raphael/kernel/
 # Large local artifacts / generated outputs.
 workspaces/raphael/boot-images/
 workspaces/raphael/boot-artifacts/
+workspaces/raphael/backups/
 workspaces/raphael/captures/
 workspaces/raphael/logs/
 workspaces/raphael/out/
