@@ -531,6 +531,27 @@ fn set_radio_channel(channel: u8) {
     }
 }
 
+/// Widen the kernel TCP windows for the AWDL transfer. Android's Wi-Fi HAL
+/// caps tcp_limit_output_bytes at 256 KiB and auto-tunes the receive window
+/// conservatively; both are small for a time-slotted link. These values are
+/// intentionally an experiment and are restored by rebooting the phone.
+fn tune_tcp_for_awdl() {
+    let settings = [
+        ("/proc/sys/net/core/rmem_max", "16777216"),
+        ("/proc/sys/net/core/wmem_max", "16777216"),
+        ("/proc/sys/net/ipv4/tcp_rmem", "262144 4194304 16777216"),
+        ("/proc/sys/net/ipv4/tcp_wmem", "262144 4194304 16777216"),
+        ("/proc/sys/net/ipv4/tcp_limit_output_bytes", "4194304"),
+        ("/proc/sys/net/ipv4/tcp_slow_start_after_idle", "0"),
+    ];
+    for (path, value) in settings {
+        if let Err(e) = std::fs::write(path, format!("{value}\n")) {
+            println!("TCP_TUNE {path} failed: {e}");
+        }
+    }
+    println!("TCP_TUNE rmem_max=16777216 tcp_rmem=4MiB wmem=4MiB limit_output=4MiB slow_start_after_idle=0");
+}
+
 async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiver<Vec<PeerInfo>>), Box<dyn Error>> {
     if !std::path::Path::new("/dev/net/tun").exists()
         && !std::path::Path::new("/dev/tun").exists()
@@ -538,6 +559,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
         return Err("no TUN device; awdl0 cannot be created".into());
     }
     let channel = if channel_freq(channel).is_some() { channel } else { DEFAULT_CHANNEL };
+    tune_tcp_for_awdl();
     let _ = Command::new("ip").args(["link", "set", MONITOR, "up"]).status();
     let addr = read_hidden_mac().await?;
     println!("INJECT_MAC {addr:?}");
