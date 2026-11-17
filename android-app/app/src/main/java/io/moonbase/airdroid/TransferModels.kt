@@ -28,6 +28,17 @@ enum class TransferStatus {
         get() = !isActive
 }
 
+/** One file inside a multi-file transfer group. */
+data class TransferFile(
+    val id: String,
+    val name: String,
+    val totalBytes: Long,
+    val transferredBytes: Long = 0,
+    val status: TransferStatus = TransferStatus.WAITING,
+    val localPath: String? = null,
+    val completedAt: Long? = null,
+)
+
 /**
  * One file in the Sent or Received list. [id] is stable across helper events,
  * UI updates, and notification updates.
@@ -46,6 +57,8 @@ data class TransferItem(
     val completedAt: Long? = null,
     /** First upload/download event, excluding the AirDrop prompt wait. */
     val uploadStartedAt: Long? = null,
+    /** Child files when this card represents a multi-file batch. */
+    val files: List<TransferFile> = emptyList(),
 ) {
     val progressPercent: Int?
         get() = if (totalBytes > 0) {

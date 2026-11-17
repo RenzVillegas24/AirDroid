@@ -440,6 +440,9 @@ class AirDroidController(private val context: Context) {
         }
     }
 
+    /** The receive batch key for grouping per-file rows in the UI. */
+    fun batchKeyFor(id: String): String? = transferRequestIds[id]
+
     /** Deletes a completed received file and its history entry. */
     fun deleteReceivedFile(path: String) {
         val file = File(path)
@@ -880,8 +883,16 @@ class AirDroidController(private val context: Context) {
         } else {
             "Sending ${cleanItems.size} files to ${target.displayName()}..."
         }
+        val transferId = "tx-${System.currentTimeMillis()}-${++sendTransferCounter}"
+        val childFiles = cleanItems.mapIndexed { index, (_, name) ->
+            TransferFile(
+                id = "$transferId-$index",
+                name = name.ifBlank { files[index].name },
+                totalBytes = files[index].length().coerceAtLeast(0),
+            )
+        }
         val transfer = TransferItem(
-            id = "tx-${System.currentTimeMillis()}-${++sendTransferCounter}",
+            id = transferId,
             direction = TransferDirection.SENT,
             peerName = target.displayName(),
             fileName = shownName,
@@ -890,6 +901,7 @@ class AirDroidController(private val context: Context) {
             status = TransferStatus.WAITING,
             localPath = cleanItems.singleOrNull()?.first,
             startedAt = System.currentTimeMillis(),
+            files = childFiles,
         )
         activeSendTransferId = transfer.id
         originalTransferTotals[transfer.id] = total
@@ -976,6 +988,7 @@ class AirDroidController(private val context: Context) {
                             item.status
                         },
                         uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
+                        files = progressChildren(item.files, sent, total),
                     )
                 }
             }
@@ -1929,13 +1942,22 @@ class AirDroidController(private val context: Context) {
         val total = after(line, "total=").toLongOrNull() ?: 0L
         val transferId = resolveReceiveFileTransferId(helperId, name) ?: return
         updateTransfer(transferId) { item ->
-            item.copy(
-                fileName = name.ifBlank { item.fileName },
-                transferredBytes = bytes,
-                totalBytes = if (total > 0) total else item.totalBytes,
-                status = TransferStatus.TRANSFERRING,
-                uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
-            )
+            // Per-file completion can arrive while an aggregate/progress line is
+            // still in flight. Never move a terminal row back to live.
+            if (item.status.isTerminal) {
+                item
+            } else {
+                item.copy(
+                    fileName = name.ifBlank { item.fileName },
+                    // Per-file progress events can race the batch ticker. Keep
+                    // the high-water mark so a late/out-of-order event cannot
+                    // move the row backwards.
+                    transferredBytes = maxOf(item.transferredBytes, bytes),
+                    totalBytes = if (total > 0) total else item.totalBytes,
+                    status = TransferStatus.TRANSFERRING,
+                    uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
+                )
+            }
         }
         receiveProgressBytes = activeTransfers
             .filter { it.direction == TransferDirection.RECEIVED }
@@ -1956,13 +1978,16 @@ class AirDroidController(private val context: Context) {
         // final Received event names the same path again.
         if (completedTransfers.any { it.id == transferId && it.status == TransferStatus.COMPLETE }) return
         val fileName = name.ifBlank { if (path.isNotBlank()) File(path).name else "" }
+        // FileComplete carries the staging-relative path. The final RECEIVED
+        // event supplies the absolute path; don't expose the relative one.
+        val absolutePath = path.takeIf { it.startsWith("/") }
         finishTransfer(
             transferId,
             TransferStatus.COMPLETE,
-            localPath = path.ifBlank { null },
+            localPath = absolutePath,
             fileName = fileName.ifBlank { null },
         )
-        if (path.isNotBlank()) addReceivedPath(path)
+        if (absolutePath != null) addReceivedPath(absolutePath)
     }
 
     private fun handleReceiveAggregateProgress(line: String) {
@@ -1983,7 +2008,9 @@ class AirDroidController(private val context: Context) {
         } else {
             "Receiving ${bytes.readableBytes()}"
         }
-        updateIncomingAggregateProgress(id, bytes, total)
+        // The batch ticker counts bytes across every file, while each row has
+        // its own per-file Progress event. Redistributing this total across
+        // rows made the current row jump backwards when the next file started.
     }
 
     private fun handleReceivedFile(line: String) {
@@ -2331,6 +2358,49 @@ class AirDroidController(private val context: Context) {
         return next
     }
 
+    /**
+     * Maps aggregate compressed progress onto the batch's source files.
+     *
+     * `sent` counts compressed upload bytes, so it cannot be compared with a
+     * source file's size directly. Convert it to the source-size equivalent
+     * first; otherwise a small compressed batch can finish the visible queue
+     * in the wrong order (or leave the first queued file stuck forever).
+     */
+    private fun progressChildren(
+        files: List<TransferFile>,
+        sent: Long,
+        uploadTotal: Long,
+    ): List<TransferFile> {
+        val sourceTotal = files.sumOf { it.totalBytes }
+        val sourceProgress = if (uploadTotal > 0) {
+            (sourceTotal * (sent.toDouble() / uploadTotal.toDouble()))
+                .toLong()
+                .coerceIn(0L, sourceTotal)
+        } else {
+            sent.coerceIn(0L, sourceTotal)
+        }
+        var remaining = sourceProgress
+        val completedNow = System.currentTimeMillis()
+        return files.map { file ->
+            val take = remaining.coerceAtMost(file.totalBytes)
+            remaining -= take
+            val status = when {
+                file.totalBytes > 0 && take >= file.totalBytes -> TransferStatus.COMPLETE
+                take > 0 -> TransferStatus.TRANSFERRING
+                else -> TransferStatus.WAITING
+            }
+            file.copy(
+                transferredBytes = take,
+                status = status,
+                completedAt = if (status.isTerminal) {
+                    file.completedAt ?: completedNow
+                } else {
+                    file.completedAt
+                },
+            )
+        }
+    }
+
     private fun finishTransfer(
         id: String,
         status: TransferStatus,
@@ -2358,6 +2428,22 @@ class AirDroidController(private val context: Context) {
                 current.transferredBytes
             },
             completedAt = current.completedAt ?: System.currentTimeMillis(),
+            files = current.files.map { file ->
+                val nextStatus = if (status.isTerminal) status else file.status
+                file.copy(
+                    status = nextStatus,
+                    transferredBytes = if (status == TransferStatus.COMPLETE) {
+                        file.totalBytes
+                    } else {
+                        file.transferredBytes
+                    },
+                    completedAt = if (nextStatus.isTerminal) {
+                        file.completedAt ?: System.currentTimeMillis()
+                    } else {
+                        file.completedAt
+                    },
+                )
+            },
         )
         if (status.isTerminal) originalTransferTotals.remove(id)
         if (next == current) return current

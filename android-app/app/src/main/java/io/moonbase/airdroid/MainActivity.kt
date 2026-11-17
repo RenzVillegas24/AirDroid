@@ -20,9 +20,18 @@ import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -101,6 +110,7 @@ import androidx.compose.material3.ButtonGroupScope
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -140,6 +150,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.Stable
@@ -154,6 +166,7 @@ import android.os.SystemClock
 import android.text.format.DateUtils
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -166,6 +179,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -199,6 +213,7 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.BufferedOutputStream
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
+import java.util.ArrayList
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -920,18 +935,24 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         compareByDescending<Peer> { controller.isPinned(it.mac) }
             .thenByDescending { it.rssi },
     )
-    val sentActive = controller.activeTransfers.filter {
-        it.direction == TransferDirection.SENT
-    }
-    val sentDone = controller.completedTransfers.filter {
-        it.direction == TransferDirection.SENT
-    }
-    val receivedActive = controller.activeTransfers.filter {
-        it.direction == TransferDirection.RECEIVED
-    }
-    val receivedDone = controller.completedTransfers.filter {
-        it.direction == TransferDirection.RECEIVED
-    }
+    val sentActive = controller.activeTransfers
+        .filter { it.direction == TransferDirection.SENT }
+        .sortedWith(activeTransferOrder)
+    val sentDone = controller.completedTransfers
+        .filter { it.direction == TransferDirection.SENT }
+        .sortedWith(finishedTransferOrder)
+    val receivedAll = groupReceivedTransfers(
+        controller.activeTransfers.filter { it.direction == TransferDirection.RECEIVED } +
+            controller.completedTransfers.filter { it.direction == TransferDirection.RECEIVED },
+        controller,
+    )
+    val receivedActive = receivedAll
+        .filter { it.status.isActive }
+        .sortedWith(activeTransferOrder)
+    val receivedDone = receivedAll
+        .filter { it.status.isTerminal }
+        .sortedWith(finishedTransferOrder)
+    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -981,6 +1002,11 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                                 transfer = transfer,
                                 localName = myName,
                                 onCancel = { controller.cancelTransfer(transfer.id) },
+                                expanded = expandedGroups[transfer.id] == true,
+                                onToggleGroup = {
+                                    expandedGroups[transfer.id] =
+                                        expandedGroups[transfer.id] != true
+                                },
                             )
                         }
                     }
@@ -988,7 +1014,17 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 if (sentDone.isNotEmpty()) {
                     item(key = "sent-label") { SectionLabel("SENT", Modifier.animateItem()) }
                     items(sentDone, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) { TransferCard(transfer, localName = myName) }
+                        Box(Modifier.animateItem()) {
+                            TransferCard(
+                                transfer = transfer,
+                                localName = myName,
+                                expanded = expandedGroups[transfer.id] == true,
+                                onToggleGroup = {
+                                    expandedGroups[transfer.id] =
+                                        expandedGroups[transfer.id] != true
+                                },
+                            )
+                        }
                     }
                 }
                 if (sentActive.isEmpty() && sentDone.isEmpty()) {
@@ -1007,13 +1043,26 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                     item(key = "receiving-label") { SectionLabel("RECEIVING", Modifier.animateItem()) }
                     items(receivedActive, key = { it.id }) { transfer ->
                         Box(Modifier.animateItem()) {
+                            val activeFile = transfer.files.firstOrNull {
+                                it.status.isActive
+                            }
                             TransferCard(
                                 transfer = transfer,
                                 localName = myName,
-                                onCancel = if (transfer.canCancel) {
-                                    { controller.cancelTransfer(transfer.id) }
+                                onCancel = if (transfer.canCancel && activeFile != null) {
+                                    { controller.cancelTransfer(activeFile.id) }
                                 } else {
                                     null
+                                },
+                                onOpenFile = { file ->
+                                    file.localPath?.let { path ->
+                                        scope.launch { openReceivedFile(context, path) }
+                                    }
+                                },
+                                expanded = expandedGroups[transfer.id] == true,
+                                onToggleGroup = {
+                                    expandedGroups[transfer.id] =
+                                        expandedGroups[transfer.id] != true
                                 },
                             )
                         }
@@ -1023,25 +1072,40 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                     item(key = "received-label") { SectionLabel("RECEIVED", Modifier.animateItem()) }
                     items(receivedDone, key = { it.id }) { transfer ->
                         Box(Modifier.animateItem()) {
-                        TransferCard(
-                            transfer = transfer,
-                            localName = myName,
-                            onOpen = {
-                                transfer.localPath?.let { path ->
-                                    scope.launch { openReceivedFile(context, path) }
-                                }
-                            },
-                            onShare = {
-                                transfer.localPath?.let { path ->
-                                    scope.launch { shareReceivedFile(context, path) }
-                                }
-                            },
-                            onDelete = {
-                                transfer.localPath?.let { path ->
-                                    controller.deleteReceivedFile(path)
-                                }
-                            },
-                        )
+                            val paths = transfer.files.mapNotNull { it.localPath }
+                            TransferCard(
+                                transfer = transfer,
+                                localName = myName,
+                                onOpen = transfer.localPath?.let { path ->
+                                    { scope.launch { openReceivedFile(context, path) } }
+                                },
+                                onShare = transfer.localPath?.let { path ->
+                                    { scope.launch { shareReceivedFile(context, path) } }
+                                },
+                                onDelete = transfer.localPath?.let { path ->
+                                    { controller.deleteReceivedFile(path) }
+                                },
+                                onOpenFile = { file ->
+                                    file.localPath?.let { path ->
+                                        scope.launch { openReceivedFile(context, path) }
+                                    }
+                                },
+                                onShareGroup = if (paths.isNotEmpty()) {
+                                    { scope.launch { shareReceivedFiles(context, paths) } }
+                                } else {
+                                    null
+                                },
+                                onDeleteGroup = if (paths.isNotEmpty()) {
+                                    { paths.forEach { controller.deleteReceivedFile(it) } }
+                                } else {
+                                    null
+                                },
+                                expanded = expandedGroups[transfer.id] == true,
+                                onToggleGroup = {
+                                    expandedGroups[transfer.id] =
+                                        expandedGroups[transfer.id] != true
+                                },
+                            )
                         }
                     }
                 }
@@ -1291,11 +1355,6 @@ private fun rememberLiveRate(key: Any, transferredBytes: Long, active: Boolean):
                 state.lastMs = now
             }
         }
-        // No new bytes for a while: treat the transfer as stalled.
-        delay(3000)
-        state.bytesPerSecond = 0.0
-        state.lastBytes = transferredBytes
-        state.lastMs = SystemClock.elapsedRealtime()
     }
     return state.bytesPerSecond
 }
@@ -1419,6 +1478,96 @@ private fun StatusChip(text: String, @DrawableRes icon: Int, container: Color, c
     }
 }
 
+/** In-progress cards first, queued cards next, finished cards last. */
+private fun transferQueueRank(item: TransferItem): Int = when {
+    item.status == TransferStatus.TRANSFERRING ||
+        item.files.any { it.status == TransferStatus.TRANSFERRING } -> 0
+    item.status.isActive -> 1
+    else -> 2
+}
+
+private val activeTransferOrder = compareBy<TransferItem> { transferQueueRank(it) }
+    .thenByDescending { it.startedAt }
+    .thenBy { it.id }
+
+private val finishedTransferOrder =
+    compareByDescending<TransferItem> { it.completedAt ?: it.startedAt }
+        .thenBy { it.id }
+
+/**
+ * Turns the controller's per-file receive rows into one card per `/Ask`.
+ * A one-file request keeps its existing card.
+ */
+private fun groupReceivedTransfers(
+    items: List<TransferItem>,
+    controller: AirDroidController,
+): List<TransferItem> {
+    if (items.size <= 1) return items
+    return items.groupBy { controller.batchKeyFor(it.id) ?: "single:${it.id}" }
+        .values
+        .map { group ->
+            if (group.size == 1) return@map group.first()
+            // Per-file receive rows are upserted by their stable ids, and the
+            // active list is sorted by time/id. Numeric suffix order restores
+            // the sender's actual file order (0, 1, 2, ... 10) instead of the
+            // lexicographic order (0, 1, 10, 11, 2, ...).
+            val ordered = group.sortedWith(
+                compareBy<TransferItem> { receivedFileIndex(it.id) }
+                    .thenBy { it.startedAt },
+            )
+            val first = ordered.first()
+            val anyActive = ordered.any { it.status.isActive }
+            val status = when {
+                anyActive -> ordered.firstOrNull { it.status.isActive }?.status ?: TransferStatus.TRANSFERRING
+                ordered.all { it.status == TransferStatus.COMPLETE } -> TransferStatus.COMPLETE
+                ordered.any { it.status == TransferStatus.CANCELLED } -> TransferStatus.CANCELLED
+                else -> TransferStatus.FAILED
+            }
+            first.copy(
+                id = "rx-group-${controller.batchKeyFor(first.id) ?: first.id}",
+                fileName = "${ordered.size} files",
+                totalBytes = ordered.sumOf { it.totalBytes },
+                transferredBytes = ordered.sumOf { it.transferredBytes },
+                status = status,
+                localPath = null,
+                completedAt = if (status.isTerminal) {
+                    ordered.mapNotNull { it.completedAt }.maxOrNull() ?: System.currentTimeMillis()
+                } else {
+                    null
+                },
+                uploadStartedAt = ordered.mapNotNull { it.uploadStartedAt }.minOrNull(),
+                files = ordered.map { item ->
+                    TransferFile(
+                        id = item.id,
+                        name = item.fileName,
+                        totalBytes = item.totalBytes,
+                        transferredBytes = item.transferredBytes,
+                        status = item.status,
+                        localPath = item.localPath,
+                        completedAt = item.completedAt,
+                    )
+                },
+            )
+        }
+}
+
+/** `rx-1-10` → 10, falling back to a stable last-position order. */
+private fun receivedFileIndex(id: String): Int =
+    id.substringAfterLast('-').toIntOrNull() ?: Int.MAX_VALUE
+
+/** Which body the transfer card shows. Used as the AnimatedContent key so the body cross-fades. */
+private enum class TransferPhase { PROGRESS, PENDING, DONE, FAILED }
+
+/** Progress bar thickness (was the 4dp default) and the container height that fits the wave. */
+private val TransferBarStroke = 7.dp
+private val TransferBarHeight = 14.dp
+
+/** Same grouped-list geometry as the Settings screen: 16dp outer corners, 4dp inner, 2dp gaps. */
+private val TransferGroupShape = RoundedCornerShape(16.dp)
+private val TransferItemShape = RoundedCornerShape(4.dp)
+private val TransferItemGap = 2.dp
+private val TransferFileRowHeight = 72.dp
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun TransferCard(
@@ -1428,6 +1577,11 @@ private fun TransferCard(
     onOpen: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
+    onOpenFile: ((TransferFile) -> Unit)? = null,
+    onShareGroup: (() -> Unit)? = null,
+    onDeleteGroup: (() -> Unit)? = null,
+    expanded: Boolean = false,
+    onToggleGroup: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val sent = transfer.direction == TransferDirection.SENT
@@ -1436,26 +1590,43 @@ private fun TransferCard(
     val transferring = status == TransferStatus.TRANSFERRING
     val failed = status == TransferStatus.FAILED || status == TransferStatus.CANCELLED
     val complete = status == TransferStatus.COMPLETE
+    val fileCount = transfer.files.size
+    val multi = fileCount > 1
+    val doneCount = transfer.files.count { it.status == TransferStatus.COMPLETE }
 
     val accent = if (sent) colors.primary else colors.tertiary
-    val avatarContainer = when {
-        failed -> colors.errorContainer
-        sent -> colors.primaryContainer
-        else -> colors.tertiaryContainer
-    }
-    val avatarTint = when {
-        failed -> colors.onErrorContainer
-        sent -> colors.onPrimaryContainer
-        else -> colors.onTertiaryContainer
-    }
+    val avatarContainer by animateColorAsState(
+        targetValue = when {
+            failed -> colors.errorContainer
+            sent -> colors.primaryContainer
+            else -> colors.tertiaryContainer
+        },
+        animationSpec = tween(350),
+        label = "avatarContainer",
+    )
+    val avatarTint by animateColorAsState(
+        targetValue = when {
+            failed -> colors.onErrorContainer
+            sent -> colors.onPrimaryContainer
+            else -> colors.onTertiaryContainer
+        },
+        animationSpec = tween(350),
+        label = "avatarTint",
+    )
     val icon = when {
-        complete -> R.drawable.ic_check_circle
         failed -> R.drawable.ic_warning
         sent -> R.drawable.ic_send
         else -> R.drawable.ic_download
     }
     val peer = transfer.peerName.ifBlank { "AirDrop" }
     val me = localName.ifBlank { Build.MODEL }
+
+    // A group that finishes collapses to the finished summary. If the user
+    // had expanded it while live, revealing every finished row at once reads
+    // like completed items suddenly reappearing.
+    LaunchedEffect(complete) {
+        if (complete && expanded) onToggleGroup?.invoke()
+    }
 
     val hasProgress = active &&
         transfer.progressPercent != null &&
@@ -1465,13 +1636,35 @@ private fun TransferCard(
     } else {
         (transfer.progressPercent ?: 0) / 100f
     }
+    // A spring keeps its velocity when the target moves, so frequent byte updates glide
+    // instead of restarting an ease curve every time.
     val progress by animateFloatAsState(
         targetValue = targetProgress,
-        animationSpec = tween(450, easing = LinearOutSlowInEasing),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessLow,
+            visibilityThreshold = 0.001f,
+        ),
         label = "transferProgress",
     )
 
-    val rate = rememberLiveRate(transfer.id, transfer.transferredBytes, transferring)
+    val density = LocalDensity.current
+    val barStroke = remember(density) {
+        Stroke(width = with(density) { TransferBarStroke.toPx() }, cap = StrokeCap.Round)
+    }
+
+    val liveRate = rememberLiveRate(transfer.id, transfer.transferredBytes, transferring)
+    // Sparse progress events (especially during AWDL slowdowns) can leave the
+    // live smoother without a sample. Fall back to the transfer average so the
+    // card never falls back to "Measuring speed…" / "Estimating time…".
+    val rateStart = transfer.uploadStartedAt ?: transfer.startedAt
+    val rateElapsedMs = (System.currentTimeMillis() - rateStart).coerceAtLeast(1L)
+    val averageRate = if (transfer.transferredBytes > 0) {
+        transfer.transferredBytes * 1000.0 / rateElapsedMs
+    } else {
+        0.0
+    }
+    val rate = liveRate.takeIf { it > 0.0 } ?: averageRate
     val remainingBytes = (transfer.totalBytes - transfer.transferredBytes).coerceAtLeast(0)
     val etaSeconds: Long? = if (rate > 0.0 && transfer.totalBytes > 0) {
         kotlin.math.ceil(remainingBytes / rate).toLong()
@@ -1479,10 +1672,33 @@ private fun TransferCard(
         null
     }
 
+    val phase = when {
+        hasProgress -> TransferPhase.PROGRESS
+        active -> TransferPhase.PENDING
+        complete -> TransferPhase.DONE
+        else -> TransferPhase.FAILED
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize(),
+            .then(
+                if (complete &&
+                    transfer.direction == TransferDirection.RECEIVED &&
+                    transfer.files.isEmpty() &&
+                    onOpen != null
+                ) {
+                    Modifier.clickable(onClick = onOpen)
+                } else {
+                    Modifier
+                },
+            )
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioLowBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+            ),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
     ) {
@@ -1492,27 +1708,71 @@ private fun TransferCard(
                 .padding(start = 16.dp, top = 16.dp, end = 12.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // Header: avatar, file name, "my phone -> their phone", cancel.
+            // Header: avatar (with a file-count badge for batches), title, route, cancel.
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = CircleShape,
-                    color = avatarContainer,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(icon),
-                            contentDescription = null,
-                            tint = avatarTint,
-                            modifier = Modifier.size(22.dp),
-                        )
+                Box {
+                    Surface(
+                        shape = CircleShape,
+                        color = avatarContainer,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Crossfade(
+                                targetState = icon,
+                                animationSpec = tween(250),
+                                label = "avatarIcon",
+                            ) { res ->
+                                Icon(
+                                    painter = painterResource(res),
+                                    contentDescription = null,
+                                    tint = avatarTint,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                    }
+                    if (multi) {
+                        Surface(
+                            shape = CircleShape,
+                            color = colors.surfaceContainerLow,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .offset(x = 5.dp, y = 5.dp)
+                                .size(21.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (failed) colors.error else accent,
+                                    modifier = Modifier.size(17.dp),
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = if (fileCount > 99) "99+" else fileCount.toString(),
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 9.sp,
+                                                lineHeight = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                            ),
+                                            color = if (failed) {
+                                                colors.onError
+                                            } else if (sent) {
+                                                colors.onPrimary
+                                            } else {
+                                                colors.onTertiary
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = transfer.fileName,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleMedium,
                         color = colors.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1538,118 +1798,150 @@ private fun TransferCard(
                 }
             }
 
-            when {
-                // Live transfer: big percentage on the left, speed + ETA on the right.
-                hasProgress -> {
-                    Column(
-                        modifier = Modifier.padding(end = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            BigPercent(progress = progress, color = accent)
-                            Spacer(Modifier.weight(1f))
-                            Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.spacedBy(1.dp),
+            // Status body. Cross-fades with a small upward slide when the phase changes
+            // (waiting -> live -> finished). Its own size change is snapped because the card's
+            // animateContentSize already eases the height.
+            AnimatedContent(
+                targetState = phase,
+                transitionSpec = {
+                    (
+                        fadeIn(tween(260, delayMillis = 90)) +
+                            slideInVertically(tween(260, delayMillis = 90)) { it / 6 }
+                        ).togetherWith(fadeOut(tween(120)))
+                        .using(SizeTransform(clip = false) { _, _ -> snap() })
+                },
+                label = "transferPhase",
+            ) { target ->
+                when (target) {
+                    // Live transfer: big percentage, speed + ETA, a thick wavy bar, byte counts.
+                    TransferPhase.PROGRESS -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                BigPercent(progress = progress, color = accent)
+                                Spacer(Modifier.weight(1f))
+                                Column(
+                                    horizontalAlignment = Alignment.End,
+                                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                                ) {
+                                    Text(
+                                        text = if (rate > 0.0) {
+                                            "${rate.toLong().readableBytes()}/s"
+                                        } else {
+                                            "—"
+                                        },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = colors.onSurface,
+                                    )
+                                    Text(
+                                        text = etaSeconds?.let { "${formatDuration(it)} left" } ?: "—",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            LinearWavyProgressIndicator(
+                                progress = { progress },
+                                color = accent,
+                                trackColor = colors.surfaceContainerHighest,
+                                stroke = barStroke,
+                                trackStroke = barStroke,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(TransferBarHeight),
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = if (rate > 0.0) {
-                                        "${rate.toLong().readableBytes()}/s"
-                                    } else {
-                                        "Measuring speed…"
+                                    text = buildString {
+                                        append(transfer.transferredBytes.readableBytes())
+                                        if (transfer.totalBytes > 0) {
+                                            append(" of ")
+                                            append(transfer.totalBytes.readableBytes())
+                                        }
                                     },
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = colors.onSurface,
-                                )
-                                Text(
-                                    text = etaSeconds?.let { "${formatDuration(it)} left" }
-                                        ?: "Estimating time…",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
                                 )
-                            }
-                        }
-                        LinearWavyProgressIndicator(
-                            progress = { progress },
-                            color = accent,
-                            trackColor = colors.surfaceContainerHighest,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            text = buildString {
-                                append(transfer.transferredBytes.readableBytes())
-                                if (transfer.totalBytes > 0) {
-                                    append(" of ")
-                                    append(transfer.totalBytes.readableBytes())
-                                }
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-                // Waiting / offered / accepted: status text with an indeterminate bar.
-                active -> {
-                    Column(
-                        modifier = Modifier.padding(end = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = transferStatusLine(transfer),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = colors.onSurface,
-                        )
-                        LinearWavyProgressIndicator(
-                            color = accent,
-                            trackColor = colors.surfaceContainerHighest,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
-                // Finished: status chip, size / average speed / duration, and the finish time.
-                complete -> {
-                    Column(
-                        modifier = Modifier.padding(end = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            StatusChip(
-                                text = if (sent) "Delivered" else "Received",
-                                icon = R.drawable.ic_check_circle,
-                                container = if (sent) colors.primaryContainer else colors.tertiaryContainer,
-                                content = if (sent) colors.onPrimaryContainer else colors.onTertiaryContainer,
-                            )
-                            if (transfer.totalBytes > 0) MetaChip(transfer.totalBytes.readableBytes())
-                            transfer.averageBytesPerSecond?.let { avg ->
-                                MetaChip("${avg.readableBytes()}/s avg")
-                                val avgValue = avg.toDouble()
-                                if (avgValue > 0.0 && transfer.totalBytes > 0) {
-                                    MetaChip(
-                                        "took ${formatDuration(kotlin.math.ceil(transfer.totalBytes / avgValue).toLong())}",
+                                if (multi) {
+                                    Text(
+                                        text = "$doneCount of $fileCount files",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = accent,
                                     )
                                 }
                             }
                         }
-                        transfer.completedAt?.let {
+                    }
+                    // Waiting / offered / accepted: status text with an indeterminate bar.
+                    TransferPhase.PENDING -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
                             Text(
-                                text = formatEndedAt("Finished", it),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
+                                text = transferStatusLine(transfer),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = colors.onSurface,
+                            )
+                            LinearWavyProgressIndicator(
+                                color = accent,
+                                trackColor = colors.surfaceContainerHighest,
+                                stroke = barStroke,
+                                trackStroke = barStroke,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(TransferBarHeight),
                             )
                         }
                     }
-                }
-                failed -> {
-                    Column(
-                        modifier = Modifier.padding(end = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
+                    // Finished: status chip, size / average speed / duration.
+                    TransferPhase.DONE -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                StatusChip(
+                                    text = if (sent) "Delivered" else "Received",
+                                    icon = R.drawable.ic_check_circle,
+                                    container = if (sent) colors.primaryContainer else colors.tertiaryContainer,
+                                    content = if (sent) colors.onPrimaryContainer else colors.onTertiaryContainer,
+                                )
+                                if (transfer.totalBytes > 0) MetaChip(transfer.totalBytes.readableBytes())
+                                transfer.averageBytesPerSecond?.let { avg ->
+                                    MetaChip("${avg.readableBytes()}/s avg")
+                                    val avgValue = avg.toDouble()
+                                    if (avgValue > 0.0 && transfer.totalBytes > 0) {
+                                        MetaChip(
+                                            "took ${formatDuration(kotlin.math.ceil(transfer.totalBytes / avgValue).toLong())}",
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TransferPhase.FAILED -> {
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = colors.errorContainer.copy(alpha = 0.55f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 4.dp),
                         ) {
                             Text(
                                 text = transferStatusLine(transfer),
@@ -1662,15 +1954,62 @@ private fun TransferCard(
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                             )
                         }
-                        transfer.completedAt?.let {
-                            Text(
-                                text = formatEndedAt(
-                                    if (status == TransferStatus.CANCELLED) "Cancelled" else "Failed",
-                                    it,
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
+                    }
+                }
+            }
+
+            if (transfer.files.isNotEmpty() &&
+                !(transfer.direction == TransferDirection.SENT &&
+                    transfer.files.size == 1 &&
+                    transfer.status.isActive)
+            ) {
+                TransferFileList(
+                    transfer = transfer,
+                    expanded = expanded,
+                    onToggle = onToggleGroup,
+                    onOpenFile = onOpenFile,
+                )
+            }
+
+            if (complete &&
+                transfer.direction == TransferDirection.RECEIVED &&
+                transfer.files.isNotEmpty() &&
+                (onShareGroup != null || onDeleteGroup != null)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    onShareGroup?.let {
+                        FilledTonalButton(onClick = it, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_share),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
                             )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Share")
+                        }
+                    }
+                    onDeleteGroup?.let {
+                        FilledTonalButton(
+                            onClick = it,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = colors.errorContainer,
+                                contentColor = colors.onErrorContainer,
+                            ),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_delete),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Delete")
                         }
                     }
                 }
@@ -1678,6 +2017,7 @@ private fun TransferCard(
 
             if (complete &&
                 transfer.direction == TransferDirection.RECEIVED &&
+                transfer.files.isEmpty() &&
                 transfer.localPath != null &&
                 (onOpen != null || onShare != null || onDelete != null)
             ) {
@@ -1686,9 +2026,6 @@ private fun TransferCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    onOpen?.let {
-                        FilledTonalButton(onClick = it, modifier = Modifier.weight(1f)) { Text("Open") }
-                    }
                     onShare?.let {
                         OutlinedButton(onClick = it, modifier = Modifier.weight(1f)) { Text("Share") }
                     }
@@ -1697,9 +2034,628 @@ private fun TransferCard(
                     }
                 }
             }
+
+            transfer.completedAt?.let { ended ->
+                Text(
+                    text = formatEndedAt(
+                        when (status) {
+                            TransferStatus.CANCELLED -> "Cancelled"
+                            TransferStatus.FAILED -> "Failed"
+                            else -> "Finished"
+                        },
+                        ended,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }
+
+private fun fileQueueRank(file: TransferFile): Int = when (file.status) {
+    TransferStatus.TRANSFERRING -> 0
+    TransferStatus.WAITING,
+    TransferStatus.OFFERED,
+    TransferStatus.ACCEPTED -> 1
+    else -> 2
+}
+
+/** The one just-finished row that gets a short blink before leaving the queue. */
+private data class RecentDone(val id: String, val at: Long)
+
+private const val BlinkHalfPeriodMs = 250
+private const val BlinkCount = 3
+private const val BlinkLifetimeMs = 1_600L
+
+/**
+ * The slide a row still has to play after it was re-slotted (e.g. progress -> done).
+ *
+ * The offset is written synchronously in the same frame the order changes, so a row never
+ * flashes in its final slot first. The decay runs on its own coroutine, so every row slides
+ * at the same time instead of waiting for the row before it to settle.
+ */
+private class SlotShift {
+    var px by mutableFloatStateOf(0f)
+        private set
+    private var job: Job? = null
+
+    /** Adds [deltaPx] on top of whatever is left of a running slide and eases back to 0. */
+    fun shiftBy(deltaPx: Float, scope: CoroutineScope) {
+        job?.cancel()
+        px += deltaPx
+        job = scope.launch {
+            animate(
+                initialValue = px,
+                targetValue = 0f,
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+            ) { value, _ -> px = value }
+        }
+    }
+}
+
+/** The order and visible set the list was last laid out with. */
+private class SlotLayout(var order: List<String>, var visible: List<String>)
+
+/**
+ * A fixed-height row slot that keeps its visibility animation state while the ordered list
+ * changes. [shift] slides a row from its old slot to its new queue/done slot; the bouncy
+ * show/hide stays on the AnimatedVisibility.
+ */
+@Composable
+private fun AnimatedFileSlot(
+    file: TransferFile,
+    received: Boolean,
+    visible: Boolean,
+    targetIndex: Int,
+    hasHeader: Boolean,
+    justCompleted: Boolean,
+    onOpen: (() -> Unit)?,
+    shift: SlotShift,
+    visibility: MutableTransitionState<Boolean>,
+) {
+    visibility.targetState = visible
+    // Remember the last real slot so a row that is leaving keeps its gap while it shrinks
+    // instead of jumping 2dp when its index becomes -1.
+    val paddedIndex = remember { intArrayOf(targetIndex) }
+    if (targetIndex >= 0) paddedIndex[0] = targetIndex
+    Box(
+        modifier = Modifier.offset {
+            IntOffset(0, shift.px.roundToInt())
+        },
+    ) {
+        androidx.compose.animation.AnimatedVisibility(
+            visibleState = visibility,
+            enter = fadeIn(tween(220, delayMillis = 40)) +
+                expandVertically(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    expandFrom = Alignment.Top,
+                ),
+            exit = fadeOut(tween(160)) +
+                shrinkVertically(
+                    animationSpec = tween(240, easing = FastOutSlowInEasing),
+                    shrinkTowards = Alignment.Top,
+                ),
+        ) {
+            Box(
+                modifier = Modifier.padding(
+                    top = if (hasHeader || paddedIndex[0] > 0) TransferItemGap else 0.dp,
+                ),
+            ) {
+                TransferFileRow(
+                    file = file,
+                    received = received,
+                    justCompleted = justCompleted,
+                    onOpen = onOpen,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The per-file list of a transfer, laid out like the Settings groups: one clipped 16dp group,
+ * 4dp-cornered items, 2dp gaps. Every file stays composed and slides/fades in or out as it
+ * enters or leaves the visible set (e.g. a finished file leaves the live list).
+ */
+@Composable
+private fun TransferFileList(
+    transfer: TransferItem,
+    expanded: Boolean,
+    onToggle: (() -> Unit)?,
+    onOpenFile: ((TransferFile) -> Unit)?,
+) {
+    val received = transfer.direction == TransferDirection.RECEIVED
+    val active = transfer.status.isActive
+    val files = transfer.files
+    val hasHeader = files.size > 1 && onToggle != null
+    // Keep the file that is moving at the top, queued files next, and
+    // finished files at the bottom of an expanded group.
+    val orderedFiles = files.sortedWith(
+        compareBy<TransferFile> { fileQueueRank(it) }
+            .thenByDescending { it.completedAt ?: 0L },
+    )
+    val scope = rememberCoroutineScope()
+    var recentDone by remember { mutableStateOf<RecentDone?>(null) }
+    val expandedBlinks = remember { mutableStateMapOf<String, Long>() }
+    val previousStatuses = remember { mutableMapOf<String, TransferStatus>() }
+
+    LaunchedEffect(files, active, expanded) {
+        val ids = files.mapTo(mutableSetOf()) { it.id }
+        previousStatuses.keys.retainAll(ids)
+        files.forEach { file ->
+            val previous = previousStatuses[file.id]
+            if (previous != null && previous.isActive &&
+                file.status == TransferStatus.COMPLETE
+            ) {
+                val stamp = SystemClock.elapsedRealtime()
+                if (expanded) {
+                    // In the expanded list every newly finished row gets its
+                    // own one-second blink, but stays in place.
+                    expandedBlinks[file.id] = stamp
+                    scope.launch {
+                        delay(BlinkLifetimeMs)
+                        if (expandedBlinks[file.id] == stamp) {
+                            expandedBlinks.remove(file.id)
+                        }
+                    }
+                } else if (active) {
+                    // Collapsed: only the newest finished file gets the longer
+                    // blink and the bottom row. An older hold is replaced.
+                    recentDone = RecentDone(file.id, stamp)
+                    scope.launch {
+                        delay(BlinkLifetimeMs)
+                        if (recentDone?.id == file.id && recentDone?.at == stamp) {
+                            recentDone = null
+                        }
+                    }
+                }
+            }
+            previousStatuses[file.id] = file.status
+        }
+        if (!active) {
+            recentDone = null
+            expandedBlinks.clear()
+        } else if (expanded) {
+            recentDone = null
+        } else {
+            expandedBlinks.clear()
+        }
+    }
+
+    val activeIds = orderedFiles.filter { it.status.isActive }.map { it.id }
+    val recentDoneId = recentDone?.id
+        ?.takeIf { id -> orderedFiles.any { it.id == id && it.status == TransferStatus.COMPLETE } }
+    // On the first frame after a completion, `recentDone` has not been set by
+    // LaunchedEffect yet. Keep that terminal row visible immediately so it can
+    // animate from its live slot into the done slot instead of disappearing
+    // and reappearing.
+    val pendingDoneId = files
+        .filter { it.status.isTerminal && previousStatuses[it.id]?.isActive == true }
+        .maxByOrNull { it.completedAt ?: 0L }
+        ?.id
+    val visibleDoneId = recentDoneId ?: pendingDoneId
+    val visibleIds: List<String> = when {
+        expanded -> orderedFiles.map { it.id }
+        // While collapsed, keep the current row and the actual next queued row
+        // visible, and use the third slot for the just-finished blink. This
+        // keeps the group at exactly three rows.
+        active && visibleDoneId != null -> activeIds.take(2) + visibleDoneId
+        active -> activeIds.take(3)
+        else -> emptyList()
+    }
+    val visibleSet = visibleIds.toHashSet()
+    val orderedIds = orderedFiles.map { it.id }
+    val density = LocalDensity.current
+    val stridePx = with(density) { (TransferFileRowHeight + TransferItemGap).toPx() }
+    val shifts = remember { mutableMapOf<String, SlotShift>() }
+    val visibilityStates = remember {
+        mutableMapOf<String, MutableTransitionState<Boolean>>()
+    }
+    val lastLayout = remember { SlotLayout(orderedIds, visibleIds) }
+
+    // Runs after composition but before layout of the same frame, so the slide starts
+    // from the old position with no one-frame jump.
+    //
+    // Every row that was taking up space keeps its old slot (its index among the rows that
+    // were visible) and is moved to where the new order puts it, counting only rows that
+    // already had height. Rows that are appearing or disappearing are left to their own
+    // bouncy expand/shrink, and they push their neighbours naturally. That is why expanding
+    // or collapsing the group no longer throws the finished row up and over the others.
+    SideEffect {
+        if (lastLayout.order != orderedIds || lastLayout.visible != visibleIds) {
+            val oldSlot = HashMap<String, Int>()
+            val wasVisible = lastLayout.visible.toHashSet()
+            lastLayout.order
+                .filter { it in wasVisible }
+                .forEachIndexed { index, id -> oldSlot[id] = index }
+            var occupiedAbove = 0
+            orderedIds.forEach { id ->
+                val oldIndex = oldSlot[id]
+                if (oldIndex != null) {
+                    val delta = oldIndex - occupiedAbove
+                    if (delta != 0) {
+                        shifts.getOrPut(id) { SlotShift() }.shiftBy(delta * stridePx, scope)
+                    }
+                    occupiedAbove++
+                }
+            }
+            val idSet = orderedIds.toHashSet()
+            shifts.keys.retainAll(idSet)
+            visibilityStates.keys.retainAll(idSet)
+            lastLayout.order = orderedIds
+            lastLayout.visible = visibleIds
+        }
+    }
+
+    // The card around this list already eases its own height with animateContentSize, and
+    // every row animates its own height with the bouncy expand/shrink. A third
+    // animateContentSize here made the group trail behind the rows and clip their bounce,
+    // which is what made the queue feel delayed.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(TransferGroupShape),
+    ) {
+        if (hasHeader && onToggle != null) {
+            FileGroupHeader(
+                done = files.count { it.status == TransferStatus.COMPLETE },
+                total = files.size,
+                active = active,
+                received = received,
+                expanded = expanded,
+                onClick = onToggle,
+            )
+        }
+        // Keep every row composed. This is what lets the bouncy expand run for
+        // both unfinished and finished rows, while the slot shift animates
+        // progress-to-done movement.
+        orderedFiles.forEach { file ->
+            key(file.id) {
+                val visible = file.id in visibleSet
+                val visibility = visibilityStates.getOrPut(file.id) {
+                    MutableTransitionState(visible)
+                }
+                val shift = shifts.getOrPut(file.id) { SlotShift() }
+                AnimatedFileSlot(
+                    file = file,
+                    received = received,
+                    visible = visible,
+                    targetIndex = visibleIds.indexOf(file.id),
+                    hasHeader = hasHeader,
+                    justCompleted = !file.status.isActive &&
+                        (recentDone?.id == file.id ||
+                            expandedBlinks.containsKey(file.id)),
+                    onOpen = if (onOpenFile != null &&
+                        file.status == TransferStatus.COMPLETE
+                    ) {
+                        { onOpenFile(file) }
+                    } else {
+                        null
+                    },
+                    shift = shift,
+                    visibility = visibility,
+                )
+            }
+        }
+    }
+}
+
+/** First item of the group: "2 of 5 files done" + a Show all / Hide toggle with a turning chevron. */
+@Composable
+private fun FileGroupHeader(
+    done: Int,
+    total: Int,
+    active: Boolean,
+    received: Boolean,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val accent = if (received) colors.tertiary else colors.primary
+    val tint = (if (received) colors.tertiaryContainer else colors.primaryContainer)
+        .copy(alpha = 0.6f)
+        .compositeOver(colors.surfaceContainerLow)
+    val chevron by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "groupChevron",
+    )
+    Surface(
+        shape = TransferItemShape,
+        color = tint,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (active) {
+                // The finished count rolls upward each time another file completes.
+                AnimatedContent(
+                    targetState = done,
+                    transitionSpec = {
+                        (slideInVertically(tween(260)) { it } + fadeIn(tween(260)))
+                            .togetherWith(slideOutVertically(tween(260)) { -it } + fadeOut(tween(160)))
+                    },
+                    label = "doneCount",
+                ) { count ->
+                    Text(
+                        text = count.toString(),
+                        style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"),
+                        color = accent,
+                    )
+                }
+                Text(
+                    text = " of $total files done",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.onSurface,
+                )
+            } else {
+                Text(
+                    text = "$total files",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.onSurface,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = if (expanded) "Hide" else "Show all",
+                style = MaterialTheme.typography.labelLarge,
+                color = accent,
+            )
+            Spacer(Modifier.width(2.dp))
+            Icon(
+                painter = painterResource(R.drawable.ic_expand_more),
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier
+                    .size(20.dp)
+                    .rotate(chevron),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun TransferFileRow(
+    file: TransferFile,
+    received: Boolean,
+    justCompleted: Boolean,
+    onOpen: (() -> Unit)?,
+) {
+    val colors = MaterialTheme.colorScheme
+    val transferring = file.status == TransferStatus.TRANSFERRING
+    val queued = file.status == TransferStatus.WAITING ||
+        file.status == TransferStatus.OFFERED ||
+        file.status == TransferStatus.ACCEPTED
+    val failed = file.status == TransferStatus.FAILED || file.status == TransferStatus.CANCELLED
+    val percent = if (file.totalBytes > 0) {
+        (file.transferredBytes * 100 / file.totalBytes).toInt().coerceIn(0, 100)
+    } else {
+        null
+    }
+    val accent = if (received) colors.tertiary else colors.primary
+    val accentContainer = if (received) colors.tertiaryContainer else colors.primaryContainer
+
+    val fraction by animateFloatAsState(
+        targetValue = if (file.totalBytes > 0) {
+            (file.transferredBytes.toFloat() / file.totalBytes.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
+        },
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessLow,
+            visibilityThreshold = 0.001f,
+        ),
+        label = "fileProgress",
+    )
+    // The file being transferred right now gets a soft accent wash that fades back out
+    // when it finishes.
+    val baseRowColor by animateColorAsState(
+        targetValue = if (transferring) {
+            accentContainer.copy(alpha = 0.45f).compositeOver(colors.surfaceContainerHigh)
+        } else {
+            colors.surfaceContainerHigh
+        },
+        animationSpec = tween(350),
+        label = "fileRowColor",
+    )
+    // Exactly three smooth on/off pulses, then back to the normal row color.
+    val blink = remember { Animatable(0f) }
+    LaunchedEffect(justCompleted) {
+        blink.snapTo(0f)
+        if (justCompleted) {
+            repeat(BlinkCount) {
+                blink.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(BlinkHalfPeriodMs, easing = LinearEasing),
+                )
+                blink.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(BlinkHalfPeriodMs, easing = LinearEasing),
+                )
+            }
+        }
+    }
+    val rowColor = if (blink.value > 0f) {
+        lerp(
+            baseRowColor,
+            accentContainer.copy(alpha = 0.65f).compositeOver(colors.surfaceContainerHigh),
+            blink.value * 0.7f,
+        )
+    } else {
+        baseRowColor
+    }
+    val bubbleColor by animateColorAsState(
+        targetValue = if (failed) colors.errorContainer else accentContainer,
+        animationSpec = tween(300),
+        label = "fileBubble",
+    )
+    val density = LocalDensity.current
+    val ringStroke = remember(density) {
+        Stroke(width = with(density) { 2.5.dp.toPx() }, cap = StrokeCap.Round)
+    }
+
+    Surface(
+        shape = TransferItemShape,
+        color = rowColor,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(TransferFileRowHeight)
+            .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(60.dp),
+            ) {
+                if (queued) {
+                    // Queued rows use the expressive loading indicator as the
+                    // icon container. It is intentionally larger than the
+                    // circular progress bar; the file glyph stays the same.
+                    LoadingIndicator(
+                        // This is the icon container, not a status/progress
+                        // accent: keep the same background colour as the
+                        // circular file bubble.
+                        color = bubbleColor,
+                        modifier = Modifier.size(60.dp),
+                    )
+                    Icon(
+                        painter = painterResource(fileIcon(file.name)),
+                        contentDescription = null,
+                        tint = if (received) {
+                            colors.onTertiaryContainer
+                        } else {
+                            colors.onPrimaryContainer
+                        },
+                        modifier = Modifier.size(19.dp),
+                    )
+                } else {
+                    // The progress ring exists only while this file is in flight.
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = transferring,
+                        enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.7f),
+                        exit = fadeOut(tween(200)) + scaleOut(targetScale = 0.7f),
+                    ) {
+                        CircularWavyProgressIndicator(
+                            progress = { fraction },
+                            color = accent,
+                            trackColor = colors.surfaceContainerHighest.copy(alpha = 0.6f),
+                            stroke = ringStroke,
+                            trackStroke = ringStroke,
+                            modifier = Modifier.size(48.dp),
+                        )
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = bubbleColor,
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                painter = painterResource(fileIcon(file.name)),
+                                contentDescription = null,
+                                tint = if (failed) {
+                                    colors.onErrorContainer
+                                } else if (received) {
+                                    colors.onTertiaryContainer
+                                } else {
+                                    colors.onPrimaryContainer
+                                },
+                                modifier = Modifier.size(19.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = file.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = when (file.status) {
+                        TransferStatus.COMPLETE -> file.totalBytes.readableBytes()
+                        TransferStatus.TRANSFERRING -> if (file.totalBytes > 0) {
+                            "${file.transferredBytes.readableBytes()} of ${file.totalBytes.readableBytes()}"
+                        } else {
+                            "Transferring…"
+                        }
+                        TransferStatus.FAILED -> "Failed"
+                        TransferStatus.CANCELLED -> "Cancelled"
+                        else -> "Queued"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (failed) colors.error else colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            // Percent only while in progress. Finished files show no mark at all.
+            AnimatedVisibility(
+                visible = transferring,
+                enter = fadeIn(tween(200)) + expandHorizontally(),
+                exit = fadeOut(tween(150)) + shrinkHorizontally(),
+            ) {
+                Text(
+                    text = percent?.let { "$it%" } ?: "…",
+                    style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"),
+                    color = accent,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier
+                        .width(44.dp)
+                        .padding(start = 4.dp),
+                )
+            }
+            when (file.status) {
+                TransferStatus.COMPLETE -> Icon(
+                    painter = painterResource(R.drawable.ic_check_circle),
+                    contentDescription = "Complete",
+                    tint = colors.primary,
+                    modifier = Modifier.size(21.dp),
+                )
+                TransferStatus.CANCELLED -> Icon(
+                    painter = painterResource(R.drawable.ic_close),
+                    contentDescription = "Cancelled",
+                    tint = colors.error,
+                    modifier = Modifier.size(21.dp),
+                )
+                TransferStatus.FAILED -> Icon(
+                    painter = painterResource(R.drawable.ic_warning),
+                    contentDescription = "Failed",
+                    tint = colors.error,
+                    modifier = Modifier.size(21.dp),
+                )
+                else -> {}
+            }
+            Spacer(Modifier.width(8.dp))
+        }
+    }
+}
+
 
 private fun transferStatusLine(transfer: TransferItem): String = when (transfer.status) {
     TransferStatus.WAITING -> "Waiting for receiver"
@@ -2703,17 +3659,29 @@ private suspend fun openReceivedFile(context: Context, path: String) {
 }
 
 private suspend fun shareReceivedFile(context: Context, path: String) {
-    val uri = shareableUri(context, path) ?: return
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = mimeTypeFor(path)
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    shareReceivedFiles(context, listOf(path))
+}
+
+private suspend fun shareReceivedFiles(context: Context, paths: List<String>) {
+    val uris = paths.mapNotNull { shareableUri(context, it) }
+    if (uris.isEmpty()) return
+    val intent = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).apply {
+            type = mimeTypeFor(paths.first())
+            putExtra(Intent.EXTRA_STREAM, uris.first())
+        }
+    } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+        }
     }
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     withContext(Dispatchers.Main) {
         try {
-            context.startActivity(Intent.createChooser(intent, "Share ${File(path).name}"))
+            context.startActivity(Intent.createChooser(intent, "Share received files"))
         } catch (_: Exception) {
-            Toast.makeText(context, "No app can share this file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "No app can share these files", Toast.LENGTH_SHORT).show()
         }
     }
 }
