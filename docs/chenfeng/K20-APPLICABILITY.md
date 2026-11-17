@@ -409,6 +409,17 @@ on the exact Civi vendor kernel configuration/patches, which are not in the
 public generic 6.1.68 tree. Without that exact vendor build environment, the
 in-tree K20 hidden-STA port cannot be built safely.
 
+The 5.2.1.91G source was also built against the generic 6.1.138 tree with the
+exact device `/proc/config.gz` and exact running release. That clean module
+also rebooted during boot. The stock module returned and Wi-Fi is enabled
+again.
+
+This rules out the public source-version and kernel-config explanations. The
+stock module's build environment includes something else that is not in the
+public trees, likely vendor patches/toolchain/signing details. Rebuilding the
+qca driver is therefore not a viable route on this device without that exact
+vendor build environment.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
