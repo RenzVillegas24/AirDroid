@@ -76,7 +76,8 @@ jobs:
           make -C kernel O="$KOUT" ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             vendor/sm8150-perf_defconfig
-          cat kernel/arch/arm64/configs/vendor/xiaomi/raphael.config \
+          cat kernel/arch/arm64/configs/vendor/xiaomi/sm8150-common.config \
+            kernel/arch/arm64/configs/vendor/xiaomi/raphael.config \
             >> "$KOUT/.config"
           make -C kernel O="$KOUT" ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
