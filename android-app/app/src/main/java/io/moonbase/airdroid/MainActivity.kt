@@ -31,6 +31,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -165,6 +166,7 @@ import android.os.SystemClock
 import android.text.format.DateUtils
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -2068,9 +2070,38 @@ private const val BlinkCount = 3
 private const val BlinkLifetimeMs = 1_600L
 
 /**
- * A fixed-height row slot that keeps its visibility animation state while the
- * ordered list changes. The small offset animation slides a row to its new
- * queue/done slot without taking over the bouncy show/hide animation.
+ * The slide a row still has to play after it was re-slotted (e.g. progress -> done).
+ *
+ * The offset is written synchronously in the same frame the order changes, so a row never
+ * flashes in its final slot first. The decay runs on its own coroutine, so every row slides
+ * at the same time instead of waiting for the row before it to settle.
+ */
+private class SlotShift {
+    var px by mutableFloatStateOf(0f)
+        private set
+    private var job: Job? = null
+
+    /** Adds [deltaPx] on top of whatever is left of a running slide and eases back to 0. */
+    fun shiftBy(deltaPx: Float, scope: CoroutineScope) {
+        job?.cancel()
+        px += deltaPx
+        job = scope.launch {
+            animate(
+                initialValue = px,
+                targetValue = 0f,
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+            ) { value, _ -> px = value }
+        }
+    }
+}
+
+/** The order and visible set the list was last laid out with. */
+private class SlotLayout(var order: List<String>, var visible: List<String>)
+
+/**
+ * A fixed-height row slot that keeps its visibility animation state while the ordered list
+ * changes. [shift] slides a row from its old slot to its new queue/done slot; the bouncy
+ * show/hide stays on the AnimatedVisibility.
  */
 @Composable
 private fun AnimatedFileSlot(
@@ -2081,13 +2112,17 @@ private fun AnimatedFileSlot(
     hasHeader: Boolean,
     justCompleted: Boolean,
     onOpen: (() -> Unit)?,
-    offset: Animatable<Float, AnimationVector1D>,
+    shift: SlotShift,
     visibility: MutableTransitionState<Boolean>,
 ) {
     visibility.targetState = visible
+    // Remember the last real slot so a row that is leaving keeps its gap while it shrinks
+    // instead of jumping 2dp when its index becomes -1.
+    val paddedIndex = remember { intArrayOf(targetIndex) }
+    if (targetIndex >= 0) paddedIndex[0] = targetIndex
     Box(
         modifier = Modifier.offset {
-            IntOffset(0, offset.value.roundToInt())
+            IntOffset(0, shift.px.roundToInt())
         },
     ) {
         androidx.compose.animation.AnimatedVisibility(
@@ -2108,7 +2143,7 @@ private fun AnimatedFileSlot(
         ) {
             Box(
                 modifier = Modifier.padding(
-                    top = if (hasHeader || targetIndex > 0) TransferItemGap else 0.dp,
+                    top = if (hasHeader || paddedIndex[0] > 0) TransferItemGap else 0.dp,
                 ),
             ) {
                 TransferFileRow(
@@ -2213,45 +2248,58 @@ private fun TransferFileList(
         active -> activeIds.take(3)
         else -> emptyList()
     }
+    val visibleSet = visibleIds.toHashSet()
+    val orderedIds = orderedFiles.map { it.id }
     val density = LocalDensity.current
     val stridePx = with(density) { (TransferFileRowHeight + TransferItemGap).toPx() }
-    val offsets = remember {
-        mutableMapOf<String, Animatable<Float, AnimationVector1D>>()
-    }
-    val previousIndices = remember { mutableMapOf<String, Int>() }
+    val shifts = remember { mutableMapOf<String, SlotShift>() }
     val visibilityStates = remember {
         mutableMapOf<String, MutableTransitionState<Boolean>>()
     }
+    val lastLayout = remember { SlotLayout(orderedIds, visibleIds) }
 
-    LaunchedEffect(visibleIds) {
-        val ids = orderedFiles.mapTo(mutableSetOf()) { it.id }
-        offsets.keys.retainAll(ids)
-        previousIndices.keys.retainAll(ids)
-        visibilityStates.keys.retainAll(ids)
-        orderedFiles.forEach { file ->
-            val target = visibleIds.indexOf(file.id)
-            val previous = previousIndices[file.id] ?: target
-            val anim = offsets.getOrPut(file.id) { Animatable(0f) }
-            if (target < 0) {
-                anim.snapTo(0f)
-            } else if (previous >= 0 && previous != target) {
-                anim.snapTo((previous - target) * stridePx)
-                anim.animateTo(
-                    targetValue = 0f,
-                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
-                )
-            } else {
-                anim.snapTo(0f)
+    // Runs after composition but before layout of the same frame, so the slide starts
+    // from the old position with no one-frame jump.
+    //
+    // Every row that was taking up space keeps its old slot (its index among the rows that
+    // were visible) and is moved to where the new order puts it, counting only rows that
+    // already had height. Rows that are appearing or disappearing are left to their own
+    // bouncy expand/shrink, and they push their neighbours naturally. That is why expanding
+    // or collapsing the group no longer throws the finished row up and over the others.
+    SideEffect {
+        if (lastLayout.order != orderedIds || lastLayout.visible != visibleIds) {
+            val oldSlot = HashMap<String, Int>()
+            val wasVisible = lastLayout.visible.toHashSet()
+            lastLayout.order
+                .filter { it in wasVisible }
+                .forEachIndexed { index, id -> oldSlot[id] = index }
+            var occupiedAbove = 0
+            orderedIds.forEach { id ->
+                val oldIndex = oldSlot[id]
+                if (oldIndex != null) {
+                    val delta = oldIndex - occupiedAbove
+                    if (delta != 0) {
+                        shifts.getOrPut(id) { SlotShift() }.shiftBy(delta * stridePx, scope)
+                    }
+                    occupiedAbove++
+                }
             }
-            previousIndices[file.id] = target
+            val idSet = orderedIds.toHashSet()
+            shifts.keys.retainAll(idSet)
+            visibilityStates.keys.retainAll(idSet)
+            lastLayout.order = orderedIds
+            lastLayout.visible = visibleIds
         }
     }
 
+    // The card around this list already eases its own height with animateContentSize, and
+    // every row animates its own height with the bouncy expand/shrink. A third
+    // animateContentSize here made the group trail behind the rows and clip their bounce,
+    // which is what made the queue feel delayed.
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(TransferGroupShape)
-            .animateContentSize(),
+            .clip(TransferGroupShape),
     ) {
         if (hasHeader && onToggle != null) {
             FileGroupHeader(
@@ -2264,15 +2312,15 @@ private fun TransferFileList(
             )
         }
         // Keep every row composed. This is what lets the bouncy expand run for
-        // both unfinished and finished rows, while the slot offset animates
+        // both unfinished and finished rows, while the slot shift animates
         // progress-to-done movement.
         orderedFiles.forEach { file ->
             key(file.id) {
-                val visible = file.id in visibleIds
+                val visible = file.id in visibleSet
                 val visibility = visibilityStates.getOrPut(file.id) {
                     MutableTransitionState(visible)
                 }
-                val offset = offsets.getOrPut(file.id) { Animatable(0f) }
+                val shift = shifts.getOrPut(file.id) { SlotShift() }
                 AnimatedFileSlot(
                     file = file,
                     received = received,
@@ -2289,7 +2337,7 @@ private fun TransferFileList(
                     } else {
                         null
                     },
-                    offset = offset,
+                    shift = shift,
                     visibility = visibility,
                 )
             }
