@@ -2140,7 +2140,11 @@ private fun TransferFileList(
         active -> activeIds.take(3)
         else -> emptyList()
     }
-    val visibleFiles = visibleIds.mapNotNull { id -> orderedFiles.firstOrNull { it.id == id } }
+    val visibleCount by animateFloatAsState(
+        targetValue = visibleIds.size.toFloat(),
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "visibleFileCount",
+    )
 
     Column(
         modifier = Modifier
@@ -2158,32 +2162,63 @@ private fun TransferFileList(
                 onClick = onToggle,
             )
         }
-        if (hasHeader && visibleFiles.isNotEmpty()) {
+        if (hasHeader && orderedFiles.isNotEmpty()) {
             Spacer(Modifier.height(TransferItemGap))
         }
-        if (visibleFiles.isNotEmpty()) {
-            val rowsHeight = TransferFileRowHeight * visibleFiles.size.toFloat() +
-                TransferItemGap * (visibleFiles.size - 1).coerceAtLeast(0).toFloat()
+        if (orderedFiles.isNotEmpty()) {
+            val rowsHeight = TransferFileRowHeight * visibleCount +
+                TransferItemGap * (visibleCount - 1f).coerceAtLeast(0f)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(rowsHeight),
-                verticalArrangement = Arrangement.spacedBy(TransferItemGap),
                 userScrollEnabled = false,
             ) {
-                items(visibleFiles, key = { it.id }) { file ->
+                items(orderedFiles, key = { it.id }) { file ->
+                    val visible = file.id in visibleIds
+                    val visibleIndex = visibleIds.indexOf(file.id)
                     Box(Modifier.animateItem()) {
-                        TransferFileRow(
-                            file = file,
-                            received = received,
-                            justCompleted = recentDone?.id == file.id ||
-                                expandedBlinks.containsKey(file.id),
-                            onOpen = if (onOpenFile != null && file.status == TransferStatus.COMPLETE) {
-                                { onOpenFile(file) }
-                            } else {
-                                null
-                            },
-                        )
+                        // All rows stay in the lazy list so "Show all" and
+                        // "Hide" can animate completed rows too. Only the
+                        // visible subset contributes height.
+                        val visibility = remember { MutableTransitionState(false) }
+                        visibility.targetState = visible
+                        androidx.compose.animation.AnimatedVisibility(
+                            visibleState = visibility,
+                            enter = fadeIn(tween(220, delayMillis = 30)) +
+                                expandVertically(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioLowBouncy,
+                                        stiffness = Spring.StiffnessMediumLow,
+                                    ),
+                                    expandFrom = Alignment.Top,
+                                ),
+                            exit = fadeOut(tween(160)) +
+                                shrinkVertically(
+                                    animationSpec = tween(240, easing = FastOutSlowInEasing),
+                                    shrinkTowards = Alignment.Top,
+                                ),
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(
+                                    top = if (visibleIndex > 0) TransferItemGap else 0.dp,
+                                ),
+                            ) {
+                                TransferFileRow(
+                                    file = file,
+                                    received = received,
+                                    justCompleted = recentDone?.id == file.id ||
+                                        expandedBlinks.containsKey(file.id),
+                                    onOpen = if (onOpenFile != null &&
+                                        file.status == TransferStatus.COMPLETE
+                                    ) {
+                                        { onOpenFile(file) }
+                                    } else {
+                                        null
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
