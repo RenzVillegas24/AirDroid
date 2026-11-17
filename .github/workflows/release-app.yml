@@ -72,13 +72,19 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cross
-        uses: taiki-e/install-action@cross
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@cargo-zigbuild
 
       - name: Build ARM64 helper
         working-directory: android-app/helper
         run: |
-          cross build --release --target aarch64-unknown-linux-musl
+          rustup target add aarch64-unknown-linux-musl
+          cargo zigbuild --release --target aarch64-unknown-linux-musl
           mkdir -p ../assets
           cp target/aarch64-unknown-linux-musl/release/owly-k20-helper \
             ../assets/owly-k20-helper
