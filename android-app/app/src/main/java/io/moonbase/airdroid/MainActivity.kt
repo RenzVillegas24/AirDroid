@@ -28,6 +28,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -2080,39 +2081,15 @@ private fun AnimatedFileSlot(
     hasHeader: Boolean,
     justCompleted: Boolean,
     onOpen: (() -> Unit)?,
+    offset: Animatable<Float, AnimationVector1D>,
+    visibility: MutableTransitionState<Boolean>,
 ) {
-    val density = LocalDensity.current
-    val stridePx = with(density) {
-        (TransferFileRowHeight + TransferItemGap).toPx()
-    }
-    val offset = remember { Animatable(0f) }
-    var previousIndex by remember { mutableStateOf(targetIndex) }
-
-    LaunchedEffect(targetIndex) {
-        if (targetIndex < 0) {
-            offset.snapTo(0f)
-            previousIndex = targetIndex
-        } else {
-            if (previousIndex >= 0 && previousIndex != targetIndex) {
-                offset.snapTo((previousIndex - targetIndex) * stridePx)
-                offset.animateTo(
-                    targetValue = 0f,
-                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
-                )
-            } else {
-                offset.snapTo(0f)
-            }
-            previousIndex = targetIndex
-        }
-    }
-
+    visibility.targetState = visible
     Box(
         modifier = Modifier.offset {
             IntOffset(0, offset.value.roundToInt())
         },
     ) {
-        val visibility = remember { MutableTransitionState(visible) }
-        visibility.targetState = visible
         androidx.compose.animation.AnimatedVisibility(
             visibleState = visibility,
             enter = fadeIn(tween(220, delayMillis = 40)) +
@@ -2236,6 +2213,40 @@ private fun TransferFileList(
         active -> activeIds.take(3)
         else -> emptyList()
     }
+    val density = LocalDensity.current
+    val stridePx = with(density) { (TransferFileRowHeight + TransferItemGap).toPx() }
+    val offsets = remember {
+        mutableMapOf<String, Animatable<Float, AnimationVector1D>>()
+    }
+    val previousIndices = remember { mutableMapOf<String, Int>() }
+    val visibilityStates = remember {
+        mutableMapOf<String, MutableTransitionState<Boolean>>()
+    }
+
+    LaunchedEffect(visibleIds) {
+        val ids = orderedFiles.mapTo(mutableSetOf()) { it.id }
+        offsets.keys.retainAll(ids)
+        previousIndices.keys.retainAll(ids)
+        visibilityStates.keys.retainAll(ids)
+        orderedFiles.forEach { file ->
+            val target = visibleIds.indexOf(file.id)
+            val previous = previousIndices[file.id] ?: target
+            val anim = offsets.getOrPut(file.id) { Animatable(0f) }
+            if (target < 0) {
+                anim.snapTo(0f)
+            } else if (previous >= 0 && previous != target) {
+                anim.snapTo((previous - target) * stridePx)
+                anim.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                )
+            } else {
+                anim.snapTo(0f)
+            }
+            previousIndices[file.id] = target
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2257,10 +2268,15 @@ private fun TransferFileList(
         // progress-to-done movement.
         orderedFiles.forEach { file ->
             key(file.id) {
+                val visible = file.id in visibleIds
+                val visibility = visibilityStates.getOrPut(file.id) {
+                    MutableTransitionState(visible)
+                }
+                val offset = offsets.getOrPut(file.id) { Animatable(0f) }
                 AnimatedFileSlot(
                     file = file,
                     received = received,
-                    visible = file.id in visibleIds,
+                    visible = visible,
                     targetIndex = visibleIds.indexOf(file.id),
                     hasHeader = hasHeader,
                     justCompleted = !file.status.isActive &&
@@ -2273,6 +2289,8 @@ private fun TransferFileList(
                     } else {
                         null
                     },
+                    offset = offset,
+                    visibility = visibility,
                 )
             }
         }
