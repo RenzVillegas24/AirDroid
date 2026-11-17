@@ -1955,7 +1955,11 @@ private fun TransferCard(
                 }
             }
 
-            if (transfer.files.isNotEmpty()) {
+            if (transfer.files.isNotEmpty() &&
+                !(transfer.direction == TransferDirection.SENT &&
+                    transfer.files.size == 1 &&
+                    transfer.status.isActive)
+            ) {
                 TransferFileList(
                     transfer = transfer,
                     expanded = expanded,
@@ -2063,6 +2067,85 @@ private const val BlinkCount = 3
 private const val BlinkLifetimeMs = 1_600L
 
 /**
+ * A fixed-height row slot that keeps its visibility animation state while the
+ * ordered list changes. The small offset animation slides a row to its new
+ * queue/done slot without taking over the bouncy show/hide animation.
+ */
+@Composable
+private fun AnimatedFileSlot(
+    file: TransferFile,
+    received: Boolean,
+    visible: Boolean,
+    targetIndex: Int,
+    hasHeader: Boolean,
+    justCompleted: Boolean,
+    onOpen: (() -> Unit)?,
+) {
+    val density = LocalDensity.current
+    val stridePx = with(density) {
+        (TransferFileRowHeight + TransferItemGap).toPx()
+    }
+    val offset = remember { Animatable(0f) }
+    var previousIndex by remember { mutableStateOf(targetIndex) }
+
+    LaunchedEffect(targetIndex) {
+        if (targetIndex < 0) {
+            offset.snapTo(0f)
+            previousIndex = targetIndex
+        } else {
+            if (previousIndex >= 0 && previousIndex != targetIndex) {
+                offset.snapTo((previousIndex - targetIndex) * stridePx)
+                offset.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                )
+            } else {
+                offset.snapTo(0f)
+            }
+            previousIndex = targetIndex
+        }
+    }
+
+    Box(
+        modifier = Modifier.offset {
+            IntOffset(0, offset.value.roundToInt())
+        },
+    ) {
+        val visibility = remember { MutableTransitionState(visible) }
+        visibility.targetState = visible
+        androidx.compose.animation.AnimatedVisibility(
+            visibleState = visibility,
+            enter = fadeIn(tween(220, delayMillis = 40)) +
+                expandVertically(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    expandFrom = Alignment.Top,
+                ),
+            exit = fadeOut(tween(160)) +
+                shrinkVertically(
+                    animationSpec = tween(240, easing = FastOutSlowInEasing),
+                    shrinkTowards = Alignment.Top,
+                ),
+        ) {
+            Box(
+                modifier = Modifier.padding(
+                    top = if (hasHeader || targetIndex > 0) TransferItemGap else 0.dp,
+                ),
+            ) {
+                TransferFileRow(
+                    file = file,
+                    received = received,
+                    justCompleted = justCompleted,
+                    onOpen = onOpen,
+                )
+            }
+        }
+    }
+}
+
+/**
  * The per-file list of a transfer, laid out like the Settings groups: one clipped 16dp group,
  * 4dp-cornered items, 2dp gaps. Every file stays composed and slides/fades in or out as it
  * enters or leaves the visible set (e.g. a finished file leaves the live list).
@@ -2144,12 +2227,6 @@ private fun TransferFileList(
         active -> activeIds.take(3)
         else -> emptyList()
     }
-    val visibleCount by animateFloatAsState(
-        targetValue = visibleIds.size.toFloat(),
-        animationSpec = tween(240, easing = FastOutSlowInEasing),
-        label = "visibleFileCount",
-    )
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2166,67 +2243,28 @@ private fun TransferFileList(
                 onClick = onToggle,
             )
         }
-        if (hasHeader && visibleIds.isNotEmpty()) {
-            Spacer(Modifier.height(TransferItemGap))
-        }
-        if (orderedFiles.isNotEmpty()) {
-            val rowsHeight = TransferFileRowHeight * visibleCount +
-                TransferItemGap * (visibleCount - 1f).coerceAtLeast(0f)
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(rowsHeight),
-                userScrollEnabled = false,
-            ) {
-                // Every row stays keyed in this list so the progress-to-done
-                // movement and the completed-row ordering are preserved. The
-                // per-row wrapper supplies the bouncy expand used when a group
-                // opens: for both live and completed rows.
-                items(orderedFiles, key = { it.id }) { file ->
-                    val visible = file.id in visibleIds
-                    val visibleIndex = visibleIds.indexOf(file.id)
-                    Box(Modifier.animateItem()) {
-                        val visibility = remember { MutableTransitionState(visible) }
-                        visibility.targetState = visible
-                        androidx.compose.animation.AnimatedVisibility(
-                            visibleState = visibility,
-                            enter = fadeIn(tween(220, delayMillis = 40)) +
-                                expandVertically(
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioLowBouncy,
-                                        stiffness = Spring.StiffnessMediumLow,
-                                    ),
-                                    expandFrom = Alignment.Top,
-                                ),
-                            exit = fadeOut(tween(160)) +
-                                shrinkVertically(
-                                    animationSpec = tween(240, easing = FastOutSlowInEasing),
-                                    shrinkTowards = Alignment.Top,
-                                ),
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(
-                                    top = if (visibleIndex > 0) TransferItemGap else 0.dp,
-                                ),
-                            ) {
-                                TransferFileRow(
-                                    file = file,
-                                    received = received,
-                                    justCompleted = !file.status.isActive &&
-                                        (recentDone?.id == file.id ||
-                                            expandedBlinks.containsKey(file.id)),
-                                    onOpen = if (onOpenFile != null &&
-                                        file.status == TransferStatus.COMPLETE
-                                    ) {
-                                        { onOpenFile(file) }
-                                    } else {
-                                        null
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
+        // Keep every row composed. This is what lets the bouncy expand run for
+        // both unfinished and finished rows, while the slot offset animates
+        // progress-to-done movement.
+        orderedFiles.forEach { file ->
+            key(file.id) {
+                AnimatedFileSlot(
+                    file = file,
+                    received = received,
+                    visible = file.id in visibleIds,
+                    targetIndex = visibleIds.indexOf(file.id),
+                    hasHeader = hasHeader,
+                    justCompleted = !file.status.isActive &&
+                        (recentDone?.id == file.id ||
+                            expandedBlinks.containsKey(file.id)),
+                    onOpen = if (onOpenFile != null &&
+                        file.status == TransferStatus.COMPLETE
+                    ) {
+                        { onOpenFile(file) }
+                    } else {
+                        null
+                    },
+                )
             }
         }
     }
