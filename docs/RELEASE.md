@@ -86,9 +86,13 @@ Release App
 Release Kernel
 ```
 
-Both workflows take a `version` and an optional `tag`. If `tag` is empty,
-`v<version>` is used. The app asset is `AirDroid-<version>.apk`; the kernel
-asset is `boot-airdroid-raphael-<version>.img`.
+Both workflows take a `version`, an optional `tag`, and a required Markdown
+`changelog`. If `tag` is empty, `v<version>` is used. The app asset is
+`AirDroid-<version>.apk`; the kernel asset is
+`boot-airdroid-raphael-<version>.img`.
+
+The changelog is the release body. Generated GitHub notes are disabled so a
+release cannot be published with only a `Full Changelog` link.
 
 ### Repository secrets for the app workflow
 
