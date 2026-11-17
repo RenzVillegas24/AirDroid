@@ -2144,7 +2144,11 @@ private fun TransferFileList(
         orderedFiles.firstOrNull { it.id == id && it.status.isActive }
     }
     val allDone = orderedFiles.filter { !it.status.isActive }
-    val visibleDoneIds = allDone.filter { it.id in visibleIds }.map { it.id }
+    val visibleCount by animateFloatAsState(
+        targetValue = visibleIds.size.toFloat(),
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "visibleFileCount",
+    )
 
     Column(
         modifier = Modifier
@@ -2162,79 +2166,78 @@ private fun TransferFileList(
                 onClick = onToggle,
             )
         }
-        if (hasHeader && (visibleActive.isNotEmpty() || visibleDoneIds.isNotEmpty())) {
+        if (hasHeader && visibleIds.isNotEmpty()) {
             Spacer(Modifier.height(TransferItemGap))
         }
-        if (visibleActive.isNotEmpty()) {
-            val rowsHeight = TransferFileRowHeight * visibleActive.size.toFloat() +
-                TransferItemGap * (visibleActive.size - 1).coerceAtLeast(0).toFloat()
-            // Live rows keep their existing animateItem placement behavior.
+        if (orderedFiles.isNotEmpty()) {
+            val rowsHeight = TransferFileRowHeight * visibleCount +
+                TransferItemGap * (visibleCount - 1f).coerceAtLeast(0f)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(rowsHeight),
-                verticalArrangement = Arrangement.spacedBy(TransferItemGap),
                 userScrollEnabled = false,
             ) {
-                items(visibleActive, key = { it.id }) { file ->
+                // Live rows keep their original placement animation. Done rows
+                // stay in the same keyed list so progress-to-done can animate
+                // downward, and only their show/hide is wrapped in
+                // AnimatedVisibility.
+                items(visibleActive + allDone, key = { it.id }) { file ->
+                    val visible = file.id in visibleIds
+                    val visibleIndex = visibleIds.indexOf(file.id)
                     Box(Modifier.animateItem()) {
-                        TransferFileRow(
-                            file = file,
-                            received = received,
-                            justCompleted = false,
-                            onOpen = null,
-                        )
-                    }
-                }
-            }
-        }
-        // Completed rows stay composed so Show all / Hide can animate them,
-        // while the in-progress rows above keep their existing placement
-        // animation untouched.
-        allDone.forEach { file ->
-            key(file.id) {
-                val visible = file.id in visibleIds
-                val doneIndex = visibleDoneIds.indexOf(file.id)
-                val visibility = remember { MutableTransitionState(false) }
-                visibility.targetState = visible
-                androidx.compose.animation.AnimatedVisibility(
-                    visibleState = visibility,
-                    enter = fadeIn(tween(220, delayMillis = 40)) +
-                        expandVertically(
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioLowBouncy,
-                                stiffness = Spring.StiffnessMediumLow,
-                            ),
-                            expandFrom = Alignment.Top,
-                        ),
-                    exit = fadeOut(tween(160)) +
-                        shrinkVertically(
-                            animationSpec = tween(240, easing = FastOutSlowInEasing),
-                            shrinkTowards = Alignment.Top,
-                        ),
-                ) {
-                    Box(
-                        modifier = Modifier.padding(
-                            top = if (visibleActive.isNotEmpty() || doneIndex > 0) {
-                                TransferItemGap
-                            } else {
-                                0.dp
-                            },
-                        ),
-                    ) {
-                        TransferFileRow(
-                            file = file,
-                            received = received,
-                            justCompleted = recentDone?.id == file.id ||
-                                expandedBlinks.containsKey(file.id),
-                            onOpen = if (onOpenFile != null &&
-                                file.status == TransferStatus.COMPLETE
+                        val row: @Composable () -> Unit = {
+                            TransferFileRow(
+                                file = file,
+                                received = received,
+                                justCompleted = !file.status.isActive &&
+                                    (recentDone?.id == file.id ||
+                                        expandedBlinks.containsKey(file.id)),
+                                onOpen = if (onOpenFile != null &&
+                                    file.status == TransferStatus.COMPLETE
+                                ) {
+                                    { onOpenFile(file) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        if (file.status.isActive) {
+                            Box(
+                                modifier = Modifier.padding(
+                                    top = if (visibleIndex > 0) TransferItemGap else 0.dp,
+                                ),
                             ) {
-                                { onOpenFile(file) }
-                            } else {
-                                null
-                            },
-                        )
+                                row()
+                            }
+                        } else {
+                            val visibility = remember { MutableTransitionState(visible) }
+                            visibility.targetState = visible
+                            androidx.compose.animation.AnimatedVisibility(
+                                visibleState = visibility,
+                                enter = fadeIn(tween(220, delayMillis = 40)) +
+                                    expandVertically(
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioLowBouncy,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
+                                        expandFrom = Alignment.Top,
+                                    ),
+                                exit = fadeOut(tween(160)) +
+                                    shrinkVertically(
+                                        animationSpec = tween(240, easing = FastOutSlowInEasing),
+                                        shrinkTowards = Alignment.Top,
+                                    ),
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(
+                                        top = if (visibleIndex > 0) TransferItemGap else 0.dp,
+                                    ),
+                                ) {
+                                    row()
+                                }
+                            }
+                        }
                     }
                 }
             }
