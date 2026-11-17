@@ -335,10 +335,24 @@ after loading. This is now a driver/config compatibility problem, not a
 missing-firmware problem. Do not repeat the boot test until the remaining
 crash is understood.
 
+A second build was made against the generic SM8635 6.1.138 source
+(`LineageOS/android_kernel_xiaomi_sm8635`, commit `1aaa6e18d2b3`) instead of
+the ACK tree, with the exact kernel release and the same qca source. It
+produced a valid 6.1.138 module, but the one-shot overlay still rebooted after
+the patched driver loaded. The stock module returned on the next boot and
+Wi-Fi is enabled again.
+
+The exact Civi 6.1.138 kernel is available as a prebuilt image in
+`marcmyworld/android_device_xiaomi_chenfeng-kernel`; the stock qca module
+there is byte-identical to the phone's. That repo has no kernel source. The
+only official Civi source remains 6.1.57; the generic SM8635 source is not a
+Civi-specific tree. There is no public exact Civi 6.1.138 vendor source.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
-2. match the remaining driver configuration to the stock vendor module
+2. or move the hidden-STA/WMI experiment into a small module loaded against
+   the stock driver instead of replacing the whole qca driver
 3. verify monitor RX
 4. verify hidden STA creation without TX
 5. send one raw management frame
