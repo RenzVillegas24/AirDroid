@@ -420,6 +420,22 @@ public trees, likely vendor patches/toolchain/signing details. Rebuilding the
 qca driver is therefore not a viable route on this device without that exact
 vendor build environment.
 
+The exact Qualcomm qca tag was then located:
+
+```text
+LA.VENDOR.14.3.0.r1-14500-lanai.0
+version 5.2.1.91G
+```
+
+A native Clang/LLVM 17.0.2 toolchain was installed and the clean 91G source
+was rebuilt against the exact 6.1.138 device config. That module also
+rebooted during boot. The stock module returned and Wi-Fi is enabled again.
+
+The public Qualcomm source tag and a matching compiler are therefore still
+not sufficient. The exact Civi vendor kernel/build patches or signing
+environment remain unavailable. The qca rebuild route is exhausted unless
+Xiaomi or Qualcomm provides that environment.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
