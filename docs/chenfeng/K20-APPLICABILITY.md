@@ -456,6 +456,13 @@ are the remaining public contact paths. Qualcomm's public CodeLinaro qca
 source does not include the Xiaomi kernel build environment; obtaining that
 side would require a Qualcomm account/vendor access.
 
+The global Xiaomi 14 Civi is the same `chenfeng` platform (model numbers
+24053PY09I and 24053PY09C). It does not have a separate public kernel-source
+branch. The same `chenfeng-u-oss` 6.1.57 source is used for the family, and no
+global 6.1.138 vendor source was found. A GPL request should use the model
+number and global build string and ask Xiaomi Global/India support as well as
+the MiCode tracker.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
