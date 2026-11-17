@@ -2218,12 +2218,21 @@ private fun TransferFileList(
     val activeIds = orderedFiles.filter { it.status.isActive }.map { it.id }
     val recentDoneId = recentDone?.id
         ?.takeIf { id -> orderedFiles.any { it.id == id && it.status == TransferStatus.COMPLETE } }
+    // On the first frame after a completion, `recentDone` has not been set by
+    // LaunchedEffect yet. Keep that terminal row visible immediately so it can
+    // animate from its live slot into the done slot instead of disappearing
+    // and reappearing.
+    val pendingDoneId = files
+        .filter { it.status.isTerminal && previousStatuses[it.id]?.isActive == true }
+        .maxByOrNull { it.completedAt ?: 0L }
+        ?.id
+    val visibleDoneId = recentDoneId ?: pendingDoneId
     val visibleIds: List<String> = when {
         expanded -> orderedFiles.map { it.id }
         // While collapsed, keep the current row and the actual next queued row
         // visible, and use the third slot for the just-finished blink. This
         // keeps the group at exactly three rows.
-        active && recentDoneId != null -> activeIds.take(2) + recentDoneId
+        active && visibleDoneId != null -> activeIds.take(2) + visibleDoneId
         active -> activeIds.take(3)
         else -> emptyList()
     }
