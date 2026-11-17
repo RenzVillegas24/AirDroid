@@ -553,11 +553,15 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     // the peer accepts it.
     cfg.rate = TxRate::Ht { mcs: 7, sgi: true };
     cfg.amsdu = true;
+    // Accept the iPhone's A-MPDU Block Ack session. This only helps if the
+    // K20 monitor RX path answers the ADDBA handshake, which is what we are
+    // measuring here.
+    cfg.accept_addba = true;
     // The ACK/retry experiment, see `TX_NO_ACK_DEFAULT`.
     cfg.no_ack = tx_no_ack();
     println!(
-        "RADIO_CONFIG no_ack={} rate={} amsdu={}",
-        cfg.no_ack, cfg.rate, cfg.amsdu
+        "RADIO_CONFIG no_ack={} rate={} amsdu={} addba={}",
+        cfg.no_ack, cfg.rate, cfg.amsdu, cfg.accept_addba
     );
     let (peers_tx, peers_rx) = watch::channel(Vec::new());
     let native = Native::start(MONITOR, AWDL_IFACE, cfg, peers_tx)
