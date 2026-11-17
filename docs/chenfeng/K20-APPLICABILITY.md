@@ -376,6 +376,16 @@ The remaining work is to find a TX path that actually enqueues on the monitor
 vdev, or integrate the hidden vdev through the driver's own object/lifecycle
 paths rather than calling WMI directly from a separate module.
 
+A clean qca source build was then tested without any hidden-STA code or
+monitor-TX config changes, using the generic 6.1.138 kernel tree. The clean
+module also loaded and then rebooted during boot. The stock module returned
+and Wi-Fi is enabled again.
+
+This means the current source/kernel combination cannot rebuild a bootable
+qca driver, even before adding injection. The K20 hidden-STA port cannot be
+validated on this build base. The next build attempt must match the stock
+module's 6.1.68 vendor build environment, not the generic 6.1.138 tree.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
