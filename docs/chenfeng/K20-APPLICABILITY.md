@@ -386,6 +386,20 @@ qca driver, even before adding injection. The K20 hidden-STA port cannot be
 validated on this build base. The next build attempt must match the stock
 module's 6.1.68 vendor build environment, not the generic 6.1.138 tree.
 
+A clean 6.1.68 build was then made from the clean qca source. It built, but
+the source reports version `5.2.1.86B` while the stock module reports
+`5.2.1.91G`. The source versions do not match, so that module was not booted.
+
+A userspace monitor+STA concurrency attempt was also made with the stock
+driver. Adding a managed `wlan1` interface while `con_mode=4` failed with
+`EINVAL`; only the monitor interface exists. The K20 hidden adapter therefore
+has to be created inside the driver, not through nl80211 userspace.
+
+The public qca branches checked (`chenfeng-u-oss`, `peridot-u-oss`, and
+related Xiaomi branches) top out at `5.2.1.86B`. The stock `5.2.1.91G` source
+was not found publicly. Without that source or the exact vendor build
+environment, an in-tree K20-style hidden-STA port cannot be built safely.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
