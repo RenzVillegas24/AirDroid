@@ -348,11 +348,22 @@ there is byte-identical to the phone's. That repo has no kernel source. The
 only official Civi source remains 6.1.57; the generic SM8635 source is not a
 Civi-specific tree. There is no public exact Civi 6.1.138 vendor source.
 
+A small `owly_hidden_tx.ko` was then built against the generic 6.1.138
+headers and loaded against the stock qca driver. It resolved its symbols and
+failed cleanly in normal mode (`wlan0` not radiotap monitor). In monitor mode
+(`con_mode=4`, channel 149) it loaded, then the phone disconnected and
+rebooted. No pstore entry was available. The module was not persisted and the
+stock driver returned on the next boot.
+
+This means direct WMI hidden-vdev creation against the stock driver is also
+not safe. The remaining work is to capture the crash reason or integrate the
+hidden vdev through the driver's own object/lifecycle paths rather than
+calling WMI directly from a separate module.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
-2. or move the hidden-STA/WMI experiment into a small module loaded against
-   the stock driver instead of replacing the whole qca driver
+2. integrate the hidden vdev through qca driver lifecycle/object management
 3. verify monitor RX
 4. verify hidden STA creation without TX
 5. send one raw management frame
