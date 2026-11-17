@@ -360,6 +360,22 @@ not safe. The remaining work is to capture the crash reason or integrate the
 hidden vdev through the driver's own object/lifecycle paths rather than
 calling WMI directly from a separate module.
 
+A monitor-only hook was also tested on channel 6. It used the stock monitor
+vdev and `ucfg_dp_start_xmit()` and did not crash. A monitor capture during
+the test showed the iPhone's AWDL vendor action frames on 2437 MHz, so monitor
+RX is working and the iPhone was visible. The injected frame was accepted by
+the hook, but the monitor interface TX counter stayed at zero and the frame
+was not observed in the capture. The TX path is therefore not confirmed.
+
+A separate monitor-WMI module that captured the real WMI handle with a kprobe
+then attempted management TX on the monitor vdev. It rebooted during module
+load, before any frame was sent. The stock driver returned and Wi-Fi is
+enabled again. No module or flag was persisted.
+
+The remaining work is to find a TX path that actually enqueues on the monitor
+vdev, or integrate the hidden vdev through the driver's own object/lifecycle
+paths rather than calling WMI directly from a separate module.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
