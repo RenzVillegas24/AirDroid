@@ -2144,10 +2144,6 @@ private fun TransferFileList(
         active -> activeIds.take(3)
         else -> emptyList()
     }
-    val visibleActive = visibleIds.mapNotNull { id ->
-        orderedFiles.firstOrNull { it.id == id && it.status.isActive }
-    }
-    val allDone = orderedFiles.filter { !it.status.isActive }
     val visibleCount by animateFloatAsState(
         targetValue = visibleIds.size.toFloat(),
         animationSpec = tween(240, easing = FastOutSlowInEasing),
@@ -2182,64 +2178,51 @@ private fun TransferFileList(
                     .height(rowsHeight),
                 userScrollEnabled = false,
             ) {
-                // Live rows keep their original placement animation. Done rows
-                // stay in the same keyed list so progress-to-done can animate
-                // downward, and only their show/hide is wrapped in
-                // AnimatedVisibility.
-                items(visibleActive + allDone, key = { it.id }) { file ->
+                // Every row stays keyed in this list so the progress-to-done
+                // movement and the completed-row ordering are preserved. The
+                // per-row wrapper supplies the bouncy expand used when a group
+                // opens: for both live and completed rows.
+                items(orderedFiles, key = { it.id }) { file ->
                     val visible = file.id in visibleIds
                     val visibleIndex = visibleIds.indexOf(file.id)
                     Box(Modifier.animateItem()) {
-                        val row: @Composable () -> Unit = {
-                            TransferFileRow(
-                                file = file,
-                                received = received,
-                                justCompleted = !file.status.isActive &&
-                                    (recentDone?.id == file.id ||
-                                        expandedBlinks.containsKey(file.id)),
-                                onOpen = if (onOpenFile != null &&
-                                    file.status == TransferStatus.COMPLETE
-                                ) {
-                                    { onOpenFile(file) }
-                                } else {
-                                    null
-                                },
-                            )
-                        }
-                        if (file.status.isActive) {
+                        val visibility = remember { MutableTransitionState(visible) }
+                        visibility.targetState = visible
+                        androidx.compose.animation.AnimatedVisibility(
+                            visibleState = visibility,
+                            enter = fadeIn(tween(220, delayMillis = 40)) +
+                                expandVertically(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioLowBouncy,
+                                        stiffness = Spring.StiffnessMediumLow,
+                                    ),
+                                    expandFrom = Alignment.Top,
+                                ),
+                            exit = fadeOut(tween(160)) +
+                                shrinkVertically(
+                                    animationSpec = tween(240, easing = FastOutSlowInEasing),
+                                    shrinkTowards = Alignment.Top,
+                                ),
+                        ) {
                             Box(
                                 modifier = Modifier.padding(
                                     top = if (visibleIndex > 0) TransferItemGap else 0.dp,
                                 ),
                             ) {
-                                row()
-                            }
-                        } else {
-                            val visibility = remember { MutableTransitionState(visible) }
-                            visibility.targetState = visible
-                            androidx.compose.animation.AnimatedVisibility(
-                                visibleState = visibility,
-                                enter = fadeIn(tween(220, delayMillis = 40)) +
-                                    expandVertically(
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioLowBouncy,
-                                            stiffness = Spring.StiffnessMediumLow,
-                                        ),
-                                        expandFrom = Alignment.Top,
-                                    ),
-                                exit = fadeOut(tween(160)) +
-                                    shrinkVertically(
-                                        animationSpec = tween(240, easing = FastOutSlowInEasing),
-                                        shrinkTowards = Alignment.Top,
-                                    ),
-                            ) {
-                                Box(
-                                    modifier = Modifier.padding(
-                                        top = if (visibleIndex > 0) TransferItemGap else 0.dp,
-                                    ),
-                                ) {
-                                    row()
-                                }
+                                TransferFileRow(
+                                    file = file,
+                                    received = received,
+                                    justCompleted = !file.status.isActive &&
+                                        (recentDone?.id == file.id ||
+                                            expandedBlinks.containsKey(file.id)),
+                                    onOpen = if (onOpenFile != null &&
+                                        file.status == TransferStatus.COMPLETE
+                                    ) {
+                                        { onOpenFile(file) }
+                                    } else {
+                                        null
+                                    },
+                                )
                             }
                         }
                     }
