@@ -568,13 +568,11 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     let radio = RadioConstraints { channel: Channel(channel), presence: Presence::Fixed };
     let mut cfg = Config::new(addr, "airdroid-k20", radio);
     cfg.rssi_threshold = Some(-85);
-    cfg.max_frame = 2304;
-    // The iPhone advertises HT rates and A-MSDU support. The legacy 12 Mbit/s
-    // BASIC rate plus one frame per TCP segment is what produced the 512 KiB
-    // then stall pattern; use the one-stream MCS 7 rate and aggregate where
-    // the peer accepts it.
-    cfg.rate = TxRate::Ht { mcs: 7, sgi: true };
-    cfg.amsdu = true;
+    // The K20's WMI management-TX path caps a frame at 1532 bytes. A-MSDU
+    // would exceed that and be dropped, so keep one MPDU per injection.
+    cfg.max_frame = 1532;
+    cfg.rate = TxRate::Legacy(108); /* 54 Mbit/s; kernel sets the actual rate */
+    cfg.amsdu = false;
     // Accept the iPhone's A-MPDU Block Ack session. This only helps if the
     // K20 monitor RX path answers the ADDBA handshake, which is what we are
     // measuring here.
