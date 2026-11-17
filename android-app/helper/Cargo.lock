@@ -428,6 +428,7 @@ dependencies = [
  "owly-awdl",
  "owly-radio",
  "rustls",
+ "serde_json",
  "tokio",
 ]
 

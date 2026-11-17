@@ -641,7 +641,7 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
         Some(&mut browse),
         &mut peers_rx,
         &names,
-        &path,
+        std::slice::from_ref(&path),
         source_total,
         target.as_deref(),
         &mdns_cache,
@@ -732,7 +732,7 @@ async fn find_and_send(
     browse: Option<&mut owly_airdrop::driver::mdns::Browse>,
     peers_rx: &mut watch::Receiver<Vec<PeerInfo>>,
     names: &Arc<Mutex<HashMap<String, String>>>,
-    path: &Path,
+    paths: &[PathBuf],
     source_total: u64,
     target_mac: Option<&str>,
     mdns_cache: &Arc<Mutex<MdnsCache>>,
@@ -881,7 +881,7 @@ async fn find_and_send(
 
     let (target, flags, name) = chosen.ok_or_else(|| std::io::Error::other("no AirDrop receiver answered within 120 s"))?;
     println!("sending to {name:?} at {target} flags=0x{flags:x}");
-    let payload = Payload::Files(vec![path.to_path_buf()]);
+    let payload = Payload::Files(paths.to_vec());
     let mut connect_retries = 2u32;
     let outcome = loop {
         if *cancel.borrow() {
@@ -1086,6 +1086,13 @@ async fn session(
                         display_name(&path)
                     );
                 }
+                Some(ReceiverEvent::FileComplete { id, path }) => {
+                    println!(
+                        "RECEIVE_FILE_DONE id={id} name={} path={}",
+                        display_name(&path),
+                        path.display()
+                    );
+                }
                 Some(ReceiverEvent::Received { id, paths }) => {
                     requests.remove(&id);
                     active_receives.remove(&id);
@@ -1178,12 +1185,27 @@ async fn session(
                         println!("PEER_COUNT {}", peers.len());
                         println!("SCAN_DONE {id}");
                     }
-                    "send" => {
+                    action @ ("send" | "send-batch") => {
                         let id = parts.next().unwrap_or("send").to_string();
                         let mac = parts.next().unwrap_or("").to_string();
-                        let path = parts.next().unwrap_or("").to_string();
-                        if mac.is_empty() || path.is_empty() {
+                        let arg = parts.next().unwrap_or("");
+                        if mac.is_empty() || arg.is_empty() {
                             println!("SEND_ERR {id} missing target or path");
+                            continue;
+                        }
+                        let paths: Vec<PathBuf> = if action == "send-batch" {
+                            match serde_json::from_str::<Vec<String>>(arg) {
+                                Ok(values) => values.into_iter().map(PathBuf::from).collect(),
+                                Err(e) => {
+                                    println!("SEND_ERR {id} invalid path list: {e}");
+                                    continue;
+                                }
+                            }
+                        } else {
+                            vec![PathBuf::from(arg)]
+                        };
+                        if paths.is_empty() || paths.iter().any(|path| !path.is_file()) {
+                            println!("SEND_ERR {id} one or more paths are not files");
                             continue;
                         }
                         if send_active.swap(true, Ordering::SeqCst) {
@@ -1199,16 +1221,20 @@ async fn session(
                             id: id.clone(),
                             current: Arc::clone(&active_send),
                         };
-                        // One file per send task, so this card is the whole
-                        // transfer. The file size is the uncompressed size;
-                        // progress totals below are the compressed upload body.
-                        // New fields go before `id=` so the app's existing
-                        // `total=`-last parsing keeps working.
-                        let path = PathBuf::from(path);
-                        let source_total = file_total(&path);
+                        // One send task is the whole transfer, single or batch.
+                        // File sizes are uncompressed; progress totals below are
+                        // the compressed upload body. New fields go before
+                        // `id=` so the app's existing `total=`-last parsing
+                        // keeps working.
+                        let source_total = paths.iter().map(|path| file_total(path)).sum();
+                        let label = if paths.len() == 1 {
+                            display_name(&paths[0])
+                        } else {
+                            format!("{} files", paths.len())
+                        };
                         println!(
                             "SEND_FILE_START source_total={source_total} id={id} name={} total={source_total}",
-                            display_name(&path)
+                            label
                         );
                         let sender = Arc::clone(&sender);
                         let mut send_peers = peers_rx.clone();
@@ -1223,7 +1249,7 @@ async fn session(
                                 None,
                                 &mut send_peers,
                                 &send_names,
-                                &path,
+                                &paths,
                                 source_total,
                                 Some(&mac),
                                 &send_mdns_cache,
@@ -1234,7 +1260,7 @@ async fn session(
                                 Ok(Outcome::Delivered) => {
                                     println!(
                                         "SEND_FILE_DONE source_total={source_total} id={id} path={}",
-                                        path.display()
+                                        paths[0].display()
                                     );
                                     println!("SEND_OK {id}");
                                 }
@@ -1534,6 +1560,13 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
                     println!(
                         "RECEIVE_FILE_PROGRESS id={id} name={} bytes={bytes} total=0",
                         display_name(&path)
+                    );
+                }
+                Some(ReceiverEvent::FileComplete { id, path }) => {
+                    println!(
+                        "RECEIVE_FILE_DONE id={id} name={} path={}",
+                        display_name(&path),
+                        path.display()
                     );
                 }
                 Some(ReceiverEvent::Received { id, paths }) => {

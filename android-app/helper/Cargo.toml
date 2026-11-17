@@ -10,3 +10,4 @@ owly-awdl = { path = "../../third_party/owly/crates/owly-awdl", features = ["dri
 owly-airdrop = { path = "../../third_party/owly/crates/owly-airdrop", features = ["mdns"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+serde_json = "1"

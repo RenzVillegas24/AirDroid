@@ -792,15 +792,10 @@ class AirDroidController(private val context: Context) {
         }
     }
 
-    /** Sends a staged list sequentially over the existing helper session. */
+    /** Sends a staged list as one AirDrop offer: one accept, one upload. */
     fun sendStaged(items: List<Pair<String, String>>) {
         if (items.isEmpty()) return
-        scope.launch {
-            for ((path, name) in items) {
-                sendFile(path, name)
-                if (sendCancelled) break
-            }
-        }
+        scope.launch { sendFiles(items) }
     }
 
     suspend fun sendPicked() {
@@ -830,6 +825,10 @@ class AirDroidController(private val context: Context) {
     }
 
     private suspend fun sendFile(path: String, displayName: String? = null) {
+        sendFiles(listOf(path to (displayName ?: File(path).name)))
+    }
+
+    private suspend fun sendFiles(items: List<Pair<String, String>>) {
         if (sending || sendCancelling) return
         if (!requireMonitorKernel()) return
         val target = selectedPeer
@@ -850,19 +849,25 @@ class AirDroidController(private val context: Context) {
             status = if (kernel.monitorReady) "READY" else kernel.state.badge
             return
         }
+
+        val cleanItems = items.map { (path, name) ->
+            path.replace('\n', ' ').replace('\r', ' ') to name
+        }
+        val files = cleanItems.map { (path, _) -> File(path) }
+        val total = files.sumOf { it.length().coerceAtLeast(0) }
+        val singleName = cleanItems.firstOrNull()?.let { (_, name) ->
+            if (name.isNotBlank()) name else files.first().name
+        } ?: "file"
+        val shownName = if (cleanItems.size == 1) singleName else "${cleanItems.size} files"
+
         // Owly starts a fresh BLE wake advert for every send. Reusing the one
         // from session startup is not the same wake and lets the iPhone stop
         // answering new /Ask connections after the first transfer.
         startBle(fresh = true)
-        val cleanPath = path.replace('\n', ' ').replace('\r', ' ')
-        val file = File(cleanPath)
-        val candidateName = displayName?.takeIf { it.isNotBlank() } ?: file.name
-        val shownName = if (candidateName.startsWith("outgoing-")) {
-            sourceDisplayName(candidateName)
-        } else {
-            candidateName
-        }
-        Log.i("AirDroidSend", "sendFile display=$displayName shown=$shownName file=${file.name}")
+        Log.i(
+            "AirDroidSend",
+            "sendFiles count=${cleanItems.size} shown=$shownName files=${cleanItems.map { it.first }}",
+        )
         val generation = ++sendGeneration
         sendCancelled = false
         sendProgressBytes = 0
@@ -870,26 +875,35 @@ class AirDroidController(private val context: Context) {
         sending = true
         sendCancelling = false
         status = "SENDING"
-        sendMessage = "Sending $shownName to ${target.displayName()}..."
+        sendMessage = if (cleanItems.size == 1) {
+            "Sending $shownName to ${target.displayName()}..."
+        } else {
+            "Sending ${cleanItems.size} files to ${target.displayName()}..."
+        }
         val transfer = TransferItem(
             id = "tx-${System.currentTimeMillis()}-${++sendTransferCounter}",
             direction = TransferDirection.SENT,
             peerName = target.displayName(),
             fileName = shownName,
-            totalBytes = file.length().coerceAtLeast(0),
+            totalBytes = total,
             transferredBytes = 0,
             status = TransferStatus.WAITING,
-            localPath = cleanPath,
+            localPath = cleanItems.singleOrNull()?.first,
             startedAt = System.currentTimeMillis(),
         )
         activeSendTransferId = transfer.id
-        originalTransferTotals[transfer.id] = file.length().coerceAtLeast(0)
+        originalTransferTotals[transfer.id] = total
         upsertTransfer(transfer)
+
+        // JSON keeps paths with spaces and quotes intact. The helper treats
+        // the whole list as one Payload::Files offer, so the iPhone prompts
+        // once for the batch.
+        val jsonPaths = org.json.JSONArray(cleanItems.map { it.first }).toString()
         val rc = runSessionCommand(
             kind = "send",
             timeoutMs = SEND_TIMEOUT_MS,
             requestId = transfer.id,
-            command = { id -> "send $id ${target.mac} $cleanPath" },
+            command = { id -> "send-batch $id ${target.mac} $jsonPaths" },
         ) { line -> handleSendProgress(line) }
 
         if (generation != sendGeneration) return
@@ -914,7 +928,11 @@ class AirDroidController(private val context: Context) {
         }
         if (rc == 0) {
             finishTransfer(transfer.id, TransferStatus.COMPLETE)
-            sendMessage = "Delivered ${file.name}."
+            sendMessage = if (cleanItems.size == 1) {
+                "Delivered $shownName."
+            } else {
+                "Delivered ${cleanItems.size} files."
+            }
         } else {
             if (sendMessage.startsWith("Sending ")) {
                 sendMessage = "Send did not complete; check the log."
@@ -1934,6 +1952,9 @@ class AirDroidController(private val context: Context) {
         val name = between(line, "name=", " path=")
         val path = line.substringAfter("path=", "").trim()
         val transferId = resolveReceiveFileTransferId(helperId, name) ?: return
+        // The receiver emits one completion before the batch ends, and the
+        // final Received event names the same path again.
+        if (completedTransfers.any { it.id == transferId && it.status == TransferStatus.COMPLETE }) return
         val fileName = name.ifBlank { if (path.isNotBlank()) File(path).name else "" }
         finishTransfer(
             transferId,
@@ -1977,8 +1998,8 @@ class AirDroidController(private val context: Context) {
         incomingRequest = null
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
-        receiveTransferring = false
-        receiveProgressBytes = receiveProgressTotal
+        // Do not finish the whole receive on the first `RECEIVED` line: one
+        // line is emitted per file, and RECEIVE_DONE closes the batch.
         notifications.cancelIncomingRequest()
 
         if (path.isNotBlank()) {

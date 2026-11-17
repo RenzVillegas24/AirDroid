@@ -88,7 +88,7 @@ Release Kernel
 
 Both workflows take a `version` and an optional `tag`. If `tag` is empty,
 `v<version>` is used. The app asset is `AirDroid-<version>.apk`; the kernel
-asset is `boot-airdroid-<version>.img`.
+asset is `boot-airdroid-raphael-<version>.img`.
 
 ### Repository secrets for the app workflow
 
@@ -121,8 +121,8 @@ release.
 packs the result with the tracked `out/ramdisk` and `out/dtb` and publishes:
 
 ```text
-boot-airdroid-<version>.img
-boot-airdroid-<version>.img.sha256
+boot-airdroid-raphael-<version>.img
+boot-airdroid-raphael-<version>.img.sha256
 ```
 
 This workflow is intentionally manual because kernel output is device-specific
