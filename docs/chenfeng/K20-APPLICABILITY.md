@@ -436,6 +436,26 @@ not sufficient. The exact Civi vendor kernel/build patches or signing
 environment remain unavailable. The qca rebuild route is exhausted unless
 Xiaomi or Qualcomm provides that environment.
 
+## Vendor source request
+
+The exact public qca source is available from Qualcomm CodeLinaro at tag
+`LA.VENDOR.14.3.0.r1-14500-lanai.0` (version `5.2.1.91G`). The missing part is
+the Civi vendor kernel/build environment, not the WLAN source version.
+
+A Xiaomi GPL source request should ask for:
+
+- kernel source matching Android build `OS3.0.307.0.WNJCNXM`
+- kernel release `6.1.138-android14-11-g0c3d559bcd85-ab14529422`
+- the Civi vendor kernel config and any vendor patches
+- the `qca_cld3_qca6750` 5.2.1.91G build configuration
+
+Xiaomi's public kernel repository only contains the older Civi branch
+`chenfeng-u-oss` at 6.1.57. The reported `opensource@xiaomi.com` address has
+had delivery failures; the MiCode issue tracker and official Xiaomi support
+are the remaining public contact paths. Qualcomm's public CodeLinaro qca
+source does not include the Xiaomi kernel build environment; obtaining that
+side would require a Qualcomm account/vendor access.
+
 Remaining work:
 
 1. capture the crash reason (pstore/serial or a safer test build)
