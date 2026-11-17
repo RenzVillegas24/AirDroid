@@ -3,6 +3,8 @@
 Status: **investigation only**. No Civi kernel or boot image is produced on
 this branch.
 
+Latest stock-driver TX results: [STOCK-TX-FINDINGS.md](STOCK-TX-FINDINGS.md).
+
 ## Summary
 
 The K20 Pro and Civi 4 Pro share the app/helper/AirDrop layers, but **not the
@@ -101,6 +103,12 @@ Civi kernel monitor RX (works)
 → AWDL frames (blocked by TX)
 → AirDrop (not started)
 ```
+
+The stock-driver TX experiments are exhausted: monitor self-peer management
+TX, broadcast STA action frames, and the Android soft-AP route did not produce
+observable air TX. The remaining work needs a real hidden STA vdev or the
+exact vendor build environment. See
+[STOCK-TX-FINDINGS.md](STOCK-TX-FINDINGS.md).
 
 The K20 Pro remains the production target.
 
@@ -465,15 +473,16 @@ the MiCode tracker.
 
 Remaining work:
 
-1. capture the crash reason (pstore/serial or a safer test build)
+1. obtain the exact Civi vendor kernel/qca build environment
 2. integrate the hidden vdev through qca driver lifecycle/object management
-3. verify monitor RX
-4. verify hidden STA creation without TX
-5. send one raw management frame
-6. test AWDL PSF/MIF and AirDrop
+3. verify hidden STA creation without TX
+4. send one raw management frame from the hidden STA
+5. test AWDL PSF/MIF and AirDrop
 
-The test module and build tree remain in the ignored local workspace. No
-device changes were persisted.
+Monitor RX is already verified. Stock-driver monitor TX, STA broadcast action
+TX, and Android soft-AP concurrency did not radiate usable frames; do not
+repeat them as TX candidates. The test module and build tree remain in the
+ignored local workspace. No device changes were persisted.
 
 ## Branch contents
 
