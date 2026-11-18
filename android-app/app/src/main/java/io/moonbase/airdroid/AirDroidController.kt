@@ -759,13 +759,25 @@ class AirDroidController(private val context: Context) {
         append("Live scan stopped.")
     }
 
+    /**
+     * A unique cache directory whose file can keep the real display name.
+     * The AirDrop archive uses the basename, so putting the timestamp on a
+     * directory instead of the file prevents outgoing-<timestamp>- prefixes
+     * from reaching the receiver.
+     */
+    private fun outgoingStagingFile(name: String): File {
+        val dir = File(context.cacheDir, "outgoing/${System.currentTimeMillis()}")
+        dir.mkdirs()
+        return File(dir, name)
+    }
+
     /** Copies a picker result into the outgoing cache and returns (file, name). */
     suspend fun stageFile(uri: Uri): Pair<File, String>? = withContext(Dispatchers.IO) {
         try {
             val displayName = queryDisplayName(uri) ?: "airdrop-file"
             val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
             Log.i("AirDroidSend", "stageFile display=$displayName clean=$cleanName uri=$uri")
-            val out = File(context.cacheDir, "outgoing-${System.currentTimeMillis()}-$cleanName")
+            val out = outgoingStagingFile(cleanName)
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(out).use { output -> input.copyTo(output) }
             } ?: return@withContext null
@@ -779,7 +791,7 @@ class AirDroidController(private val context: Context) {
     suspend fun stageText(text: String): Pair<File, String>? {
         if (text.isBlank()) return null
         return withContext(Dispatchers.IO) {
-            val file = File(context.cacheDir, "clipboard-${System.currentTimeMillis()}.txt")
+            val file = outgoingStagingFile("Clipboard.txt")
             file.writeText(text)
             file to "Clipboard.txt"
         }
@@ -820,7 +832,7 @@ class AirDroidController(private val context: Context) {
             return
         }
         scope.launch {
-            val file = File(context.cacheDir, "clipboard-${System.currentTimeMillis()}.txt")
+            val file = outgoingStagingFile("Clipboard.txt")
             withContext(Dispatchers.IO) { file.writeText(text) }
             pickedFile = file
             sendFile(file.absolutePath, "Clipboard.txt")
