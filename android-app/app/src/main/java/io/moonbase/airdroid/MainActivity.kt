@@ -163,6 +163,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import android.os.SystemClock
+import android.provider.Settings
 import android.text.format.DateUtils
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -451,7 +452,43 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         IncomingRequestDialog(controller)
+        BluetoothRequiredDialog(controller)
     }
+}
+
+@Composable
+private fun BluetoothRequiredDialog(controller: AirDroidController) {
+    if (controller.status != "BLUETOOTH OFF") return
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = { controller.dismissBluetoothWarning() },
+        title = { Text("Bluetooth required") },
+        text = {
+            Text(
+                "AirDrop uses Bluetooth Low Energy to wake nearby iPhones. " +
+                    "Turn on Bluetooth, then retry. Transfer mode will not start " +
+                    "without a working BLE advertisement.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { controller.retryBluetooth() }) {
+                Text("Retry")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                    controller.dismissBluetoothWarning()
+                },
+            ) {
+                Text("Bluetooth settings")
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -159,6 +159,8 @@ data class KernelStatus(
         private val MONITOR_RELEASES = setOf(
             "4.14.357-openela-perf-g7a7b4d1b6808",
             "4.14.357-openela-perf-g2a67a9737583-dirty",
+            "4.14.357-openela-perf-g90859856300e",
+            "4.14.357-openela-perf-gc446a6323987",
         )
         private val STOCK_RELEASES = setOf(
             "4.14.357-openela-perf-g2a67a9737583",
@@ -216,7 +218,7 @@ class AirDroidController(private val context: Context) {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
-        private const val AUTO_CHANNEL_DWELL_MS = 6_000L
+        private const val AUTO_CHANNEL_DWELL_MS = 12_000L
         // Prefer 5 GHz, but keep 6 as a last fallback for 2.4 GHz-only
         // networks. Blank/transient peers are ignored before locking.
         private val AUTO_CHANNELS = intArrayOf(149, 44, 6)
@@ -244,6 +246,8 @@ class AirDroidController(private val context: Context) {
     private val receiveMutex = Mutex()
     private val binDir = File(context.filesDir, "bin")
     private var prepared = false
+    @Volatile
+    private var bleStartFailed = false
     private var helperSession: HelperSession? = null
     private var receiveSession: ReceiveSession? = null
     private var pendingRequest: PendingRequest? = null
@@ -649,7 +653,12 @@ class AirDroidController(private val context: Context) {
             }
         }
         if (bleArm != previous.bleArm && ble.isRunning()) {
-            scope.launch { startBle(fresh = true) }
+            scope.launch {
+                if (!startBle(fresh = true)) {
+                    status = "BLUETOOTH OFF"
+                    sendMessage = "Could not restart BLE with the new wake arm."
+                }
+            }
         }
     }
 
@@ -727,8 +736,12 @@ class AirDroidController(private val context: Context) {
         val session = sessionMutex.withLock { ensureSessionLocked() }
         if (session == null) {
             scanning = false
-            status = "CHECK LOG"
-            sendMessage = "Live scan could not start; check the log."
+            status = if (bleStartFailed) "BLUETOOTH OFF" else "CHECK LOG"
+            sendMessage = if (bleStartFailed) {
+                "Turn on Bluetooth to use AirDrop discovery."
+            } else {
+                "Live scan could not start; check the log."
+            }
             runCatching { AirDroidService.stop(context) }
             return
         }
@@ -753,8 +766,12 @@ class AirDroidController(private val context: Context) {
                 val session = sessionMutex.withLock { ensureSessionLocked() }
                 if (session == null) {
                     scanning = false
-                    status = "CHECK LOG"
-                    sendMessage = "Live scan could not start; check the log."
+                    status = if (bleStartFailed) "BLUETOOTH OFF" else "CHECK LOG"
+                    sendMessage = if (bleStartFailed) {
+                        "Turn on Bluetooth to use AirDrop discovery."
+                    } else {
+                        "Live scan could not start; check the log."
+                    }
                     runCatching { AirDroidService.stop(context) }
                     return
                 }
@@ -763,7 +780,10 @@ class AirDroidController(private val context: Context) {
                     runCatching { AirDroidService.stop(context) }
                     return
                 }
-                append("Auto scan on channel $channel")
+                append(
+                    "Auto scan on channel $channel " +
+                        "(${AUTO_CHANNEL_DWELL_MS / 1000}s dwell)",
+                )
                 val started = System.currentTimeMillis()
                 // A blank raw peer is often a Continuity device, not an
                 // AirDrop sender. A named peer is enough for /Discover.
@@ -789,8 +809,12 @@ class AirDroidController(private val context: Context) {
                         val switched = sessionMutex.withLock { ensureSessionLocked() }
                         if (switched == null) {
                             scanning = false
-                            status = "CHECK LOG"
-                            sendMessage = "Live scan could not start; check the log."
+                            status = if (bleStartFailed) "BLUETOOTH OFF" else "CHECK LOG"
+                            sendMessage = if (bleStartFailed) {
+                                "Turn on Bluetooth to use AirDrop discovery."
+                            } else {
+                                "Live scan could not start; check the log."
+                            }
                             runCatching { AirDroidService.stop(context) }
                             return
                         }
@@ -1014,7 +1038,12 @@ class AirDroidController(private val context: Context) {
         // Owly starts a fresh BLE wake advert for every send. Reusing the one
         // from session startup is not the same wake and lets the iPhone stop
         // answering new /Ask connections after the first transfer.
-        startBle(fresh = true)
+        if (!startBle(fresh = true)) {
+            status = "BLUETOOTH OFF"
+            sendMessage = "Turn on Bluetooth to send with AirDrop."
+            append("Send blocked: BLE wake advertisement is not ready.")
+            return
+        }
         Log.i(
             "AirDroidSend",
             "sendFiles count=${cleanItems.size} shown=$shownName files=${cleanItems.map { it.first }}",
@@ -1381,6 +1410,33 @@ class AirDroidController(private val context: Context) {
         }
     }
 
+    fun retryBluetooth() {
+        if (modeSwitching) return
+        scope.launch {
+            status = "CHECKING BLUETOOTH"
+            sendMessage = "Starting Bluetooth..."
+            if (startBle(fresh = false)) {
+                status = if (kernel.monitorReady) "READY" else kernel.state.badge
+                sendMessage = if (kernel.monitorReady) {
+                    "Bluetooth ready. Starting scan..."
+                } else {
+                    "Bluetooth ready. Enter Transfer mode."
+                }
+                append("Bluetooth is ready.")
+                if (kernel.monitorReady) scan()
+            } else {
+                status = "BLUETOOTH OFF"
+                sendMessage = "Bluetooth is still off. Turn it on and retry."
+            }
+        }
+    }
+
+    fun dismissBluetoothWarning() {
+        if (status == "BLUETOOTH OFF") {
+            status = if (kernel.monitorReady) "READY" else kernel.state.badge
+        }
+    }
+
     fun enterTransferMode(reboot: Boolean = false) {
         if (modeSwitching || sending) return
         scope.launch {
@@ -1404,6 +1460,14 @@ class AirDroidController(private val context: Context) {
                 // switch is interrupted. Without the root watchdog the switch
                 // must not start: a force-stop would leave monitor mode on.
                 prepare()
+                if (!startBle(fresh = false)) {
+                    modeAction = null
+                    modeSwitching = false
+                    status = "BLUETOOTH OFF"
+                    sendMessage = "Turn on Bluetooth to enter Transfer mode."
+                    append("Transfer mode blocked: Bluetooth/BLE is not ready.")
+                    return@launch
+                }
                 if (!setMonitorOwner(AndroidProcess.myPid())) {
                     setMonitorOwner(0)
                     modeAction = null
@@ -1591,6 +1655,9 @@ class AirDroidController(private val context: Context) {
                 else -> AirdropState.UNKNOWN
             }
             val existing = peers.toMutableList()
+            val wasReady = existing.any {
+                it.mac.equals(mac, ignoreCase = true) && it.airdropReady
+            }
             existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
             existing.add(
                 Peer(
@@ -1603,12 +1670,22 @@ class AirDroidController(private val context: Context) {
                 ),
             )
             peers = existing
+            if (!wasReady && state == AirdropState.READY) {
+                append(
+                    "Peer ready: ${name.ifBlank { "unnamed" }} " +
+                        "channel=$awdlChannel rssi=$rssi",
+                )
+            }
             if (selectedMac == null && state == AirdropState.READY) selectedMac = mac
         } else if (line.startsWith("PEER_GONE ")) {
             val mac = line.substringAfter("mac=", "").substringBefore(' ').trim().lowercase()
             if (validMac(mac)) {
+                val goneName = peers.firstOrNull {
+                    it.mac.equals(mac, ignoreCase = true)
+                }?.displayName()
                 peers = peers.filterNot { it.mac.equals(mac, ignoreCase = true) }
                 clearAirdropForMac(mac)
+                append("Peer left: ${goneName ?: "unnamed"}")
                 if (selectedMac.equals(mac, ignoreCase = true)) {
                     selectedMac = peers.firstOrNull { it.airdropReady }?.mac
                 }
@@ -1648,6 +1725,7 @@ class AirDroidController(private val context: Context) {
             val mac = macFromLinkLocal(addr) ?: return
             airdropSeenMacs.add(mac)
             airdropLastFoundAt[mac.lowercase()] = System.currentTimeMillis()
+            append("AirDrop service FOUND")
             if (instance.isNotBlank()) airdropInstances[instance] = mac
             if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                 // LOST and FOUND can arrive in quick succession when AirDrop is
@@ -1681,6 +1759,7 @@ class AirDroidController(private val context: Context) {
             val mac = airdropInstances.remove(instance) ?: return
             val stillAdvertised = airdropInstances.values.any { it.equals(mac, ignoreCase = true) }
             if (!stillAdvertised) {
+                append("AirDrop service LOST")
                 airdropFoundJobs.remove(mac)?.cancel()
                 airdropLostMacs.add(mac)
                 if (!recentlyFound(mac)) {
@@ -2797,7 +2876,14 @@ class AirDroidController(private val context: Context) {
         if (current != null) stopSessionLocked()
 
         prepare()
-        startBle(fresh = false)
+        if (!startBle(fresh = false)) {
+            withContext(Dispatchers.Main) {
+                status = "BLUETOOTH OFF"
+                sendMessage = "Turn on Bluetooth to use AirDrop discovery."
+            }
+            append("BLE wake advertisement is not ready; not starting the radio session.")
+            return null
+        }
         val channel = activeChannel
         val name = helperName()
         // Let the hidden STA vdev do normal 802.11 ACK/retry. The ACK-less
@@ -3138,39 +3224,87 @@ class AirDroidController(private val context: Context) {
         append("[helper session stopped]")
     }
 
-    private suspend fun startBle(fresh: Boolean) {
-        withContext(Dispatchers.IO) {
-            val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
-            if (adapter != null && !adapter.isEnabled) {
-                try {
-                    ProcessBuilder("su", "-c", "cmd bluetooth_manager enable; sleep 1")
-                        .redirectErrorStream(true)
-                        .start()
-                        .waitFor()
-                    Thread.sleep(1200)
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) { append("Could not enable Bluetooth: ${e.message}") }
-                }
+    /**
+     * Enables Bluetooth if needed, starts the BLE wake advertisement, and
+     * waits for the advertiser to report success. Returns false when the
+     * radio must not start without BLE.
+     */
+    private suspend fun startBle(fresh: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+        if (adapter == null) {
+            bleStartFailed = true
+            withContext(Dispatchers.Main) { append("BLE: Bluetooth adapter is not available.") }
+            return@withContext false
+        }
+
+        fun bluetoothOn(): Boolean = runCatching { adapter.isEnabled }.getOrDefault(false)
+
+        if (!bluetoothOn()) {
+            withContext(Dispatchers.Main) {
+                append("BLE: Bluetooth is off; enabling it before discovery...")
             }
-            val callback: (String) -> Unit = { line -> scope.launch { append(line) } }
-            val ok = if (fresh) {
-                ble.restart(settings.bleArm, true, callback)
-            } else if (!ble.isRunning()) {
-                ble.start(settings.bleArm, true, callback)
-            } else {
-                true
-            }
-            if (fresh && ok) {
-                // Let the new advertising instance reach the controller before
-                // the /Ask connection is opened.
-                Thread.sleep(250)
-            }
-            if (!ok) {
+            try {
+                val enable = ProcessBuilder(
+                    "su",
+                    "-c",
+                    "cmd bluetooth_manager enable",
+                ).redirectErrorStream(true).start()
+                if (!enable.waitFor(5, TimeUnit.SECONDS)) enable.destroyForcibly()
+            } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    append("BLE wake advertisement unavailable.")
+                    append("BLE: could not enable Bluetooth: ${e.message}")
                 }
+            }
+            val deadline = System.currentTimeMillis() + 8_000
+            while (!bluetoothOn() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100)
+            }
+            if (!bluetoothOn()) {
+                bleStartFailed = true
+                withContext(Dispatchers.Main) {
+                    append("BLE: Bluetooth did not turn on; Transfer mode blocked.")
+                }
+                return@withContext false
+            }
+            withContext(Dispatchers.Main) {
+                append("BLE: Bluetooth is now on.")
             }
         }
+
+        val callback: (String) -> Unit = { line -> scope.launch { append(line) } }
+        val accepted = if (fresh) {
+            ble.restart(settings.bleArm, true, callback)
+        } else if (!ble.isRunning()) {
+            ble.start(settings.bleArm, true, callback)
+        } else {
+            true
+        }
+        if (!accepted) {
+            bleStartFailed = true
+            withContext(Dispatchers.Main) {
+                append("BLE: advertisement start was rejected; Transfer mode blocked.")
+            }
+            return@withContext false
+        }
+
+        // startAdvertising() is asynchronous. Wait for the success callback
+        // instead of assuming the advertisement is already on air.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!ble.isRunning() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(100)
+        }
+        val ready = ble.isRunning()
+        bleStartFailed = !ready
+        withContext(Dispatchers.Main) {
+            append(
+                if (ready) {
+                    "BLE: advertisement is ready."
+                } else {
+                    "BLE: advertisement did not start; Transfer mode blocked."
+                },
+            )
+        }
+        ready
     }
 
     /**
