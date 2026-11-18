@@ -80,7 +80,8 @@ class AirDroidService : Service() {
                         Log.w("AirDroidLog", "stop ignored while a radio mode switch is running")
                         return@launch
                     }
-                    controller?.stopScanningAndTransfers()
+                    controller?.stopEverythingAndRestoreWifi()
+                        ?: Log.w("AirDroidLog", "stop requested without a controller")
                     stopForeground(true)
                     stopSelf()
                 }

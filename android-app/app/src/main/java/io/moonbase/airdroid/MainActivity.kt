@@ -4444,6 +4444,7 @@ private fun UpdateBanner(
 ) {
     val colors = MaterialTheme.colorScheme
     val uriHandler = LocalUriHandler.current
+    var showUpdateDialog by remember { mutableStateOf(false) }
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -4475,9 +4476,9 @@ private fun UpdateBanner(
                             "Downloading AirDroid ${release.version}..."
                         }
                     } else if (release.apkUrl != null) {
-                        "AirDroid ${release.version} is available. Install it from inside the app."
+                        "AirDroid ${release.version} is available. Review the changes before updating."
                     } else {
-                        "AirDroid ${release.version} is available. Open the release page to download it."
+                        "AirDroid ${release.version} is available. Review the release page."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onPrimaryContainer.copy(alpha = 0.82f),
@@ -4485,13 +4486,7 @@ private fun UpdateBanner(
             }
             Spacer(Modifier.width(10.dp))
             Button(
-                onClick = {
-                    if (release.apkUrl != null) {
-                        controller.downloadUpdate()
-                    } else {
-                        uriHandler.openUri(release.releaseUrl)
-                    }
-                },
+                onClick = { showUpdateDialog = true },
                 enabled = !controller.updateDownloading,
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -4505,10 +4500,24 @@ private fun UpdateBanner(
                         color = LocalContentColor.current,
                     )
                 } else {
-                    Text(if (release.apkUrl != null) "Install" else "View")
+                    Text("Update")
                 }
             }
         }
+    }
+    if (showUpdateDialog) {
+        UpdateAvailableDialog(
+            release = release,
+            onUpdate = {
+                if (release.apkUrl != null) {
+                    controller.downloadUpdate()
+                } else {
+                    uriHandler.openUri(release.releaseUrl)
+                }
+                showUpdateDialog = false
+            },
+            onCancel = { showUpdateDialog = false },
+        )
     }
 }
 
@@ -4732,7 +4741,20 @@ private fun SettingsScreen(controller: AirDroidController) {
     var pauseDiscovery by remember { mutableStateOf(controller.settings.pauseDiscoveryDuringTransfer) }
     var visibleDuringTransfer by remember { mutableStateOf(controller.settings.visibleDuringTransfer) }
     var pendingChannel by remember { mutableStateOf<Int?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateCheckPending by remember { mutableStateOf(false) }
     val availableRelease = (controller.updateState as? UpdateState.Available)?.release
+
+    LaunchedEffect(controller.updateState) {
+        if (updateCheckPending && controller.updateState is UpdateState.Available) {
+            showUpdateDialog = true
+            updateCheckPending = false
+        } else if (controller.updateState is UpdateState.UpToDate ||
+            controller.updateState is UpdateState.Failed
+        ) {
+            updateCheckPending = false
+        }
+    }
 
     LaunchedEffect(deviceName) {
         if (deviceName != controller.settings.deviceName) {
@@ -5212,29 +5234,9 @@ private fun SettingsScreen(controller: AirDroidController) {
                 }
             }
         }
-        item { SectionLabel("ABOUT") }
+        item { SectionLabel("UPDATES") }
         item {
             SettingsListGroup {
-                SettingsListItem(
-                    icon = R.drawable.ic_badge,
-                    headline = "Developer",
-                    supporting = "RenzVillegas24",
-                    avatarRes = R.drawable.dev_avatar,
-                    onClick = {
-                        uriHandler.openUri("https://github.com/RenzVillegas24?tab=repositories")
-                    },
-                )
-                SettingsListItem(
-                    icon = R.drawable.ic_computer,
-                    headline = "GitHub repository",
-                    supporting = "RenzVillegas24/AirDroid",
-                    onClick = { uriHandler.openUri("https://github.com/RenzVillegas24/AirDroid") },
-                )
-                SettingsListItem(
-                    icon = R.drawable.ic_memory,
-                    headline = "Version",
-                    supporting = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${BuildConfig.BUILD_TYPE}\n${BuildConfig.APPLICATION_ID}",
-                )
                 SettingsCard(grouped = true) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -5269,52 +5271,62 @@ private fun SettingsScreen(controller: AirDroidController) {
                         is UpdateState.Available -> "Available"
                         else -> "Check"
                     },
-                    onClick = { controller.checkForUpdates(force = true) },
-                )
-                if (availableRelease != null) {
-                    SettingsListItem(
-                        icon = R.drawable.ic_download,
-                        headline = if (availableRelease.apkUrl != null) {
-                            "Install ${availableRelease.version}"
+                    onClick = {
+                        if (controller.updateState is UpdateState.Available) {
+                            showUpdateDialog = true
                         } else {
-                            "Open release page"
-                        },
-                        supporting = if (controller.updateDownloading) {
-                            controller.updateMessage
-                        } else if (availableRelease.apkUrl != null) {
-                            "Download ${availableRelease.apkName} and open the Android installer"
-                        } else {
-                            "This release does not contain an APK asset"
-                        },
-                        trailing = when {
-                            controller.updateDownloading && controller.updateProgress != null ->
-                                "${controller.updateProgress}%"
-                            controller.updateDownloading -> "Downloading"
-                            availableRelease.apkUrl != null -> "Install"
-                            else -> "Open"
-                        },
-                        onClick = {
-                            if (availableRelease.apkUrl != null) {
-                                controller.downloadUpdate()
-                            } else {
-                                uriHandler.openUri(availableRelease.releaseUrl)
-                            }
-                        },
-                    )
-                    SettingsListItem(
-                        icon = R.drawable.ic_open_in_new,
-                        headline = "Release notes",
-                        supporting = availableRelease.tag,
-                        onClick = { uriHandler.openUri(availableRelease.releaseUrl) },
-                    )
-                }
-                SettingsListItem(
-                    icon = R.drawable.ic_smartphone,
-                    headline = "Device",
-                    supporting = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nKernel ${controller.kernel.release}\nRadio · WCN3990 · monitor + hidden STA",
+                            updateCheckPending = true
+                            controller.checkForUpdates(force = true)
+                        }
+                    },
                 )
             }
         }
+        item { SectionLabel("ABOUT") }
+        item {
+            SettingsListGroup {
+                SettingsListItem(
+                    icon = R.drawable.ic_badge,
+                    headline = "Developer",
+                    supporting = "RenzVillegas24",
+                    avatarRes = R.drawable.dev_avatar,
+                    onClick = {
+                        uriHandler.openUri("https://github.com/RenzVillegas24?tab=repositories")
+                    },
+                )
+                SettingsListItem(
+                    icon = R.drawable.ic_computer,
+                    headline = "GitHub repository",
+                    supporting = "RenzVillegas24/AirDroid",
+                    onClick = { uriHandler.openUri("https://github.com/RenzVillegas24/AirDroid") },
+                )
+                SettingsListItem(
+                    icon = R.drawable.ic_memory,
+                    headline = "Version",
+                    supporting = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${BuildConfig.BUILD_TYPE}\n${BuildConfig.APPLICATION_ID}",
+                )
+                SettingsListItem(
+                    icon = R.drawable.ic_smartphone,
+                    headline = "Device",
+                    supporting = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nKernel ${controller.kernel.release}\nAirDroid support · ${controller.kernel.support.label}\nRadio · WCN3990 · monitor + hidden STA",
+                )
+            }
+        }
+    }
+
+    if (showUpdateDialog && availableRelease != null) {
+        UpdateAvailableDialog(
+            release = availableRelease,
+            onUpdate = {
+                if (availableRelease.apkUrl != null) {
+                    controller.downloadUpdate()
+                } else {
+                    uriHandler.openUri(availableRelease.releaseUrl)
+                }
+                showUpdateDialog = false
+            },
+            onCancel = { showUpdateDialog = false },
+        )
     }
 
     pendingChannel?.let { target ->
@@ -5367,6 +5379,51 @@ private fun SettingsScreen(controller: AirDroidController) {
             },
         )
     }
+}
+
+@Composable
+private fun UpdateAvailableDialog(
+    release: AppRelease,
+    onUpdate: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val notes = release.notes.trim()
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("AirDroid ${release.version} is available") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    text = release.tag,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = if (notes.isBlank()) {
+                        "No release notes were provided for this build."
+                    } else {
+                        notes
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onUpdate) {
+                Text(if (release.apkUrl != null) "Update" else "Open release")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 private fun updateSupporting(controller: AirDroidController): String {

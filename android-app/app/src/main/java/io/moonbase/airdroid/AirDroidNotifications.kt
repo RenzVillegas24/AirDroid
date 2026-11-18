@@ -181,7 +181,12 @@ class AirDroidNotifications(private val context: Context) {
             TransferDirection.SENT -> "Sending ${transfer.fileName}"
             TransferDirection.RECEIVED -> "Receiving ${transfer.fileName}"
         }
+        val percent = transfer.progressPercent
         val text = buildString {
+            if (percent != null) {
+                append(percent)
+                append("% · ")
+            }
             append(transfer.peerName.ifBlank { "AirDrop" })
             if (transfer.totalBytes > 0) {
                 append(" · ")
@@ -194,7 +199,6 @@ class AirDroidNotifications(private val context: Context) {
             }
         }
         val icon = R.drawable.ic_airdroid_notification
-        val percent = transfer.progressPercent
         val builder = baseBuilder(CHANNEL_TRANSFERS, title, text, icon)
         builder
             .setCategory(Notification.CATEGORY_PROGRESS)

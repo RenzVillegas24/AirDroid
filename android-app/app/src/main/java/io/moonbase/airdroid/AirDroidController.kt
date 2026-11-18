@@ -121,17 +121,28 @@ enum class MonitorState(val badge: String) {
  * monitor builds are recognised by kernel release; any other build can be
  * verified by reading the boot command line through root.
  */
+enum class KernelSupport(val label: String) {
+    SUPPORTED("AirDroid injection support verified"),
+    MISSING("No AirDroid injection support"),
+    UNKNOWN("Injection support not verified"),
+}
+
 data class KernelStatus(
     val release: String,
     val buildVersion: String,
     val state: MonitorState,
     val detail: String,
     val verifiedBy: String? = null,
+    val support: KernelSupport = KernelSupport.UNKNOWN,
 ) {
     val monitorReady: Boolean
         get() = state == MonitorState.MONITOR
 
-    fun withRootCheck(cmdline: String, conMode: Int?): KernelStatus {
+    fun withRootCheck(
+        cmdline: String,
+        conMode: Int?,
+        support: KernelSupport = this.support,
+    ): KernelStatus {
         val cmdlineMode = Regex("""(?:wlan\.)?con_mode=(\d+)""")
             .find(cmdline)
             ?.groupValues
@@ -141,8 +152,13 @@ data class KernelStatus(
         if (effectiveMode == 4) {
             return copy(
                 state = MonitorState.MONITOR,
-                detail = "Ready for AirDrop discovery and transfers.",
+                detail = if (support == KernelSupport.MISSING) {
+                    "Monitor mode is available, but AirDroid injection support was not found."
+                } else {
+                    "Ready for AirDrop discovery and transfers."
+                },
                 verifiedBy = "root",
+                support = support,
             )
         }
         if (effectiveMode == 0) {
@@ -150,6 +166,7 @@ data class KernelStatus(
                 state = MonitorState.STOCK,
                 detail = "Normal Wi-Fi connectivity is available.",
                 verifiedBy = "root",
+                support = support,
             )
         }
         if (cmdline.isNotBlank() || conMode != null) {
@@ -157,22 +174,18 @@ data class KernelStatus(
                 state = MonitorState.STOCK,
                 detail = "Normal Wi-Fi connectivity is available.",
                 verifiedBy = "root",
+                support = support,
             )
         }
         return this
     }
 
     companion object {
-        private val MONITOR_RELEASES = setOf(
-            "4.14.357-openela-perf-g7a7b4d1b6808",
-            "4.14.357-openela-perf-g2a67a9737583-dirty",
-            "4.14.357-openela-perf-g90859856300e",
-            "4.14.357-openela-perf-gc446a6323987",
-        )
-        private val STOCK_RELEASES = setOf(
-            "4.14.357-openela-perf-g2a67a9737583",
-        )
-
+        /**
+         * Never infer capability from a release hash: upstream kernels and
+         * rebuilt images get a new git suffix. The root check probes the
+         * actual sysfs/kallsyms capability instead.
+         */
         fun detect(): KernelStatus {
             val release: String
             val version: String
@@ -188,29 +201,13 @@ data class KernelStatus(
                     detail = "Could not read the kernel release: ${e.message}",
                 )
             }
-            val monitorBuild = release in MONITOR_RELEASES ||
-                release.startsWith("4.14.357-openela-perf-g7a7b4d1b6808") ||
-                release.startsWith("4.14.357-openela-perf-g4d9c3a067732")
-            return when {
-                monitorBuild -> KernelStatus(
-                    release = release,
-                    buildVersion = version,
-                    state = MonitorState.UNVERIFIED,
-                    detail = "Checking radio mode...",
-                )
-                release in STOCK_RELEASES -> KernelStatus(
-                    release = release,
-                    buildVersion = version,
-                    state = MonitorState.STOCK,
-                    detail = "Normal Wi-Fi connectivity is available.",
-                )
-                else -> KernelStatus(
-                    release = release,
-                    buildVersion = version,
-                    state = MonitorState.UNVERIFIED,
-                    detail = "Unsupported kernel. Verify with root to use the radio.",
-                )
-            }
+            return KernelStatus(
+                release = release,
+                buildVersion = version,
+                state = MonitorState.UNVERIFIED,
+                detail = "Checking kernel capabilities...",
+                support = KernelSupport.UNKNOWN,
+            )
         }
     }
 }
@@ -891,7 +888,7 @@ class AirDroidController(private val context: Context) {
         }
     }
 
-    suspend fun stopScanning() {
+    suspend fun stopScanning(stopService: Boolean = true) {
         if (!scanning || sending || sendCancelling) return
         append("Stopping live scan...")
         stopSession()
@@ -901,7 +898,7 @@ class AirDroidController(private val context: Context) {
         selectedMac = null
         clearAirdropServices()
         resetReceiverState()
-        runCatching { AirDroidService.stop(context) }
+        if (stopService) runCatching { AirDroidService.stop(context) }
         status = when {
             peers.isEmpty() -> "NO PEERS"
             !kernel.monitorReady -> kernel.state.badge
@@ -916,7 +913,7 @@ class AirDroidController(private val context: Context) {
      * foreground-service Stop action: unlike stopScanning(), this must not
      * return early while a send is in flight.
      */
-    suspend fun stopScanningAndTransfers() {
+    suspend fun stopScanningAndTransfers(stopService: Boolean = true) {
         if (sending) {
             cancelSend()
             withTimeoutOrNull(3_000) {
@@ -940,7 +937,7 @@ class AirDroidController(private val context: Context) {
             sendMessage = "Stopped."
         }
         if (scanning) {
-            stopScanning()
+            stopScanning(stopService)
         } else {
             stopSession()
             resetReceiverState()
@@ -951,6 +948,30 @@ class AirDroidController(private val context: Context) {
         receiveDecisionPending = false
         receiveTransferring = false
         append("Stop action: transfers and radio session stopped.")
+    }
+
+    /** Notification Stop: stop transfers and leave monitor/Transfer mode. */
+    suspend fun stopEverythingAndRestoreWifi() {
+        stopScanningAndTransfers(stopService = false)
+        if (!kernel.monitorReady) {
+            notifications.cancelAllTransfers()
+            return
+        }
+        val rc = execRoot(
+            label = "notification stop: exit Transfer mode",
+            command = "$APP_TMP/owly-mode.sh exit",
+            timeoutMs = MODE_SWITCH_TIMEOUT_MS,
+        )
+        if (rc == 0) {
+            setMonitorOwner(0)
+            refreshKernelStatus()
+            sendMessage = "Stopped. Wi-Fi restored."
+            append("Notification Stop: Transfer mode exited and Wi-Fi restored.")
+        } else {
+            sendMessage = "Transfers stopped, but Wi-Fi restore failed."
+            append("Notification Stop: failed to restore Wi-Fi.")
+        }
+        notifications.cancelAllTransfers()
     }
 
     /**
@@ -1460,13 +1481,37 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun requireMonitorKernel(): Boolean {
-        if (kernel.monitorReady) return true
+        if (kernel.monitorReady && kernel.support != KernelSupport.MISSING) return true
+        if (kernel.monitorReady && kernel.support == KernelSupport.MISSING) {
+            status = "KERNEL SUPPORT MISSING"
+            sendMessage = "This kernel does not include AirDroid injection support."
+            append("Radio action blocked: ${kernel.support.label}.")
+            return false
+        }
         status = kernel.state.badge
         sendMessage = "Enter Transfer mode to use the radio."
         append("")
         append("Radio action blocked: ${kernel.detail}")
         append("Use Enter Transfer mode; if the live switch fails, use Reboot into Transfer mode.")
         return false
+    }
+
+    private fun kernelCheckCommand(): String =
+        "printf 'CMDLINE='; cat /proc/cmdline; " +
+            "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; " +
+            "printf '\\nOWLY_OWNER='; [ -e $MONITOR_OWNER_PATH ] && echo 1 || echo 0; " +
+            "printf 'OWLY_INJECT='; grep -qw wma_inject_frame_via_vdev /proc/kallsyms 2>/dev/null && echo 1 || echo 0; " +
+            "echo"
+
+    private fun supportFrom(
+        hasOwner: Boolean,
+        hasInject: Boolean,
+        conMode: Int?,
+        cmdline: String,
+    ): KernelSupport = when {
+        hasOwner || hasInject -> KernelSupport.SUPPORTED
+        conMode != null || cmdline.isNotBlank() -> KernelSupport.MISSING
+        else -> KernelSupport.UNKNOWN
     }
 
     fun verifyKernelWithRoot() {
@@ -1476,19 +1521,26 @@ class AirDroidController(private val context: Context) {
             status = "CHECKING KERNEL"
             var cmdline = ""
             var conMode: Int? = null
+            var hasOwner = false
+            var hasInject = false
             val rc = execRoot(
                 label = "kernel check",
-                command = "printf 'CMDLINE='; cat /proc/cmdline; " +
-                    "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; echo",
+                command = kernelCheckCommand(),
             ) { line ->
                 when {
                     line.startsWith("CMDLINE=") -> cmdline = line.removePrefix("CMDLINE=").trim()
                     line.startsWith("CON_MODE=") -> conMode = line.removePrefix("CON_MODE=").trim().toIntOrNull()
+                    line.startsWith("OWLY_OWNER=") -> hasOwner = line.removePrefix("OWLY_OWNER=").trim() == "1"
+                    line.startsWith("OWLY_INJECT=") -> hasInject = line.removePrefix("OWLY_INJECT=").trim() == "1"
                 }
             }
             verifyingKernel = false
             if (rc == 0) {
-                val updated = kernel.withRootCheck(cmdline, conMode)
+                val updated = kernel.withRootCheck(
+                    cmdline,
+                    conMode,
+                    supportFrom(hasOwner, hasInject, conMode, cmdline),
+                )
                 kernel = updated
                 status = if (updated.monitorReady) "READY" else updated.state.badge
                 append("Kernel check: ${updated.state.badge} · ${updated.detail}")
@@ -1544,6 +1596,14 @@ class AirDroidController(private val context: Context) {
             while (verifyingKernel && waited < 5_000) {
                 delay(100)
                 waited += 100
+            }
+            if (kernel.support == KernelSupport.MISSING) {
+                modeSwitching = false
+                modeAction = null
+                status = "KERNEL SUPPORT MISSING"
+                sendMessage = "This kernel does not include AirDroid injection support."
+                append("Transfer mode blocked: ${kernel.support.label}.")
+                return@launch
             }
             status = if (reboot) "REBOOTING" else "ENTERING TRANSFER"
             val action = if (reboot) "reboot-enter" else "enter"
@@ -1711,19 +1771,27 @@ class AirDroidController(private val context: Context) {
     private suspend fun refreshKernelStatus() {
         var cmdline = ""
         var conMode: Int? = null
+        var hasOwner = false
+        var hasInject = false
         val rc = execRoot(
             label = "kernel check",
-            command = "printf 'CMDLINE='; cat /proc/cmdline; " +
-                "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; echo",
+            command = kernelCheckCommand(),
         ) { line ->
             when {
                 line.startsWith("CMDLINE=") -> cmdline = line.removePrefix("CMDLINE=").trim()
                 line.startsWith("CON_MODE=") -> conMode = line.removePrefix("CON_MODE=").trim().toIntOrNull()
+                line.startsWith("OWLY_OWNER=") -> hasOwner = line.removePrefix("OWLY_OWNER=").trim() == "1"
+                line.startsWith("OWLY_INJECT=") -> hasInject = line.removePrefix("OWLY_INJECT=").trim() == "1"
             }
         }
         if (rc == 0) {
-            kernel = kernel.withRootCheck(cmdline, conMode)
-            status = if (kernel.monitorReady) "READY" else kernel.state.badge
+            val updated = kernel.withRootCheck(
+                cmdline,
+                conMode,
+                supportFrom(hasOwner, hasInject, conMode, cmdline),
+            )
+            kernel = updated
+            status = if (updated.monitorReady) "READY" else updated.state.badge
         }
     }
 
