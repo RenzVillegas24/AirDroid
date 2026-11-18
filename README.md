@@ -14,6 +14,9 @@ built as a Jetpack Compose Android app with a Rust radio/AirDrop helper.
 - Tracks sent and received files separately, with per-file progress.
 - Supports per-transfer cancellation without stopping the radio or receiver.
 - Keeps the radio session in a foreground service while backgrounded.
+- Exports the current session log to a text file from the Logs tab.
+- Checks the latest GitHub release and can download an update from Settings.
+- Lets update reminders be turned on or off in Settings.
 - Provides ADB control/log commands for debugging.
 
 The K20's internal WCN3990 radio is the target. External USB Wi-Fi is out of

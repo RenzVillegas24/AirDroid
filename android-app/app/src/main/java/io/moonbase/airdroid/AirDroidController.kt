@@ -63,6 +63,7 @@ data class AirDroidSettings(
     val tintMode: TintMode = TintMode.CUSTOM,
     val pauseDiscoveryDuringTransfer: Boolean = true,
     val visibleDuringTransfer: Boolean = true,
+    val updateReminders: Boolean = true,
 )
 
 /**
@@ -306,6 +307,14 @@ class AirDroidController(private val context: Context) {
         private set
     var modeAction by mutableStateOf<String?>(null)
         private set
+    var updateState by mutableStateOf<UpdateState>(UpdateState.Idle)
+        private set
+    var updateDownloading by mutableStateOf(false)
+        private set
+    var updateProgress by mutableStateOf<Int?>(null)
+        private set
+    var updateMessage by mutableStateOf("")
+        private set
     var status by mutableStateOf("READY")
         private set
     var sendMessage by mutableStateOf("")
@@ -377,6 +386,7 @@ class AirDroidController(private val context: Context) {
         append("Kernel ${kernel.release}")
         append(kernel.detail)
         scope.launch { verifyKernelWithRoot() }
+        if (settings.updateReminders) checkForUpdates()
     }
 
     fun selectPeer(peer: Peer) {
@@ -479,6 +489,89 @@ class AirDroidController(private val context: Context) {
         append("Log cleared")
     }
 
+    /**
+     * Writes the current in-memory log to a user-selected document. The
+     * snapshot is taken before the IO hop so the UI list cannot change while
+     * it is being serialized.
+     */
+    suspend fun saveLogs(uri: Uri): Boolean {
+        val snapshot = logs.toList()
+        val header = buildString {
+            appendLine("# AirDroid ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            appendLine("# Kernel ${kernel.release}")
+            appendLine("# Saved ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}")
+            appendLine()
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                    output.bufferedWriter().use { writer ->
+                        writer.write(header)
+                        snapshot.forEach {
+                            writer.write(it)
+                            writer.newLine()
+                        }
+                    }
+                } != null
+            }.getOrDefault(false)
+        }
+    }
+
+    fun setUpdateReminders(enabled: Boolean) {
+        if (settings.updateReminders == enabled) return
+        settings = settings.copy(updateReminders = enabled)
+        prefs.edit().putBoolean("updateReminders", enabled).apply()
+        append("Update reminders ${if (enabled) "enabled" else "disabled"}.")
+        if (enabled) checkForUpdates(force = true)
+    }
+
+    fun checkForUpdates(force: Boolean = false) {
+        if (updateState is UpdateState.Checking) return
+        if (!force && updateState is UpdateState.UpToDate) return
+        updateState = UpdateState.Checking
+        updateMessage = "Checking GitHub..."
+        scope.launch {
+            val result = AppUpdates.check(BuildConfig.VERSION_NAME)
+            updateState = result
+            updateMessage = when (result) {
+                is UpdateState.UpToDate -> "Latest GitHub release is v${result.latestVersion}."
+                is UpdateState.Available -> "v${result.release.version} is available."
+                is UpdateState.Failed -> result.message
+                else -> ""
+            }
+        }
+    }
+
+    fun downloadUpdate() {
+        val release = (updateState as? UpdateState.Available)?.release ?: return
+        if (release.apkUrl == null || updateDownloading) return
+        updateDownloading = true
+        updateProgress = null
+        updateMessage = "Downloading ${release.version}..."
+        scope.launch {
+            try {
+                val apk = AppUpdates.download(context, release) { percent ->
+                    withContext(Dispatchers.Main) {
+                        updateProgress = percent
+                        updateMessage = if (percent == null) {
+                            "Downloading ${release.version}..."
+                        } else {
+                            "Downloading ${release.version}... $percent%"
+                        }
+                    }
+                }
+                updateMessage = "Opening installer..."
+                updateMessage = AppUpdates.install(context, apk)
+                    ?: "Installer opened. Follow the Android prompts to update."
+            } catch (e: Exception) {
+                updateMessage = "Update failed: ${e.message}"
+            } finally {
+                updateDownloading = false
+                updateProgress = null
+            }
+        }
+    }
+
     fun saveAppearance(themeMode: ThemeMode, tintMode: TintMode) {
         settings = settings.copy(themeMode = themeMode, tintMode = tintMode)
         prefs.edit()
@@ -499,14 +592,14 @@ class AirDroidController(private val context: Context) {
         val previous = settings
         val cleanName = deviceName.trim().ifBlank { "AirDroid K20" }
         val effectiveChannel = channel
-        settings = AirDroidSettings(
-            effectiveChannel,
-            bleArm,
-            cleanName,
-            themeMode,
-            tintMode,
-            pauseDiscoveryDuringTransfer,
-            visibleDuringTransfer,
+        settings = settings.copy(
+            channel = effectiveChannel,
+            bleArm = bleArm,
+            deviceName = cleanName,
+            themeMode = themeMode,
+            tintMode = tintMode,
+            pauseDiscoveryDuringTransfer = pauseDiscoveryDuringTransfer,
+            visibleDuringTransfer = visibleDuringTransfer,
         )
         // Auto means "whatever channel the live scan locked". Saving an
         // unrelated toggle must not move activeChannel away from the helper's
@@ -572,6 +665,7 @@ class AirDroidController(private val context: Context) {
             ?: TintMode.CUSTOM,
         pauseDiscoveryDuringTransfer = prefs.getBoolean("pauseDiscoveryDuringTransfer", true),
         visibleDuringTransfer = prefs.getBoolean("visibleDuringTransfer", true),
+        updateReminders = prefs.getBoolean("updateReminders", true),
     )
 
     suspend fun prepare() {

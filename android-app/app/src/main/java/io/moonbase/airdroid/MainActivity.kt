@@ -513,6 +513,21 @@ private fun TopBarPage(
     scope: CoroutineScope,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val saveLogs = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val saved = controller.saveLogs(uri)
+                Toast.makeText(
+                    context,
+                    if (saved) "Logs saved" else "Could not save logs",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -571,14 +586,30 @@ private fun TopBarPage(
                 }
             }
             AirDroidTab.LOGS -> {
-                TextButton(onClick = { controller.clearLogs() }) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_delete),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Clear")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = {
+                            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+                            saveLogs.launch("airdroid-logs-$stamp.txt")
+                        },
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_save),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Save")
+                    }
+                    TextButton(onClick = { controller.clearLogs() }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_delete),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Clear")
+                    }
                 }
             }
             AirDroidTab.SETTINGS -> Unit
@@ -953,6 +984,11 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         .filter { it.status.isTerminal }
         .sortedWith(finishedTransferOrder)
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
+    val updateRelease = if (controller.settings.updateReminders) {
+        (controller.updateState as? UpdateState.Available)?.release
+    } else {
+        null
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -962,6 +998,11 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         if (!controller.kernel.monitorReady) {
             item(key = "kernel-banner") {
                 KernelBanner(controller, Modifier.animateItem())
+            }
+        }
+        updateRelease?.let { release ->
+            item(key = "update-banner") {
+                UpdateBanner(controller, release, Modifier.animateItem())
             }
         }
         // Peers can only be discovered in monitor mode, so hide the section in Wi-Fi mode.
@@ -4287,6 +4328,83 @@ private fun KernelBanner(controller: AirDroidController, modifier: Modifier = Mo
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
+private fun UpdateBanner(
+    controller: AirDroidController,
+    release: AppRelease,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val uriHandler = LocalUriHandler.current
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = colors.primaryContainer),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_refresh),
+                contentDescription = null,
+                tint = colors.onPrimaryContainer,
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Update available",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.onPrimaryContainer,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = if (controller.updateDownloading) {
+                        controller.updateMessage.ifBlank {
+                            "Downloading AirDroid ${release.version}..."
+                        }
+                    } else if (release.apkUrl != null) {
+                        "AirDroid ${release.version} is available. Install it from inside the app."
+                    } else {
+                        "AirDroid ${release.version} is available. Open the release page to download it."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onPrimaryContainer.copy(alpha = 0.82f),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Button(
+                onClick = {
+                    if (release.apkUrl != null) {
+                        controller.downloadUpdate()
+                    } else {
+                        uriHandler.openUri(release.releaseUrl)
+                    }
+                },
+                enabled = !controller.updateDownloading,
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.primary,
+                    contentColor = colors.onPrimary,
+                ),
+            ) {
+                if (controller.updateDownloading) {
+                    LoadingIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = LocalContentColor.current,
+                    )
+                } else {
+                    Text(if (release.apkUrl != null) "Install" else "View")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
 private fun SendCard(
     controller: AirDroidController,
     onChooseFile: () -> Unit,
@@ -4504,6 +4622,7 @@ private fun SettingsScreen(controller: AirDroidController) {
     var pauseDiscovery by remember { mutableStateOf(controller.settings.pauseDiscoveryDuringTransfer) }
     var visibleDuringTransfer by remember { mutableStateOf(controller.settings.visibleDuringTransfer) }
     var pendingChannel by remember { mutableStateOf<Int?>(null) }
+    val availableRelease = (controller.updateState as? UpdateState.Available)?.release
 
     LaunchedEffect(deviceName) {
         if (deviceName != controller.settings.deviceName) {
@@ -4971,6 +5090,79 @@ private fun SettingsScreen(controller: AirDroidController) {
                     headline = "Version",
                     supporting = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${BuildConfig.BUILD_TYPE}\n${BuildConfig.APPLICATION_ID}",
                 )
+                SettingsCard(grouped = true) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SettingsIconBubble(R.drawable.ic_refresh)
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Update reminders",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "Check GitHub on launch and show available updates",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = controller.settings.updateReminders,
+                            onCheckedChange = { controller.setUpdateReminders(it) },
+                        )
+                    }
+                }
+                SettingsListItem(
+                    icon = R.drawable.ic_refresh,
+                    headline = "App updates",
+                    supporting = updateSupporting(controller),
+                    trailing = when (controller.updateState) {
+                        UpdateState.Checking -> "Checking"
+                        is UpdateState.Available -> "Available"
+                        else -> "Check"
+                    },
+                    onClick = { controller.checkForUpdates(force = true) },
+                )
+                if (availableRelease != null) {
+                    SettingsListItem(
+                        icon = R.drawable.ic_download,
+                        headline = if (availableRelease.apkUrl != null) {
+                            "Install ${availableRelease.version}"
+                        } else {
+                            "Open release page"
+                        },
+                        supporting = if (controller.updateDownloading) {
+                            controller.updateMessage
+                        } else if (availableRelease.apkUrl != null) {
+                            "Download ${availableRelease.apkName} and open the Android installer"
+                        } else {
+                            "This release does not contain an APK asset"
+                        },
+                        trailing = when {
+                            controller.updateDownloading && controller.updateProgress != null ->
+                                "${controller.updateProgress}%"
+                            controller.updateDownloading -> "Downloading"
+                            availableRelease.apkUrl != null -> "Install"
+                            else -> "Open"
+                        },
+                        onClick = {
+                            if (availableRelease.apkUrl != null) {
+                                controller.downloadUpdate()
+                            } else {
+                                uriHandler.openUri(availableRelease.releaseUrl)
+                            }
+                        },
+                    )
+                    SettingsListItem(
+                        icon = R.drawable.ic_open_in_new,
+                        headline = "Release notes",
+                        supporting = availableRelease.tag,
+                        onClick = { uriHandler.openUri(availableRelease.releaseUrl) },
+                    )
+                }
                 SettingsListItem(
                     icon = R.drawable.ic_smartphone,
                     headline = "Device",
@@ -5029,6 +5221,20 @@ private fun SettingsScreen(controller: AirDroidController) {
                 }
             },
         )
+    }
+}
+
+private fun updateSupporting(controller: AirDroidController): String {
+    if (controller.updateDownloading) {
+        return controller.updateMessage.ifBlank { "Downloading update..." }
+    }
+    if (controller.updateMessage.isNotBlank()) return controller.updateMessage
+    return when (val state = controller.updateState) {
+        UpdateState.Idle -> "Check GitHub for the latest release"
+        UpdateState.Checking -> "Checking GitHub..."
+        is UpdateState.UpToDate -> "Latest GitHub release: v${state.latestVersion}"
+        is UpdateState.Available -> "v${state.release.version} is available"
+        is UpdateState.Failed -> "Could not check: ${state.message}"
     }
 }
 
