@@ -163,6 +163,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import android.os.SystemClock
+import android.provider.Settings
 import android.text.format.DateUtils
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -451,7 +452,43 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         IncomingRequestDialog(controller)
+        BluetoothRequiredDialog(controller)
     }
+}
+
+@Composable
+private fun BluetoothRequiredDialog(controller: AirDroidController) {
+    if (controller.status != "BLUETOOTH OFF") return
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = { controller.dismissBluetoothWarning() },
+        title = { Text("Bluetooth required") },
+        text = {
+            Text(
+                "AirDrop uses Bluetooth Low Energy to wake nearby iPhones. " +
+                    "Turn on Bluetooth, then retry. Transfer mode will not start " +
+                    "without a working BLE advertisement.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { controller.retryBluetooth() }) {
+                Text("Retry")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                    controller.dismissBluetoothWarning()
+                },
+            ) {
+                Text("Bluetooth settings")
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1080,6 +1117,11 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 }
             }
             HomeTab.RECEIVED -> {
+                if (controller.receiverRunning && !controller.receiveEnabled) {
+                    item(key = "receiver-paused") {
+                        ReceiverPausedRow(controller, scope, Modifier.animateItem())
+                    }
+                }
                 if (receivedActive.isNotEmpty()) {
                     item(key = "receiving-label") { SectionLabel("RECEIVING", Modifier.animateItem()) }
                     items(receivedActive, key = { it.id }) { transfer ->
@@ -1090,8 +1132,12 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                             TransferCard(
                                 transfer = transfer,
                                 localName = myName,
-                                onCancel = if (transfer.canCancel && activeFile != null) {
-                                    { controller.cancelTransfer(activeFile.id) }
+                                onCancel = if (transfer.canCancel) {
+                                    {
+                                        controller.cancelTransfer(
+                                            activeFile?.id ?: transfer.id,
+                                        )
+                                    }
                                 } else {
                                     null
                                 },
@@ -1224,6 +1270,44 @@ private fun EmptyReceivedCard() {
                     color = colors.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ReceiverPausedRow(
+    controller: AirDroidController,
+    scope: CoroutineScope,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_sensors),
+            contentDescription = null,
+            tint = colors.tertiary,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Receiving paused",
+                style = MaterialTheme.typography.titleSmall,
+                color = colors.onSurface,
+            )
+            Text(
+                text = "Nearby AirDrop discovery is still running.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+            )
+        }
+        TextButton(onClick = { scope.launch { controller.startReceiving() } }) {
+            Text("Resume")
         }
     }
 }
@@ -2063,15 +2147,40 @@ private fun TransferCard(
                 (onOpen != null || onShare != null || onDelete != null)
             ) {
                 Row(
-                    modifier = Modifier.padding(end = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     onShare?.let {
-                        OutlinedButton(onClick = it, modifier = Modifier.weight(1f)) { Text("Share") }
+                        FilledTonalButton(onClick = it, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_share),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Share")
+                        }
                     }
                     onDelete?.let {
-                        TextButton(onClick = it) { Text("Delete", color = colors.error) }
+                        FilledTonalButton(
+                            onClick = it,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = colors.errorContainer,
+                                contentColor = colors.onErrorContainer,
+                            ),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_delete),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Delete")
+                        }
                     }
                 }
             }
@@ -4615,6 +4724,7 @@ private fun SettingsScreen(controller: AirDroidController) {
     val colors = MaterialTheme.colorScheme
     val uriHandler = LocalUriHandler.current
     var channel by remember { mutableIntStateOf(controller.settings.channel) }
+    var autoChannelDwellSecs by remember { mutableIntStateOf(controller.settings.autoChannelDwellSecs) }
     var bleArm by remember { mutableIntStateOf(controller.settings.bleArm) }
     var deviceName by remember { mutableStateOf(controller.settings.deviceName) }
     var themeMode by remember { mutableStateOf(controller.settings.themeMode) }
@@ -4954,6 +5064,41 @@ private fun SettingsScreen(controller: AirDroidController) {
                             6 -> "Using channel 6 · 2.4 GHz. Auto is recommended."
                             else -> "Using channel $channel · 5 GHz. Auto is recommended."
                         },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+                SettingsCard(grouped = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBubble(R.drawable.ic_tune)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Auto channel dwell",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "How long Auto listens on each channel before switching",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    AirDroidButtonGroup(
+                        options = listOf(6, 12, 18, 24, 30),
+                        selected = autoChannelDwellSecs,
+                        label = { "${it}s" },
+                        onSelected = {
+                            autoChannelDwellSecs = it
+                            controller.setAutoChannelDwellSecs(it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "12s is the default. Longer dwell helps older iPhones; shorter cycles channels faster.",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                     )

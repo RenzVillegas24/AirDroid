@@ -51,6 +51,16 @@ scripts/build-app.sh release
 - The kernel source is pinned in `kernel/`; do not add boot images or flashing
   automation to production.
 
+## Remote/build authorization
+
+- Do not push commits, branches, tags, or submodule updates to any remote
+  unless the user explicitly asks for that push.
+- Do not trigger GitHub Actions builds, releases, or signed-artifact workflows
+  (app, kernel, or temporary signing workflows) unless the user explicitly says
+  **"build on GitHub"** or gives equivalent explicit permission.
+- A local build or test does not imply permission to run a GitHub build or
+  publish artifacts.
+
 ## ADB debugging controls
 
 Use the app control receiver, not screenshots, for routine debugging.

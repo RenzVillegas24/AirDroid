@@ -64,6 +64,7 @@ data class AirDroidSettings(
     val pauseDiscoveryDuringTransfer: Boolean = true,
     val visibleDuringTransfer: Boolean = true,
     val updateReminders: Boolean = true,
+    val autoChannelDwellSecs: Int = 12,
 )
 
 /**
@@ -101,6 +102,12 @@ private class PendingRequest(
     val kind: String,
     val onLine: (String) -> Unit,
     val completion: CompletableDeferred<Int> = CompletableDeferred(),
+)
+
+private data class PendingReceiveProgress(
+    val name: String,
+    val bytes: Long,
+    val total: Long,
 )
 
 enum class MonitorState(val badge: String) {
@@ -159,6 +166,8 @@ data class KernelStatus(
         private val MONITOR_RELEASES = setOf(
             "4.14.357-openela-perf-g7a7b4d1b6808",
             "4.14.357-openela-perf-g2a67a9737583-dirty",
+            "4.14.357-openela-perf-g90859856300e",
+            "4.14.357-openela-perf-gc446a6323987",
         )
         private val STOCK_RELEASES = setOf(
             "4.14.357-openela-perf-g2a67a9737583",
@@ -216,13 +225,15 @@ class AirDroidController(private val context: Context) {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
-        private const val AUTO_CHANNEL_DWELL_MS = 6_000L
+        private const val MIN_AUTO_DWELL_SECS = 6
+        private const val MAX_AUTO_DWELL_SECS = 30
         // Prefer 5 GHz, but keep 6 as a last fallback for 2.4 GHz-only
         // networks. Blank/transient peers are ignored before locking.
         private val AUTO_CHANNELS = intArrayOf(149, 44, 6)
         private const val SESSION_READY_TIMEOUT_MS = 30_000L
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
+        private const val PROGRESS_UI_INTERVAL_MS = 100L
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
         private const val WATCHDOG_PID_PATH = "/data/local/tmp/owly-watchdog.pid"
         private const val MODE_SWITCH_TIMEOUT_MS = 60_000L
@@ -244,6 +255,8 @@ class AirDroidController(private val context: Context) {
     private val receiveMutex = Mutex()
     private val binDir = File(context.filesDir, "bin")
     private var prepared = false
+    @Volatile
+    private var bleStartFailed = false
     private var helperSession: HelperSession? = null
     private var receiveSession: ReceiveSession? = null
     private var pendingRequest: PendingRequest? = null
@@ -283,7 +296,16 @@ class AirDroidController(private val context: Context) {
         private set
     var sendCancelling by mutableStateOf(false)
         private set
+    private var pendingSendUi: Pair<Long, Long>? = null
+    private var sendUiJob: Job? = null
+    private var lastSendUiAt = 0L
+    private val pendingReceiveUi = mutableMapOf<String, PendingReceiveProgress>()
+    private var pendingReceiveAggregate: Pair<Long, Long>? = null
+    private var receiveUiJob: Job? = null
+    private var lastReceiveUiAt = 0L
     var receiverRunning by mutableStateOf(false)
+        private set
+    var receiveEnabled by mutableStateOf(true)
         private set
     var receiverStarting by mutableStateOf(false)
         private set
@@ -525,6 +547,19 @@ class AirDroidController(private val context: Context) {
         if (enabled) checkForUpdates(force = true)
     }
 
+    fun setAutoChannelDwellSecs(seconds: Int) {
+        val clean = seconds.coerceIn(MIN_AUTO_DWELL_SECS, MAX_AUTO_DWELL_SECS)
+        if (settings.autoChannelDwellSecs == clean) return
+        settings = settings.copy(autoChannelDwellSecs = clean)
+        prefs.edit().putInt("autoChannelDwellSecs", clean).apply()
+        append("Auto channel dwell set to ${clean}s.")
+        sendMessage = if (scanning) {
+            "Auto channel dwell is now ${clean}s for the next channel."
+        } else {
+            "Auto channel dwell is now ${clean}s."
+        }
+    }
+
     fun checkForUpdates(force: Boolean = false) {
         if (updateState is UpdateState.Checking) return
         if (!force && updateState is UpdateState.UpToDate) return
@@ -649,7 +684,12 @@ class AirDroidController(private val context: Context) {
             }
         }
         if (bleArm != previous.bleArm && ble.isRunning()) {
-            scope.launch { startBle(fresh = true) }
+            scope.launch {
+                if (!startBle(fresh = true)) {
+                    status = "BLUETOOTH OFF"
+                    sendMessage = "Could not restart BLE with the new wake arm."
+                }
+            }
         }
     }
 
@@ -666,6 +706,8 @@ class AirDroidController(private val context: Context) {
         pauseDiscoveryDuringTransfer = prefs.getBoolean("pauseDiscoveryDuringTransfer", true),
         visibleDuringTransfer = prefs.getBoolean("visibleDuringTransfer", true),
         updateReminders = prefs.getBoolean("updateReminders", true),
+        autoChannelDwellSecs = prefs.getInt("autoChannelDwellSecs", 12)
+            .coerceIn(MIN_AUTO_DWELL_SECS, MAX_AUTO_DWELL_SECS),
     )
 
     suspend fun prepare() {
@@ -727,8 +769,12 @@ class AirDroidController(private val context: Context) {
         val session = sessionMutex.withLock { ensureSessionLocked() }
         if (session == null) {
             scanning = false
-            status = "CHECK LOG"
-            sendMessage = "Live scan could not start; check the log."
+            status = if (bleStartFailed) "BLUETOOTH OFF" else "CHECK LOG"
+            sendMessage = if (bleStartFailed) {
+                "Turn on Bluetooth to use AirDrop discovery."
+            } else {
+                "Live scan could not start; check the log."
+            }
             runCatching { AirDroidService.stop(context) }
             return
         }
@@ -736,6 +782,9 @@ class AirDroidController(private val context: Context) {
         sendMessage = "Live scan running. Nearby peers update automatically."
         append("Live scan running; peer updates are continuous.")
     }
+
+    private fun autoChannelDwellMs(): Long =
+        settings.autoChannelDwellSecs.coerceIn(MIN_AUTO_DWELL_SECS, MAX_AUTO_DWELL_SECS) * 1000L
 
     private suspend fun scanAuto() {
         // Owly exclusive mode gets very few iPhone slots on 2.4 GHz channel 6.
@@ -748,13 +797,18 @@ class AirDroidController(private val context: Context) {
         while (scanning) {
             for (channel in channels) {
                 if (!scanning) break
+                val dwellMs = autoChannelDwellMs()
                 activeChannel = channel
                 stopSession()
                 val session = sessionMutex.withLock { ensureSessionLocked() }
                 if (session == null) {
                     scanning = false
-                    status = "CHECK LOG"
-                    sendMessage = "Live scan could not start; check the log."
+                    status = if (bleStartFailed) "BLUETOOTH OFF" else "CHECK LOG"
+                    sendMessage = if (bleStartFailed) {
+                        "Turn on Bluetooth to use AirDrop discovery."
+                    } else {
+                        "Live scan could not start; check the log."
+                    }
                     runCatching { AirDroidService.stop(context) }
                     return
                 }
@@ -763,12 +817,12 @@ class AirDroidController(private val context: Context) {
                     runCatching { AirDroidService.stop(context) }
                     return
                 }
-                append("Auto scan on channel $channel")
+                append("Auto scan on channel $channel (${dwellMs / 1000}s dwell)")
                 val started = System.currentTimeMillis()
                 // A blank raw peer is often a Continuity device, not an
                 // AirDrop sender. A named peer is enough for /Discover.
                 while (scanning && peers.none { it.airdropReady } &&
-                    System.currentTimeMillis() - started < AUTO_CHANNEL_DWELL_MS
+                    System.currentTimeMillis() - started < dwellMs
                 ) {
                     delay(250)
                 }
@@ -789,14 +843,18 @@ class AirDroidController(private val context: Context) {
                         val switched = sessionMutex.withLock { ensureSessionLocked() }
                         if (switched == null) {
                             scanning = false
-                            status = "CHECK LOG"
-                            sendMessage = "Live scan could not start; check the log."
+                            status = if (bleStartFailed) "BLUETOOTH OFF" else "CHECK LOG"
+                            sendMessage = if (bleStartFailed) {
+                                "Turn on Bluetooth to use AirDrop discovery."
+                            } else {
+                                "Live scan could not start; check the log."
+                            }
                             runCatching { AirDroidService.stop(context) }
                             return
                         }
                         val switchedAt = System.currentTimeMillis()
                         while (scanning &&
-                            System.currentTimeMillis() - switchedAt < AUTO_CHANNEL_DWELL_MS &&
+                            System.currentTimeMillis() - switchedAt < dwellMs &&
                             peers.none {
                                 it.mac == candidate.mac && it.airdropReady
                             }
@@ -1014,7 +1072,12 @@ class AirDroidController(private val context: Context) {
         // Owly starts a fresh BLE wake advert for every send. Reusing the one
         // from session startup is not the same wake and lets the iPhone stop
         // answering new /Ask connections after the first transfer.
-        startBle(fresh = true)
+        if (!startBle(fresh = true)) {
+            status = "BLUETOOTH OFF"
+            sendMessage = "Turn on Bluetooth to send with AirDrop."
+            append("Send blocked: BLE wake advertisement is not ready.")
+            return
+        }
         Log.i(
             "AirDroidSend",
             "sendFiles count=${cleanItems.size} shown=$shownName files=${cleanItems.map { it.first }}",
@@ -1111,35 +1174,7 @@ class AirDroidController(private val context: Context) {
         if (match != null) {
             val sent = match.groupValues[1].toLongOrNull() ?: return
             val total = match.groupValues[2].toLongOrNull() ?: 0L
-            sendProgressBytes = sent
-            sendProgressTotal = total
-            val percent = if (total > 0) {
-                ((sent * 100) / total).toInt().coerceIn(0, 100)
-            } else {
-                null
-            }
-            sendMessage = if (percent != null) {
-                "Sending $percent% · ${sent.readableBytes()} / ${total.readableBytes()}"
-            } else {
-                "Sending ${sent.readableBytes()}"
-            }
-            activeSendTransferId?.let { id ->
-                updateTransfer(id) { item ->
-                    item.copy(
-                        transferredBytes = sent,
-                        totalBytes = if (total > 0) total else item.totalBytes,
-                        status = if (item.status == TransferStatus.WAITING ||
-                            item.status == TransferStatus.OFFERED
-                        ) {
-                            TransferStatus.TRANSFERRING
-                        } else {
-                            item.status
-                        },
-                        uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
-                        files = progressChildren(item.files, sent, total),
-                    )
-                }
-            }
+            scheduleSendProgress(sent, total)
             return
         }
         if (line.startsWith("receiver answered")) {
@@ -1183,6 +1218,62 @@ class AirDroidController(private val context: Context) {
         }
     }
 
+    private fun scheduleSendProgress(sent: Long, total: Long) {
+        pendingSendUi = sent to total
+        if (sendUiJob?.isActive == true) return
+        val wait = (PROGRESS_UI_INTERVAL_MS -
+            (System.currentTimeMillis() - lastSendUiAt)).coerceIn(0L, PROGRESS_UI_INTERVAL_MS)
+        sendUiJob = scope.launch {
+            if (wait > 0) delay(wait)
+            val pending = pendingSendUi ?: return@launch
+            pendingSendUi = null
+            lastSendUiAt = System.currentTimeMillis()
+            applySendProgress(pending.first, pending.second)
+        }
+    }
+
+    private fun applySendProgress(sent: Long, total: Long) {
+        sendProgressBytes = sent
+        sendProgressTotal = total
+        val percent = if (total > 0) {
+            ((sent * 100) / total).toInt().coerceIn(0, 100)
+        } else {
+            null
+        }
+        sendMessage = if (percent != null) {
+            "Sending $percent% · ${sent.readableBytes()} / ${total.readableBytes()}"
+        } else {
+            "Sending ${sent.readableBytes()}"
+        }
+        activeSendTransferId?.let { id ->
+            updateTransfer(id) { item ->
+                if (item.status.isTerminal) {
+                    item
+                } else {
+                    item.copy(
+                        transferredBytes = sent,
+                        totalBytes = if (total > 0) total else item.totalBytes,
+                        status = if (item.status == TransferStatus.WAITING ||
+                            item.status == TransferStatus.OFFERED
+                        ) {
+                            TransferStatus.TRANSFERRING
+                        } else {
+                            item.status
+                        },
+                        uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
+                        files = progressChildren(item.files, sent, total),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun clearSendProgressUi() {
+        sendUiJob?.cancel()
+        sendUiJob = null
+        pendingSendUi = null
+    }
+
     /** Cancels an in-flight send without tearing down discovery/receiver. */
     fun cancelSend() {
         if (!sending || sendCancelling) return
@@ -1190,6 +1281,7 @@ class AirDroidController(private val context: Context) {
         val id = activeSendTransferId
         sendCancelled = true
         sendCancelling = true
+        clearSendProgressUi()
         sendProgressBytes = 0
         sendProgressTotal = 0
         sendMessage = "Cancelling send..."
@@ -1200,7 +1292,7 @@ class AirDroidController(private val context: Context) {
             if (sendGeneration != generation) return@launch
             val sent = id != null && writeSessionCommand("cancel $id")
             if (!sent) {
-                fallbackCancel(generation)
+                fallbackCancel(generation, id)
                 return@launch
             }
             // The helper keeps the AWDL session and receiver alive; only the
@@ -1211,15 +1303,19 @@ class AirDroidController(private val context: Context) {
                 true
             } ?: false
             if (!acknowledged && sendGeneration == generation) {
-                fallbackCancel(generation)
+                fallbackCancel(generation, id)
             }
         }
     }
 
-    private suspend fun fallbackCancel(generation: Int) {
+    private suspend fun fallbackCancel(generation: Int, transferId: String?) {
         if (sendGeneration != generation) return
         stopSession()
         if (sendGeneration != generation) return
+        transferId?.let { id ->
+            finishTransfer(id, TransferStatus.CANCELLED, error = "Cancelled")
+        }
+        activeSendTransferId = null
         sending = false
         sendCancelling = false
         sendProgressBytes = 0
@@ -1251,10 +1347,20 @@ class AirDroidController(private val context: Context) {
     }
 
     suspend fun startReceiving() {
-        if (receiverRunning || sending || sendCancelling) return
+        if (sending || sendCancelling) return
+        if (receiverRunning && receiveEnabled) return
+        if (receiverRunning) {
+            receiveEnabled = true
+            receiverStopping = false
+            receiveMessage = "Receiver resumed · waiting for a sender"
+            status = if (scanning) "SCANNING" else "RECEIVING"
+            append("[receiving resumed]")
+            return
+        }
         if (!requireMonitorKernel()) return
         receiverStarting = true
         receiverStopping = false
+        receiveEnabled = true
         incomingRequest = null
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
@@ -1275,14 +1381,36 @@ class AirDroidController(private val context: Context) {
         if (incomingRequest == null) status = "RECEIVING"
     }
 
+    /**
+     * Pauses receiving without stopping the shared helper session. AWDL
+     * discovery and nearby peers stay up; new AirDrop offers are declined
+     * until the receiver is resumed.
+     */
     suspend fun stopReceiving() {
-        if (!receiverRunning || receiverStarting || receiverStopping) return
+        if (!receiverRunning || receiverStarting || receiverStopping || !receiveEnabled) return
         receiverStopping = true
-        receiveMessage = "Stopping receiver..."
-        status = if (kernel.monitorReady) "READY" else kernel.state.badge
+        receiveMessage = "Pausing receiver..."
         notifications.cancelIncomingRequest()
-        stopSession()
-        scanning = false
+
+        incomingRequest?.let { request ->
+            sendReceiveCommand("decline ${request.id}")
+        }
+        activeTransfers
+            .filter { it.direction == TransferDirection.RECEIVED }
+            .forEach { transfer ->
+                val requestId = transferRequestIds[transfer.id]
+                    ?: transfer.id.removePrefix("rx-").substringBefore("-")
+                if (requestId.isNotBlank()) {
+                    sendReceiveCommand("abort-receive $requestId")
+                }
+                finishTransfer(
+                    transfer.id,
+                    TransferStatus.CANCELLED,
+                    error = "Receiving paused",
+                )
+            }
+
+        receiveEnabled = false
         incomingRequest = null
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
@@ -1290,20 +1418,18 @@ class AirDroidController(private val context: Context) {
         receiveProgressBytes = 0
         receiveProgressTotal = 0
         receiverStarting = false
-        receiverRunning = false
         receiverStopping = false
-        receiveMessage = "Receiver stopped"
+        receiveMessage = "Receiving paused · discovery continues"
+        status = when {
+            scanning -> "SCANNING"
+            kernel.monitorReady -> "READY"
+            else -> kernel.state.badge
+        }
+        clearReceiveProgressUi()
         removePendingIncomingOffers()
-        activeTransfers
-            .filter { it.direction == TransferDirection.RECEIVED }
-            .forEach { transfer ->
-                finishTransfer(
-                    transfer.id,
-                    TransferStatus.CANCELLED,
-                    error = "Receiver stopped",
-                )
-            }
-        append("[receiver stopped]")
+        notifications.cancelIncomingRequest()
+        notifications.updateTransferSummary(visibleActiveTransferCount())
+        append("[receiving paused; discovery continues]")
     }
 
     /** Sends accept/decline for the currently shown incoming request. */
@@ -1381,6 +1507,33 @@ class AirDroidController(private val context: Context) {
         }
     }
 
+    fun retryBluetooth() {
+        if (modeSwitching) return
+        scope.launch {
+            status = "CHECKING BLUETOOTH"
+            sendMessage = "Starting Bluetooth..."
+            if (startBle(fresh = false)) {
+                status = if (kernel.monitorReady) "READY" else kernel.state.badge
+                sendMessage = if (kernel.monitorReady) {
+                    "Bluetooth ready. Starting scan..."
+                } else {
+                    "Bluetooth ready. Enter Transfer mode."
+                }
+                append("Bluetooth is ready.")
+                if (kernel.monitorReady) scan()
+            } else {
+                status = "BLUETOOTH OFF"
+                sendMessage = "Bluetooth is still off. Turn it on and retry."
+            }
+        }
+    }
+
+    fun dismissBluetoothWarning() {
+        if (status == "BLUETOOTH OFF") {
+            status = if (kernel.monitorReady) "READY" else kernel.state.badge
+        }
+    }
+
     fun enterTransferMode(reboot: Boolean = false) {
         if (modeSwitching || sending) return
         scope.launch {
@@ -1404,6 +1557,14 @@ class AirDroidController(private val context: Context) {
                 // switch is interrupted. Without the root watchdog the switch
                 // must not start: a force-stop would leave monitor mode on.
                 prepare()
+                if (!startBle(fresh = false)) {
+                    modeAction = null
+                    modeSwitching = false
+                    status = "BLUETOOTH OFF"
+                    sendMessage = "Turn on Bluetooth to enter Transfer mode."
+                    append("Transfer mode blocked: Bluetooth/BLE is not ready.")
+                    return@launch
+                }
                 if (!setMonitorOwner(AndroidProcess.myPid())) {
                     setMonitorOwner(0)
                     modeAction = null
@@ -1465,6 +1626,7 @@ class AirDroidController(private val context: Context) {
                     }
                     refreshKernelStatus()
                     append("Transfer mode: ${kernel.detail}")
+                    receiveEnabled = true
                     scan()
                 }
             } else {
@@ -1591,6 +1753,9 @@ class AirDroidController(private val context: Context) {
                 else -> AirdropState.UNKNOWN
             }
             val existing = peers.toMutableList()
+            val wasReady = existing.any {
+                it.mac.equals(mac, ignoreCase = true) && it.airdropReady
+            }
             existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
             existing.add(
                 Peer(
@@ -1603,12 +1768,22 @@ class AirDroidController(private val context: Context) {
                 ),
             )
             peers = existing
+            if (!wasReady && state == AirdropState.READY) {
+                append(
+                    "Peer ready: ${name.ifBlank { "unnamed" }} " +
+                        "channel=$awdlChannel rssi=$rssi",
+                )
+            }
             if (selectedMac == null && state == AirdropState.READY) selectedMac = mac
         } else if (line.startsWith("PEER_GONE ")) {
             val mac = line.substringAfter("mac=", "").substringBefore(' ').trim().lowercase()
             if (validMac(mac)) {
+                val goneName = peers.firstOrNull {
+                    it.mac.equals(mac, ignoreCase = true)
+                }?.displayName()
                 peers = peers.filterNot { it.mac.equals(mac, ignoreCase = true) }
                 clearAirdropForMac(mac)
+                append("Peer left: ${goneName ?: "unnamed"}")
                 if (selectedMac.equals(mac, ignoreCase = true)) {
                     selectedMac = peers.firstOrNull { it.airdropReady }?.mac
                 }
@@ -1646,8 +1821,11 @@ class AirDroidController(private val context: Context) {
             val instance = between(line, "instance=\"", "\"")
             val addr = between(line, "addr=", " port=")
             val mac = macFromLinkLocal(addr) ?: return
+            val firstInstance =
+                instance.isNotBlank() && airdropInstances[instance] == null
             airdropSeenMacs.add(mac)
             airdropLastFoundAt[mac.lowercase()] = System.currentTimeMillis()
+            if (firstInstance) append("AirDrop service FOUND")
             if (instance.isNotBlank()) airdropInstances[instance] = mac
             if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                 // LOST and FOUND can arrive in quick succession when AirDrop is
@@ -1681,6 +1859,7 @@ class AirDroidController(private val context: Context) {
             val mac = airdropInstances.remove(instance) ?: return
             val stillAdvertised = airdropInstances.values.any { it.equals(mac, ignoreCase = true) }
             if (!stillAdvertised) {
+                append("AirDrop service LOST")
                 airdropFoundJobs.remove(mac)?.cancel()
                 airdropLostMacs.add(mac)
                 if (!recentlyFound(mac)) {
@@ -1766,7 +1945,7 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun handleReceiveLine(session: ReceiveSession, line: String) {
-        append(line)
+        appendHelperLine(line)
         // Ignore output still draining from a receiver we already replaced.
         if (receiveSession !== session) return
         if (line.startsWith("RECEIVE_READY") && !session.ready.isCompleted) {
@@ -1781,8 +1960,16 @@ class AirDroidController(private val context: Context) {
                 receiverRunning = true
                 receiverStarting = false
                 receiverStopping = false
-                status = "RECEIVING"
-                receiveMessage = "Receiver ready · waiting for a sender"
+                status = when {
+                    !receiveEnabled && scanning -> "SCANNING"
+                    !receiveEnabled -> "READY"
+                    else -> "RECEIVING"
+                }
+                receiveMessage = if (receiveEnabled) {
+                    "Receiver ready · waiting for a sender"
+                } else {
+                    "Receiving paused · discovery continues"
+                }
                 // Deliberately silent: readiness and discovery must not notify.
             }
             line.startsWith("RECEIVE_REQUEST ") -> handleIncomingRequest(line)
@@ -1817,6 +2004,7 @@ class AirDroidController(private val context: Context) {
                 receiverRunning = false
                 receiverStarting = false
                 receiverStopping = false
+                clearReceiveProgressUi()
                 receiveMessage = "Receiver stopped"
                 incomingRequest = null
                 incomingRequestNames = emptyList()
@@ -1852,14 +2040,19 @@ class AirDroidController(private val context: Context) {
                     error = "Stopped",
                 )
             }
+        clearReceiveProgressUi()
         receiveTransferring = false
         receiveProgressBytes = 0
         receiveProgressTotal = 0
-        receiveMessage = "Receive stopped"
-        status = if (receiverRunning) "RECEIVING" else if (kernel.monitorReady) {
-            "READY"
-        } else {
-            kernel.state.badge
+        receiveMessage = if (receiveEnabled) "Receive stopped" else {
+            "Receiving paused · discovery continues"
+        }
+        status = when {
+            !receiveEnabled && scanning -> "SCANNING"
+            !receiveEnabled -> if (kernel.monitorReady) "READY" else kernel.state.badge
+            receiverRunning -> "RECEIVING"
+            kernel.monitorReady -> "READY"
+            else -> kernel.state.badge
         }
         notifications.cancelIncomingRequest()
         notifications.updateTransferSummary(visibleActiveTransferCount())
@@ -1868,6 +2061,11 @@ class AirDroidController(private val context: Context) {
 
     private fun handleIncomingRequest(line: String) {
         val id = eventId(line).toLongOrNull() ?: return
+        if (!receiveEnabled) {
+            sendReceiveCommand("decline $id")
+            append("Incoming request auto-declined (receiving paused).")
+            return
+        }
         val peer = between(line, "peer=", " files=")
         val fileCount = between(line, "files=", " total=").toIntOrNull() ?: 0
         val total = between(line, "total=", " sender=").toLongOrNull() ?: 0L
@@ -1914,6 +2112,7 @@ class AirDroidController(private val context: Context) {
 
     private fun handleIncomingRequestFiles(line: String) {
         val id = eventId(line).toLongOrNull() ?: return
+        if (!receiveEnabled) return
         val names = parseNames(line.substringAfter("names=", ""))
         if (names.isEmpty()) return
         incomingRequestNames = names
@@ -2089,32 +2288,8 @@ class AirDroidController(private val context: Context) {
         val bytes = between(line, "bytes=", " total=").toLongOrNull() ?: 0L
         val total = after(line, "total=").toLongOrNull() ?: 0L
         val transferId = resolveReceiveFileTransferId(helperId, name) ?: return
-        updateTransfer(transferId) { item ->
-            // Per-file completion can arrive while an aggregate/progress line is
-            // still in flight. Never move a terminal row back to live.
-            if (item.status.isTerminal) {
-                item
-            } else {
-                item.copy(
-                    fileName = name.ifBlank { item.fileName },
-                    // Per-file progress events can race the batch ticker. Keep
-                    // the high-water mark so a late/out-of-order event cannot
-                    // move the row backwards.
-                    transferredBytes = maxOf(item.transferredBytes, bytes),
-                    totalBytes = if (total > 0) total else item.totalBytes,
-                    status = TransferStatus.TRANSFERRING,
-                    uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
-                )
-            }
-        }
-        receiveProgressBytes = activeTransfers
-            .filter { it.direction == TransferDirection.RECEIVED }
-            .sumOf { it.transferredBytes }
-        if (receiveProgressTotal <= 0) {
-            receiveProgressTotal = activeTransfers
-                .filter { it.direction == TransferDirection.RECEIVED }
-                .sumOf { it.totalBytes }
-        }
+        pendingReceiveUi[transferId] = PendingReceiveProgress(name, bytes, total)
+        scheduleReceiveUi()
     }
 
     private fun handleReceiveFileDone(line: String) {
@@ -2139,26 +2314,81 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun handleReceiveAggregateProgress(line: String) {
-        val id = eventId(line).toLongOrNull()
         val bytes = between(line, "bytes=", " total=").toLongOrNull() ?: 0L
         val total = between(line, "total=", " files=").toLongOrNull() ?: 0L
-        receiveProgressBytes = bytes
-        if (total > 0) receiveProgressTotal = total
-        receiveTransferring = true
-        status = "RECEIVING"
-        val percent = if (receiveProgressTotal > 0) {
-            ((bytes * 100) / receiveProgressTotal).toInt().coerceIn(0, 100)
-        } else {
-            null
+        pendingReceiveAggregate = bytes to total
+        scheduleReceiveUi()
+    }
+
+    private fun scheduleReceiveUi() {
+        if (receiveUiJob?.isActive == true) return
+        val wait = (PROGRESS_UI_INTERVAL_MS -
+            (System.currentTimeMillis() - lastReceiveUiAt)).coerceIn(0L, PROGRESS_UI_INTERVAL_MS)
+        receiveUiJob = scope.launch {
+            if (wait > 0) delay(wait)
+            val files = pendingReceiveUi.toMap()
+            pendingReceiveUi.clear()
+            val aggregate = pendingReceiveAggregate
+            pendingReceiveAggregate = null
+            lastReceiveUiAt = System.currentTimeMillis()
+
+            files.forEach { (id, progress) ->
+                updateTransfer(id) { item ->
+                    if (item.status.isTerminal) {
+                        item
+                    } else {
+                        item.copy(
+                            fileName = progress.name.ifBlank { item.fileName },
+                            // Per-file progress can race the aggregate ticker.
+                            // Keep the high-water mark so rows never move back.
+                            transferredBytes = maxOf(item.transferredBytes, progress.bytes),
+                            totalBytes = if (progress.total > 0) {
+                                progress.total
+                            } else {
+                                item.totalBytes
+                            },
+                            status = TransferStatus.TRANSFERRING,
+                            uploadStartedAt = item.uploadStartedAt ?: System.currentTimeMillis(),
+                        )
+                    }
+                }
+            }
+
+            if (aggregate != null) {
+                val (bytes, total) = aggregate
+                receiveProgressBytes = bytes
+                if (total > 0) receiveProgressTotal = total
+                receiveTransferring = true
+                status = "RECEIVING"
+                val percent = if (receiveProgressTotal > 0) {
+                    ((bytes * 100) / receiveProgressTotal).toInt().coerceIn(0, 100)
+                } else {
+                    null
+                }
+                receiveMessage = if (percent != null) {
+                    "Receiving $percent% · ${bytes.readableBytes()} / " +
+                        receiveProgressTotal.readableBytes()
+                } else {
+                    "Receiving ${bytes.readableBytes()}"
+                }
+            } else if (files.isNotEmpty()) {
+                receiveProgressBytes = activeTransfers
+                    .filter { it.direction == TransferDirection.RECEIVED }
+                    .sumOf { it.transferredBytes }
+                if (receiveProgressTotal <= 0) {
+                    receiveProgressTotal = activeTransfers
+                        .filter { it.direction == TransferDirection.RECEIVED }
+                        .sumOf { it.totalBytes }
+                }
+            }
         }
-        receiveMessage = if (percent != null) {
-            "Receiving $percent% · ${bytes.readableBytes()} / ${receiveProgressTotal.readableBytes()}"
-        } else {
-            "Receiving ${bytes.readableBytes()}"
-        }
-        // The batch ticker counts bytes across every file, while each row has
-        // its own per-file Progress event. Redistributing this total across
-        // rows made the current row jump backwards when the next file started.
+    }
+
+    private fun clearReceiveProgressUi() {
+        receiveUiJob?.cancel()
+        receiveUiJob = null
+        pendingReceiveUi.clear()
+        pendingReceiveAggregate = null
     }
 
     private fun handleReceivedFile(line: String) {
@@ -2183,6 +2413,16 @@ class AirDroidController(private val context: Context) {
             val match = candidates.firstOrNull { it.fileName == fileName }
                 ?: candidates.firstOrNull { it.localPath == path }
                 ?: candidates.firstOrNull { it.status.isActive }
+                // A duplicate destination name (for example "file (2).mov")
+                // changes the final basename after the per-file completion
+                // already created this request's single row. Reuse that row
+                // instead of creating a second card.
+                ?: candidates.singleOrNull()
+                ?: candidates.firstOrNull {
+                    it.direction == TransferDirection.RECEIVED &&
+                        it.status == TransferStatus.COMPLETE &&
+                        it.localPath.isNullOrBlank()
+                }
             if (match != null) {
                 finishTransfer(
                     match.id,
@@ -2193,20 +2433,20 @@ class AirDroidController(private val context: Context) {
             } else {
                 val transferId = "rx-${requestKey ?: "file"}-${++receiveFileCounter}"
                 if (requestKey != null) transferRequestIds[transferId] = requestKey
-                upsertTransfer(
-                    TransferItem(
-                        id = transferId,
-                        direction = TransferDirection.RECEIVED,
-                        peerName = incomingPeerName(),
-                        fileName = fileName,
-                        totalBytes = File(path).length().coerceAtLeast(0),
-                        transferredBytes = File(path).length().coerceAtLeast(0),
-                        status = TransferStatus.COMPLETE,
-                        localPath = path,
-                        startedAt = System.currentTimeMillis(),
-                        completedAt = System.currentTimeMillis(),
-                    ),
+                val completed = TransferItem(
+                    id = transferId,
+                    direction = TransferDirection.RECEIVED,
+                    peerName = incomingPeerName(),
+                    fileName = fileName,
+                    totalBytes = File(path).length().coerceAtLeast(0),
+                    transferredBytes = File(path).length().coerceAtLeast(0),
+                    status = TransferStatus.COMPLETE,
+                    localPath = path,
+                    startedAt = System.currentTimeMillis(),
+                    completedAt = System.currentTimeMillis(),
                 )
+                upsertTransfer(completed)
+                logTransferStats(completed)
             }
         }
     }
@@ -2226,6 +2466,7 @@ class AirDroidController(private val context: Context) {
                     finishTransfer(item.id, TransferStatus.COMPLETE)
                 }
         }
+        clearReceiveProgressUi()
         if (status != "RECEIVED") status = "RECEIVING"
         receiveMessage = "Transfer complete · waiting for a sender"
         receiveProgressBytes = receiveProgressTotal
@@ -2245,6 +2486,7 @@ class AirDroidController(private val context: Context) {
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
         receiveTransferring = false
+        clearReceiveProgressUi()
         receiveProgressBytes = 0
         receiveProgressTotal = 0
         status = "RECEIVE ERROR"
@@ -2558,6 +2800,7 @@ class AirDroidController(private val context: Context) {
         notify: Boolean = true,
     ): TransferItem? {
         val current = findTransfer(id) ?: return null
+        val wasTerminal = current.status.isTerminal
         val originalTotal = if (status == TransferStatus.COMPLETE) {
             originalTransferTotals[id]
         } else {
@@ -2596,10 +2839,54 @@ class AirDroidController(private val context: Context) {
         if (status.isTerminal) originalTransferTotals.remove(id)
         if (next == current) return current
         upsertTransfer(next, notify)
+        if (!wasTerminal && next.status.isTerminal) logTransferStats(next)
+        if (next.status.isTerminal && next.direction == TransferDirection.SENT) {
+            clearSendProgressUi()
+        }
         // A cancel/failure can leave the last LOST mark stuck, hiding a peer
         // that is still in the AWDL peer list. Recover on every terminal state.
         if (status.isTerminal) recoverAirdropReadiness()
         return next
+    }
+
+    /**
+     * One final, human-readable line per received/sent file. Live progress
+     * stays on the transfer card; the log only records the outcome and stats.
+     */
+    private fun logTransferStats(transfer: TransferItem) {
+        val outcome = when (transfer.status) {
+            TransferStatus.COMPLETE -> "complete"
+            TransferStatus.CANCELLED -> "cancelled"
+            TransferStatus.FAILED -> "failed"
+            else -> return
+        }
+        val direction = if (transfer.direction == TransferDirection.SENT) "Send" else "Receive"
+        val bytes = if (transfer.status == TransferStatus.COMPLETE) {
+            maxOf(transfer.totalBytes, transfer.transferredBytes)
+        } else {
+            transfer.transferredBytes
+        }
+        val total = transfer.totalBytes
+        val started = transfer.uploadStartedAt ?: transfer.startedAt
+        val elapsedMs = ((transfer.completedAt ?: System.currentTimeMillis()) - started)
+            .coerceAtLeast(0L)
+        val seconds = elapsedMs / 1000.0
+        val speed = if (seconds > 0.0) (bytes / seconds).toLong() else 0L
+        val size = if (total > 0 && total != bytes) {
+            "${bytes.readableBytes()} / ${total.readableBytes()}"
+        } else {
+            bytes.readableBytes()
+        }
+        val duration = when {
+            elapsedMs < 1000 -> "${elapsedMs}ms"
+            elapsedMs < 60_000 -> "${elapsedMs / 1000}s"
+            else -> "${elapsedMs / 60_000}m ${(elapsedMs / 1000) % 60}s"
+        }
+        val detail = transfer.error?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+        append(
+            "$direction $outcome: ${transfer.fileName} · $size · " +
+                "$duration · ${speed.readableBytes()}/s$detail",
+        )
     }
 
     private fun visibleActiveTransferCount(): Int = activeTransfers.count {
@@ -2797,7 +3084,14 @@ class AirDroidController(private val context: Context) {
         if (current != null) stopSessionLocked()
 
         prepare()
-        startBle(fresh = false)
+        if (!startBle(fresh = false)) {
+            withContext(Dispatchers.Main) {
+                status = "BLUETOOTH OFF"
+                sendMessage = "Turn on Bluetooth to use AirDrop discovery."
+            }
+            append("BLE wake advertisement is not ready; not starting the radio session.")
+            return null
+        }
         val channel = activeChannel
         val name = helperName()
         // Let the hidden STA vdev do normal 802.11 ACK/retry. The ACK-less
@@ -2853,7 +3147,7 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun handleSessionLine(session: HelperSession, line: String) {
-        append(line)
+        appendHelperLine(line)
         // Ignore output still draining from a session we already replaced.
         if (helperSession !== session) return
         when {
@@ -3001,6 +3295,7 @@ class AirDroidController(private val context: Context) {
         receiverRunning = false
         receiverStarting = false
         receiverStopping = false
+        clearReceiveProgressUi()
         activeSendTransferId?.let { id ->
             finishTransfer(
                 id,
@@ -3048,6 +3343,8 @@ class AirDroidController(private val context: Context) {
         receiverRunning = false
         receiverStarting = false
         receiverStopping = false
+        receiveEnabled = true
+        clearReceiveProgressUi()
         incomingRequest = null
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
@@ -3138,39 +3435,87 @@ class AirDroidController(private val context: Context) {
         append("[helper session stopped]")
     }
 
-    private suspend fun startBle(fresh: Boolean) {
-        withContext(Dispatchers.IO) {
-            val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
-            if (adapter != null && !adapter.isEnabled) {
-                try {
-                    ProcessBuilder("su", "-c", "cmd bluetooth_manager enable; sleep 1")
-                        .redirectErrorStream(true)
-                        .start()
-                        .waitFor()
-                    Thread.sleep(1200)
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) { append("Could not enable Bluetooth: ${e.message}") }
-                }
+    /**
+     * Enables Bluetooth if needed, starts the BLE wake advertisement, and
+     * waits for the advertiser to report success. Returns false when the
+     * radio must not start without BLE.
+     */
+    private suspend fun startBle(fresh: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+        if (adapter == null) {
+            bleStartFailed = true
+            withContext(Dispatchers.Main) { append("BLE: Bluetooth adapter is not available.") }
+            return@withContext false
+        }
+
+        fun bluetoothOn(): Boolean = runCatching { adapter.isEnabled }.getOrDefault(false)
+
+        if (!bluetoothOn()) {
+            withContext(Dispatchers.Main) {
+                append("BLE: Bluetooth is off; enabling it before discovery...")
             }
-            val callback: (String) -> Unit = { line -> scope.launch { append(line) } }
-            val ok = if (fresh) {
-                ble.restart(settings.bleArm, true, callback)
-            } else if (!ble.isRunning()) {
-                ble.start(settings.bleArm, true, callback)
-            } else {
-                true
-            }
-            if (fresh && ok) {
-                // Let the new advertising instance reach the controller before
-                // the /Ask connection is opened.
-                Thread.sleep(250)
-            }
-            if (!ok) {
+            try {
+                val enable = ProcessBuilder(
+                    "su",
+                    "-c",
+                    "cmd bluetooth_manager enable",
+                ).redirectErrorStream(true).start()
+                if (!enable.waitFor(5, TimeUnit.SECONDS)) enable.destroyForcibly()
+            } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    append("BLE wake advertisement unavailable.")
+                    append("BLE: could not enable Bluetooth: ${e.message}")
                 }
+            }
+            val deadline = System.currentTimeMillis() + 8_000
+            while (!bluetoothOn() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100)
+            }
+            if (!bluetoothOn()) {
+                bleStartFailed = true
+                withContext(Dispatchers.Main) {
+                    append("BLE: Bluetooth did not turn on; Transfer mode blocked.")
+                }
+                return@withContext false
+            }
+            withContext(Dispatchers.Main) {
+                append("BLE: Bluetooth is now on.")
             }
         }
+
+        val callback: (String) -> Unit = { line -> scope.launch { append(line) } }
+        val accepted = if (fresh) {
+            ble.restart(settings.bleArm, true, callback)
+        } else if (!ble.isRunning()) {
+            ble.start(settings.bleArm, true, callback)
+        } else {
+            true
+        }
+        if (!accepted) {
+            bleStartFailed = true
+            withContext(Dispatchers.Main) {
+                append("BLE: advertisement start was rejected; Transfer mode blocked.")
+            }
+            return@withContext false
+        }
+
+        // startAdvertising() is asynchronous. Wait for the success callback
+        // instead of assuming the advertisement is already on air.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!ble.isRunning() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(100)
+        }
+        val ready = ble.isRunning()
+        bleStartFailed = !ready
+        withContext(Dispatchers.Main) {
+            append(
+                if (ready) {
+                    "BLE: advertisement is ready."
+                } else {
+                    "BLE: advertisement did not start; Transfer mode blocked."
+                },
+            )
+        }
+        ready
     }
 
     /**
@@ -3292,6 +3637,39 @@ class AirDroidController(private val context: Context) {
             lines.forEach { Log.i("AirDroidLog", it) }
         }
         if (logs.size > 2500) logs.removeRange(0, logs.size - 2000)
+    }
+
+    /**
+     * Filters high-frequency helper telemetry out of the UI log. Peer frames,
+     * progress ticks, and mDNS refreshes can arrive many times per second;
+     * their state changes are summarized separately, and writing every raw
+     * line makes the visible log and the main thread fall behind.
+     */
+    private fun appendHelperLine(line: String) {
+        if (line.isBlank()) return
+        when {
+            line.startsWith("PEER ") -> return
+            line.startsWith("PEER_GONE ") -> return
+            line.startsWith("AWDL name:") -> return
+            line.startsWith("AWDL peers now") -> return
+            line.startsWith("FOUND ") -> return
+            line.startsWith("LOST ") -> return
+            line.startsWith("SEND_FILE_") -> return
+            line.startsWith("SEND_OK ") -> return
+            line.startsWith("SEND_ERR ") -> return
+            line.startsWith("SEND_CANCELLED ") -> return
+            line.startsWith("progress ") -> return
+            line.startsWith("RECEIVE_FILE_START ") -> return
+            line.startsWith("RECEIVE_FILE_DONE ") -> return
+            line.startsWith("RECEIVE_FILE_PROGRESS ") -> return
+            line.startsWith("RECEIVE_ACCEPTED ") -> return
+            line.startsWith("RECEIVE_ABORTING ") -> return
+            line.startsWith("RECEIVE_ABORTED ") -> return
+            line.startsWith("RECEIVE_PROGRESS") -> return
+            line.startsWith("RECEIVED ") -> return
+            line.startsWith("RECEIVE_DONE ") -> return
+        }
+        append(line)
     }
 
     /** Strips the `outgoing-<timestamp>-` cache prefix if state was lost. */
