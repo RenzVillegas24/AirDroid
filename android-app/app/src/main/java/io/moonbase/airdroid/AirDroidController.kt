@@ -64,6 +64,7 @@ data class AirDroidSettings(
     val pauseDiscoveryDuringTransfer: Boolean = true,
     val visibleDuringTransfer: Boolean = true,
     val updateReminders: Boolean = true,
+    val autoChannelDwellSecs: Int = 12,
 )
 
 /**
@@ -218,7 +219,8 @@ class AirDroidController(private val context: Context) {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
         const val AUTO_CHANNEL = 0
-        private const val AUTO_CHANNEL_DWELL_MS = 12_000L
+        private const val MIN_AUTO_DWELL_SECS = 6
+        private const val MAX_AUTO_DWELL_SECS = 30
         // Prefer 5 GHz, but keep 6 as a last fallback for 2.4 GHz-only
         // networks. Blank/transient peers are ignored before locking.
         private val AUTO_CHANNELS = intArrayOf(149, 44, 6)
@@ -529,6 +531,19 @@ class AirDroidController(private val context: Context) {
         if (enabled) checkForUpdates(force = true)
     }
 
+    fun setAutoChannelDwellSecs(seconds: Int) {
+        val clean = seconds.coerceIn(MIN_AUTO_DWELL_SECS, MAX_AUTO_DWELL_SECS)
+        if (settings.autoChannelDwellSecs == clean) return
+        settings = settings.copy(autoChannelDwellSecs = clean)
+        prefs.edit().putInt("autoChannelDwellSecs", clean).apply()
+        append("Auto channel dwell set to ${clean}s.")
+        sendMessage = if (scanning) {
+            "Auto channel dwell is now ${clean}s for the next channel."
+        } else {
+            "Auto channel dwell is now ${clean}s."
+        }
+    }
+
     fun checkForUpdates(force: Boolean = false) {
         if (updateState is UpdateState.Checking) return
         if (!force && updateState is UpdateState.UpToDate) return
@@ -675,6 +690,8 @@ class AirDroidController(private val context: Context) {
         pauseDiscoveryDuringTransfer = prefs.getBoolean("pauseDiscoveryDuringTransfer", true),
         visibleDuringTransfer = prefs.getBoolean("visibleDuringTransfer", true),
         updateReminders = prefs.getBoolean("updateReminders", true),
+        autoChannelDwellSecs = prefs.getInt("autoChannelDwellSecs", 12)
+            .coerceIn(MIN_AUTO_DWELL_SECS, MAX_AUTO_DWELL_SECS),
     )
 
     suspend fun prepare() {
@@ -750,6 +767,9 @@ class AirDroidController(private val context: Context) {
         append("Live scan running; peer updates are continuous.")
     }
 
+    private fun autoChannelDwellMs(): Long =
+        settings.autoChannelDwellSecs.coerceIn(MIN_AUTO_DWELL_SECS, MAX_AUTO_DWELL_SECS) * 1000L
+
     private suspend fun scanAuto() {
         // Owly exclusive mode gets very few iPhone slots on 2.4 GHz channel 6.
         // Prefer 5 GHz (44/149) and only fall back to 6 if no 5 GHz peer appears.
@@ -761,6 +781,7 @@ class AirDroidController(private val context: Context) {
         while (scanning) {
             for (channel in channels) {
                 if (!scanning) break
+                val dwellMs = autoChannelDwellMs()
                 activeChannel = channel
                 stopSession()
                 val session = sessionMutex.withLock { ensureSessionLocked() }
@@ -780,15 +801,12 @@ class AirDroidController(private val context: Context) {
                     runCatching { AirDroidService.stop(context) }
                     return
                 }
-                append(
-                    "Auto scan on channel $channel " +
-                        "(${AUTO_CHANNEL_DWELL_MS / 1000}s dwell)",
-                )
+                append("Auto scan on channel $channel (${dwellMs / 1000}s dwell)")
                 val started = System.currentTimeMillis()
                 // A blank raw peer is often a Continuity device, not an
                 // AirDrop sender. A named peer is enough for /Discover.
                 while (scanning && peers.none { it.airdropReady } &&
-                    System.currentTimeMillis() - started < AUTO_CHANNEL_DWELL_MS
+                    System.currentTimeMillis() - started < dwellMs
                 ) {
                     delay(250)
                 }
@@ -820,7 +838,7 @@ class AirDroidController(private val context: Context) {
                         }
                         val switchedAt = System.currentTimeMillis()
                         while (scanning &&
-                            System.currentTimeMillis() - switchedAt < AUTO_CHANNEL_DWELL_MS &&
+                            System.currentTimeMillis() - switchedAt < dwellMs &&
                             peers.none {
                                 it.mac == candidate.mac && it.airdropReady
                             }

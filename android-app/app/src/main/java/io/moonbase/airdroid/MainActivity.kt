@@ -4652,6 +4652,7 @@ private fun SettingsScreen(controller: AirDroidController) {
     val colors = MaterialTheme.colorScheme
     val uriHandler = LocalUriHandler.current
     var channel by remember { mutableIntStateOf(controller.settings.channel) }
+    var autoChannelDwellSecs by remember { mutableIntStateOf(controller.settings.autoChannelDwellSecs) }
     var bleArm by remember { mutableIntStateOf(controller.settings.bleArm) }
     var deviceName by remember { mutableStateOf(controller.settings.deviceName) }
     var themeMode by remember { mutableStateOf(controller.settings.themeMode) }
@@ -4991,6 +4992,41 @@ private fun SettingsScreen(controller: AirDroidController) {
                             6 -> "Using channel 6 · 2.4 GHz. Auto is recommended."
                             else -> "Using channel $channel · 5 GHz. Auto is recommended."
                         },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+                SettingsCard(grouped = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBubble(R.drawable.ic_tune)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Auto channel dwell",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "How long Auto listens on each channel before switching",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    AirDroidButtonGroup(
+                        options = listOf(6, 12, 18, 24, 30),
+                        selected = autoChannelDwellSecs,
+                        label = { "${it}s" },
+                        onSelected = {
+                            autoChannelDwellSecs = it
+                            controller.setAutoChannelDwellSecs(it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "12s is the default. Longer dwell helps older iPhones; shorter cycles channels faster.",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                     )
