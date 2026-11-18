@@ -2147,15 +2147,40 @@ private fun TransferCard(
                 (onOpen != null || onShare != null || onDelete != null)
             ) {
                 Row(
-                    modifier = Modifier.padding(end = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     onShare?.let {
-                        OutlinedButton(onClick = it, modifier = Modifier.weight(1f)) { Text("Share") }
+                        FilledTonalButton(onClick = it, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_share),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Share")
+                        }
                     }
                     onDelete?.let {
-                        TextButton(onClick = it) { Text("Delete", color = colors.error) }
+                        FilledTonalButton(
+                            onClick = it,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = colors.errorContainer,
+                                contentColor = colors.onErrorContainer,
+                            ),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_delete),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Delete")
+                        }
                     }
                 }
             }
