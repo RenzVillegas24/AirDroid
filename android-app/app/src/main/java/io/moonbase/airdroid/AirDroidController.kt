@@ -2413,6 +2413,16 @@ class AirDroidController(private val context: Context) {
             val match = candidates.firstOrNull { it.fileName == fileName }
                 ?: candidates.firstOrNull { it.localPath == path }
                 ?: candidates.firstOrNull { it.status.isActive }
+                // A duplicate destination name (for example "file (2).mov")
+                // changes the final basename after the per-file completion
+                // already created this request's single row. Reuse that row
+                // instead of creating a second card.
+                ?: candidates.singleOrNull()
+                ?: candidates.firstOrNull {
+                    it.direction == TransferDirection.RECEIVED &&
+                        it.status == TransferStatus.COMPLETE &&
+                        it.localPath.isNullOrBlank()
+                }
             if (match != null) {
                 finishTransfer(
                     match.id,
