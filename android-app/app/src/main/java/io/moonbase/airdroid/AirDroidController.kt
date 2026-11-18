@@ -760,6 +760,48 @@ class AirDroidController(private val context: Context) {
     }
 
     /**
+     * Stops active transfers and then the radio session. Used by the
+     * foreground-service Stop action: unlike stopScanning(), this must not
+     * return early while a send is in flight.
+     */
+    suspend fun stopScanningAndTransfers() {
+        if (sending) {
+            cancelSend()
+            withTimeoutOrNull(3_000) {
+                while (sending) delay(100)
+                true
+            }
+        }
+        activeTransfers.toList().forEach { transfer ->
+            if (transfer.direction == TransferDirection.RECEIVED) {
+                cancelTransfer(transfer.id)
+            }
+        }
+        if (sending || sendCancelling) {
+            // The helper did not acknowledge in time; close its session so a
+            // foreground Stop can never leave the upload running.
+            stopSession()
+            sending = false
+            sendCancelling = false
+            sendProgressBytes = 0
+            sendProgressTotal = 0
+            sendMessage = "Stopped."
+        }
+        if (scanning) {
+            stopScanning()
+        } else {
+            stopSession()
+            resetReceiverState()
+        }
+        notifications.cancelAllTransfers()
+        incomingRequest = null
+        incomingRequestNames = emptyList()
+        receiveDecisionPending = false
+        receiveTransferring = false
+        append("Stop action: transfers and radio session stopped.")
+    }
+
+    /**
      * A unique cache directory whose file can keep the real display name.
      * The AirDrop archive uses the basename, so putting the timestamp on a
      * directory instead of the file prevents outgoing-<timestamp>- prefixes
