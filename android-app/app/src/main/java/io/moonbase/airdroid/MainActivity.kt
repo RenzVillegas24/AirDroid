@@ -1117,9 +1117,9 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 }
             }
             HomeTab.RECEIVED -> {
-                if (controller.receiverRunning || controller.receiverStarting || controller.receiveTransferring) {
-                    item(key = "receiver-control") {
-                        ReceiverControlCard(controller, scope, Modifier.animateItem())
+                if (controller.receiverRunning && !controller.receiveEnabled) {
+                    item(key = "receiver-paused") {
+                        ReceiverPausedRow(controller, scope, Modifier.animateItem())
                     }
                 }
                 if (receivedActive.isNotEmpty()) {
@@ -1132,8 +1132,12 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                             TransferCard(
                                 transfer = transfer,
                                 localName = myName,
-                                onCancel = if (transfer.canCancel && activeFile != null) {
-                                    { controller.cancelTransfer(activeFile.id) }
+                                onCancel = if (transfer.canCancel) {
+                                    {
+                                        controller.cancelTransfer(
+                                            activeFile?.id ?: transfer.id,
+                                        )
+                                    }
                                 } else {
                                     null
                                 },
@@ -1271,6 +1275,44 @@ private fun EmptyReceivedCard() {
 }
 
 @Composable
+private fun ReceiverPausedRow(
+    controller: AirDroidController,
+    scope: CoroutineScope,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_sensors),
+            contentDescription = null,
+            tint = colors.tertiary,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Receiving paused",
+                style = MaterialTheme.typography.titleSmall,
+                color = colors.onSurface,
+            )
+            Text(
+                text = "Nearby AirDrop discovery is still running.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+            )
+        }
+        TextButton(onClick = { scope.launch { controller.startReceiving() } }) {
+            Text("Resume")
+        }
+    }
+}
+
+@Composable
 private fun EmptyTransfersCard(title: String, subtitle: String) {
     val colors = MaterialTheme.colorScheme
     Card(
@@ -1300,70 +1342,6 @@ private fun EmptyTransfersCard(title: String, subtitle: String) {
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReceiverControlCard(
-    controller: AirDroidController,
-    scope: CoroutineScope,
-    modifier: Modifier = Modifier,
-) {
-    val colors = MaterialTheme.colorScheme
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_sensors),
-                contentDescription = null,
-                tint = colors.primary,
-                modifier = Modifier.size(24.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (controller.receiverStopping) {
-                        "Stopping receiver..."
-                    } else if (controller.receiverStarting) {
-                        "Starting receiver..."
-                    } else {
-                        "Receiver active"
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = colors.onSurface,
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = controller.receiveMessage,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(10.dp))
-            OutlinedButton(
-                onClick = { scope.launch { controller.stopReceiving() } },
-                enabled = !controller.receiverStopping && !controller.receiverStarting,
-                border = BorderStroke(1.dp, colors.error.copy(alpha = 0.45f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.error),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_stop_circle),
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(if (controller.receiverStopping) "Stopping" else "Stop")
             }
         }
     }

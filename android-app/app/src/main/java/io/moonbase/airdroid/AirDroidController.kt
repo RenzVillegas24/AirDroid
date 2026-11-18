@@ -291,6 +291,8 @@ class AirDroidController(private val context: Context) {
         private set
     var receiverRunning by mutableStateOf(false)
         private set
+    var receiveEnabled by mutableStateOf(true)
+        private set
     var receiverStarting by mutableStateOf(false)
         private set
     var receiverStopping by mutableStateOf(false)
@@ -1298,10 +1300,20 @@ class AirDroidController(private val context: Context) {
     }
 
     suspend fun startReceiving() {
-        if (receiverRunning || sending || sendCancelling) return
+        if (sending || sendCancelling) return
+        if (receiverRunning && receiveEnabled) return
+        if (receiverRunning) {
+            receiveEnabled = true
+            receiverStopping = false
+            receiveMessage = "Receiver resumed · waiting for a sender"
+            status = if (scanning) "SCANNING" else "RECEIVING"
+            append("[receiving resumed]")
+            return
+        }
         if (!requireMonitorKernel()) return
         receiverStarting = true
         receiverStopping = false
+        receiveEnabled = true
         incomingRequest = null
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
@@ -1322,14 +1334,36 @@ class AirDroidController(private val context: Context) {
         if (incomingRequest == null) status = "RECEIVING"
     }
 
+    /**
+     * Pauses receiving without stopping the shared helper session. AWDL
+     * discovery and nearby peers stay up; new AirDrop offers are declined
+     * until the receiver is resumed.
+     */
     suspend fun stopReceiving() {
-        if (!receiverRunning || receiverStarting || receiverStopping) return
+        if (!receiverRunning || receiverStarting || receiverStopping || !receiveEnabled) return
         receiverStopping = true
-        receiveMessage = "Stopping receiver..."
-        status = if (kernel.monitorReady) "READY" else kernel.state.badge
+        receiveMessage = "Pausing receiver..."
         notifications.cancelIncomingRequest()
-        stopSession()
-        scanning = false
+
+        incomingRequest?.let { request ->
+            sendReceiveCommand("decline ${request.id}")
+        }
+        activeTransfers
+            .filter { it.direction == TransferDirection.RECEIVED }
+            .forEach { transfer ->
+                val requestId = transferRequestIds[transfer.id]
+                    ?: transfer.id.removePrefix("rx-").substringBefore("-")
+                if (requestId.isNotBlank()) {
+                    sendReceiveCommand("abort-receive $requestId")
+                }
+                finishTransfer(
+                    transfer.id,
+                    TransferStatus.CANCELLED,
+                    error = "Receiving paused",
+                )
+            }
+
+        receiveEnabled = false
         incomingRequest = null
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
@@ -1337,20 +1371,17 @@ class AirDroidController(private val context: Context) {
         receiveProgressBytes = 0
         receiveProgressTotal = 0
         receiverStarting = false
-        receiverRunning = false
         receiverStopping = false
-        receiveMessage = "Receiver stopped"
+        receiveMessage = "Receiving paused · discovery continues"
+        status = when {
+            scanning -> "SCANNING"
+            kernel.monitorReady -> "READY"
+            else -> kernel.state.badge
+        }
         removePendingIncomingOffers()
-        activeTransfers
-            .filter { it.direction == TransferDirection.RECEIVED }
-            .forEach { transfer ->
-                finishTransfer(
-                    transfer.id,
-                    TransferStatus.CANCELLED,
-                    error = "Receiver stopped",
-                )
-            }
-        append("[receiver stopped]")
+        notifications.cancelIncomingRequest()
+        notifications.updateTransferSummary(visibleActiveTransferCount())
+        append("[receiving paused; discovery continues]")
     }
 
     /** Sends accept/decline for the currently shown incoming request. */
@@ -1547,6 +1578,7 @@ class AirDroidController(private val context: Context) {
                     }
                     refreshKernelStatus()
                     append("Transfer mode: ${kernel.detail}")
+                    receiveEnabled = true
                     scan()
                 }
             } else {
@@ -1741,9 +1773,11 @@ class AirDroidController(private val context: Context) {
             val instance = between(line, "instance=\"", "\"")
             val addr = between(line, "addr=", " port=")
             val mac = macFromLinkLocal(addr) ?: return
+            val firstInstance =
+                instance.isNotBlank() && airdropInstances[instance] == null
             airdropSeenMacs.add(mac)
             airdropLastFoundAt[mac.lowercase()] = System.currentTimeMillis()
-            append("AirDrop service FOUND")
+            if (firstInstance) append("AirDrop service FOUND")
             if (instance.isNotBlank()) airdropInstances[instance] = mac
             if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                 // LOST and FOUND can arrive in quick succession when AirDrop is
@@ -1863,7 +1897,7 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun handleReceiveLine(session: ReceiveSession, line: String) {
-        append(line)
+        appendHelperLine(line)
         // Ignore output still draining from a receiver we already replaced.
         if (receiveSession !== session) return
         if (line.startsWith("RECEIVE_READY") && !session.ready.isCompleted) {
@@ -1878,8 +1912,16 @@ class AirDroidController(private val context: Context) {
                 receiverRunning = true
                 receiverStarting = false
                 receiverStopping = false
-                status = "RECEIVING"
-                receiveMessage = "Receiver ready · waiting for a sender"
+                status = when {
+                    !receiveEnabled && scanning -> "SCANNING"
+                    !receiveEnabled -> "READY"
+                    else -> "RECEIVING"
+                }
+                receiveMessage = if (receiveEnabled) {
+                    "Receiver ready · waiting for a sender"
+                } else {
+                    "Receiving paused · discovery continues"
+                }
                 // Deliberately silent: readiness and discovery must not notify.
             }
             line.startsWith("RECEIVE_REQUEST ") -> handleIncomingRequest(line)
@@ -1952,11 +1994,15 @@ class AirDroidController(private val context: Context) {
         receiveTransferring = false
         receiveProgressBytes = 0
         receiveProgressTotal = 0
-        receiveMessage = "Receive stopped"
-        status = if (receiverRunning) "RECEIVING" else if (kernel.monitorReady) {
-            "READY"
-        } else {
-            kernel.state.badge
+        receiveMessage = if (receiveEnabled) "Receive stopped" else {
+            "Receiving paused · discovery continues"
+        }
+        status = when {
+            !receiveEnabled && scanning -> "SCANNING"
+            !receiveEnabled -> if (kernel.monitorReady) "READY" else kernel.state.badge
+            receiverRunning -> "RECEIVING"
+            kernel.monitorReady -> "READY"
+            else -> kernel.state.badge
         }
         notifications.cancelIncomingRequest()
         notifications.updateTransferSummary(visibleActiveTransferCount())
@@ -1965,6 +2011,11 @@ class AirDroidController(private val context: Context) {
 
     private fun handleIncomingRequest(line: String) {
         val id = eventId(line).toLongOrNull() ?: return
+        if (!receiveEnabled) {
+            sendReceiveCommand("decline $id")
+            append("Incoming request auto-declined (receiving paused).")
+            return
+        }
         val peer = between(line, "peer=", " files=")
         val fileCount = between(line, "files=", " total=").toIntOrNull() ?: 0
         val total = between(line, "total=", " sender=").toLongOrNull() ?: 0L
@@ -2011,6 +2062,7 @@ class AirDroidController(private val context: Context) {
 
     private fun handleIncomingRequestFiles(line: String) {
         val id = eventId(line).toLongOrNull() ?: return
+        if (!receiveEnabled) return
         val names = parseNames(line.substringAfter("names=", ""))
         if (names.isEmpty()) return
         incomingRequestNames = names
@@ -2957,7 +3009,7 @@ class AirDroidController(private val context: Context) {
     }
 
     private fun handleSessionLine(session: HelperSession, line: String) {
-        append(line)
+        appendHelperLine(line)
         // Ignore output still draining from a session we already replaced.
         if (helperSession !== session) return
         when {
@@ -3152,6 +3204,7 @@ class AirDroidController(private val context: Context) {
         receiverRunning = false
         receiverStarting = false
         receiverStopping = false
+        receiveEnabled = true
         incomingRequest = null
         incomingRequestNames = emptyList()
         receiveDecisionPending = false
@@ -3444,6 +3497,28 @@ class AirDroidController(private val context: Context) {
             lines.forEach { Log.i("AirDroidLog", it) }
         }
         if (logs.size > 2500) logs.removeRange(0, logs.size - 2000)
+    }
+
+    /**
+     * Filters high-frequency helper telemetry out of the UI log. Peer frames,
+     * progress ticks, and mDNS refreshes can arrive many times per second;
+     * their state changes are summarized separately, and writing every raw
+     * line makes the visible log and the main thread fall behind.
+     */
+    private fun appendHelperLine(line: String) {
+        if (line.isBlank()) return
+        when {
+            line.startsWith("PEER ") -> return
+            line.startsWith("PEER_GONE ") -> return
+            line.startsWith("AWDL name:") -> return
+            line.startsWith("AWDL peers now") -> return
+            line.startsWith("FOUND ") -> return
+            line.startsWith("LOST ") -> return
+            line.startsWith("SEND_FILE_PROGRESS ") -> return
+            line.startsWith("RECEIVE_FILE_PROGRESS ") -> return
+            line.startsWith("RECEIVE_PROGRESS") -> return
+        }
+        append(line)
     }
 
     /** Strips the `outgoing-<timestamp>-` cache prefix if state was lost. */

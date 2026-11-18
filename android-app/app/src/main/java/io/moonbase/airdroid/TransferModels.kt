@@ -82,9 +82,5 @@ data class TransferItem(
         get() = status == TransferStatus.COMPLETE
 
     val canCancel: Boolean
-        get() = when (direction) {
-            TransferDirection.SENT -> status.isActive
-            TransferDirection.RECEIVED ->
-                status == TransferStatus.ACCEPTED || status == TransferStatus.TRANSFERRING
-        }
+        get() = status.isActive
 }
