@@ -1,6 +1,10 @@
 #!/system/bin/sh
-# Switch the K20 between normal Wi-Fi and the base monitor+hidden-STA mode.
+# Switch the K20 between normal Wi-Fi and Transfer mode.
 # Usage: owly-mode status|enter [owner-pid]|exit|reboot-enter|reboot-exit
+#
+# qcacld kernels use wlan.con_mode=4 and create a hidden wlan_inj* STA.
+# RaphGhost/ath10k kernels use nl80211 to switch wlan0 into monitor mode
+# through the helper; no hidden STA is needed there.
 #
 # `enter` takes the app PID so the kernel owner watchdog is armed before
 # con_mode=4 is written. A force-stop during the 4-19 s switch then still
@@ -8,11 +12,16 @@
 
 CON_MODE=/sys/module/wlan/parameters/con_mode
 OWNER_PATH=/sys/module/wlan/parameters/owly_owner_pid
+HELPER=/data/local/tmp/owly-app/owly-k20-helper
 FLAG=/data/adb/owly-transfer-mode
 LOG=/data/local/tmp/owly-mode.log
 
 log() {
     echo "$(date 2>/dev/null) $*" >> "$LOG"
+}
+
+using_qcacld() {
+    [ -e "$CON_MODE" ]
 }
 
 monitor_up() {
@@ -45,7 +54,11 @@ arm_owner() {
 }
 
 status() {
-    echo "con_mode=$(cat "$CON_MODE" 2>/dev/null)"
+    if using_qcacld; then
+        echo "con_mode=$(cat "$CON_MODE" 2>/dev/null)"
+    else
+        echo "con_mode=absent-ath10k"
+    fi
     echo "wlan0_type=$(cat /sys/class/net/wlan0/type 2>/dev/null)"
     echo "wlan0_mac=$(cat /sys/class/net/wlan0/address 2>/dev/null)"
     if [ -e "$OWNER_PATH" ]; then
@@ -78,8 +91,19 @@ enter_live() {
     svc wifi disable
     sleep 2
     ip link set wlan0 down 2>/dev/null
-    # This write can block or crash the WLAN subsystem on WCN3990.
-    echo 4 > "$CON_MODE"
+    if using_qcacld; then
+        # This write can block or crash the WLAN subsystem on WCN3990.
+        echo 4 > "$CON_MODE"
+    else
+        if [ ! -x "$HELPER" ]; then
+            log "enter_live failed: $HELPER missing"
+            return 1
+        fi
+        "$HELPER" mode-monitor || {
+            log "enter_live failed: nl80211 monitor switch"
+            return 1
+        }
+    fi
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
         monitor_up && break
         sleep 1
@@ -97,13 +121,15 @@ enter_live() {
         exit_live
         return 1
     fi
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-        hidden_sta_present && break
-        sleep 1
-    done
-    if ! hidden_sta_present; then
-        log "enter_live failed: hidden STA did not appear"
-        return 1
+    if using_qcacld; then
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            hidden_sta_present && break
+            sleep 1
+        done
+        if ! hidden_sta_present; then
+            log "enter_live failed: hidden STA did not appear"
+            return 1
+        fi
     fi
     log "enter_live ok"
     return 0
@@ -114,14 +140,25 @@ exit_live() {
     svc wifi disable
     sleep 2
     ip link set wlan0 down 2>/dev/null
-    echo 0 > "$CON_MODE"
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-        [ "$(cat "$CON_MODE" 2>/dev/null)" = "0" ] && break
-        sleep 1
-    done
-    if [ "$(cat "$CON_MODE" 2>/dev/null)" != "0" ]; then
-        log "exit_live failed: con_mode did not return to 0"
-        return 1
+    if using_qcacld; then
+        echo 0 > "$CON_MODE"
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            [ "$(cat "$CON_MODE" 2>/dev/null)" = "0" ] && break
+            sleep 1
+        done
+        if [ "$(cat "$CON_MODE" 2>/dev/null)" != "0" ]; then
+            log "exit_live failed: con_mode did not return to 0"
+            return 1
+        fi
+    else
+        if [ ! -x "$HELPER" ]; then
+            log "exit_live failed: $HELPER missing"
+            return 1
+        fi
+        "$HELPER" mode-station || {
+            log "exit_live failed: nl80211 station switch"
+            return 1
+        }
     fi
     ip link set wlan0 up 2>/dev/null
     svc wifi enable

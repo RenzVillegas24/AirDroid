@@ -4974,7 +4974,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                 SettingsListItem(
                     icon = R.drawable.ic_smartphone,
                     headline = "Device",
-                    supporting = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nKernel ${controller.kernel.release}\nRadio · WCN3990 · monitor + hidden STA",
+                    supporting = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nKernel ${controller.kernel.release}\nRadio · WCN3990 · monitor injection",
                 )
             }
         }

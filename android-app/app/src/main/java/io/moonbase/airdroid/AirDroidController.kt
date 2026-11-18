@@ -123,7 +123,15 @@ data class KernelStatus(
     val monitorReady: Boolean
         get() = state == MonitorState.MONITOR
 
-    fun withRootCheck(cmdline: String, conMode: Int?): KernelStatus {
+    fun withRootCheck(cmdline: String, conMode: Int?, wlanType: Int? = null): KernelStatus {
+        // ath10k/RaphGhost has no con_mode; wlan0 type 803 is the monitor.
+        if (wlanType == 803) {
+            return copy(
+                state = MonitorState.MONITOR,
+                detail = "Ready for AirDrop discovery and transfers.",
+                verifiedBy = "root",
+            )
+        }
         val cmdlineMode = Regex("""(?:wlan\.)?con_mode=(\d+)""")
             .find(cmdline)
             ?.groupValues
@@ -144,7 +152,7 @@ data class KernelStatus(
                 verifiedBy = "root",
             )
         }
-        if (cmdline.isNotBlank() || conMode != null) {
+        if (cmdline.isNotBlank() || conMode != null || wlanType != null) {
             return copy(
                 state = MonitorState.STOCK,
                 detail = "Normal Wi-Fi connectivity is available.",
@@ -180,7 +188,8 @@ data class KernelStatus(
             }
             val monitorBuild = release in MONITOR_RELEASES ||
                 release.startsWith("4.14.357-openela-perf-g7a7b4d1b6808") ||
-                release.startsWith("4.14.357-openela-perf-g4d9c3a067732")
+                release.startsWith("4.14.357-openela-perf-g4d9c3a067732") ||
+                release.contains("RaphGhost-6.12-AirDroid")
             return when {
                 monitorBuild -> KernelStatus(
                     release = release,
@@ -1256,19 +1265,22 @@ class AirDroidController(private val context: Context) {
             status = "CHECKING KERNEL"
             var cmdline = ""
             var conMode: Int? = null
+            var wlanType: Int? = null
             val rc = execRoot(
                 label = "kernel check",
                 command = "printf 'CMDLINE='; cat /proc/cmdline; " +
-                    "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; echo",
+                    "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; " +
+                    "printf '\\nWLAN0_TYPE='; cat /sys/class/net/wlan0/type 2>/dev/null; echo",
             ) { line ->
                 when {
                     line.startsWith("CMDLINE=") -> cmdline = line.removePrefix("CMDLINE=").trim()
                     line.startsWith("CON_MODE=") -> conMode = line.removePrefix("CON_MODE=").trim().toIntOrNull()
+                    line.startsWith("WLAN0_TYPE=") -> wlanType = line.removePrefix("WLAN0_TYPE=").trim().toIntOrNull()
                 }
             }
             verifyingKernel = false
             if (rc == 0) {
-                val updated = kernel.withRootCheck(cmdline, conMode)
+                val updated = kernel.withRootCheck(cmdline, conMode, wlanType)
                 kernel = updated
                 status = if (updated.monitorReady) "READY" else updated.state.badge
                 append("Kernel check: ${updated.state.badge} · ${updated.detail}")
@@ -1455,18 +1467,21 @@ class AirDroidController(private val context: Context) {
     private suspend fun refreshKernelStatus() {
         var cmdline = ""
         var conMode: Int? = null
+        var wlanType: Int? = null
         val rc = execRoot(
             label = "kernel check",
             command = "printf 'CMDLINE='; cat /proc/cmdline; " +
-                "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; echo",
+                "printf '\\nCON_MODE='; cat /sys/module/wlan/parameters/con_mode 2>/dev/null; " +
+                "printf '\\nWLAN0_TYPE='; cat /sys/class/net/wlan0/type 2>/dev/null; echo",
         ) { line ->
             when {
                 line.startsWith("CMDLINE=") -> cmdline = line.removePrefix("CMDLINE=").trim()
                 line.startsWith("CON_MODE=") -> conMode = line.removePrefix("CON_MODE=").trim().toIntOrNull()
+                line.startsWith("WLAN0_TYPE=") -> wlanType = line.removePrefix("WLAN0_TYPE=").trim().toIntOrNull()
             }
         }
         if (rc == 0) {
-            kernel = kernel.withRootCheck(cmdline, conMode)
+            kernel = kernel.withRootCheck(cmdline, conMode, wlanType)
             status = if (kernel.monitorReady) "READY" else kernel.state.badge
         }
     }

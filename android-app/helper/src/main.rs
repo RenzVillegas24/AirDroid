@@ -32,7 +32,9 @@ use owly_airdrop::proto::receiver::Config as ReceiverConfig;
 use owly_airdrop::proto::sender::Config as SenderConfig;
 use owly_awdl::{Channel, Config, MacAddr, Presence, RadioConstraints, TxRate};
 use owly_radio::native::Native;
+use owly_radio::nl80211::Kind;
 use owly_radio::radio::PeerInfo;
+use owly_radio::sys::{Ops, System};
 use tokio::sync::watch;
 use tokio::time::{sleep, timeout, Instant, MissedTickBehavior};
 
@@ -77,6 +79,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let name = args.get(5).cloned().unwrap_or_else(|| "AirDroid K20".into());
             receive(dir, port, channel, name).await
         }
+        "mode-monitor" => set_interface_mode(Kind::Monitor { active: false }),
+        "mode-station" => set_interface_mode(Kind::Station),
         "help" | "--help" | "-h" => {
             println!("usage: helper scan <seconds> <channel> | send <file> [mac] <channel> [name] | session <channel> [name] | receive <dir> <port> <channel> [name]");
             Ok(())
@@ -92,6 +96,17 @@ fn channel_freq(channel: u8) -> Option<&'static str> {
         149 => Some("5745"),
         _ => None,
     }
+}
+
+/// Switches wlan0 between mac80211 managed and monitor mode through netlink.
+/// This is the RaphGhost/ath10k replacement for the qcacld con_mode write.
+fn set_interface_mode(kind: Kind) -> Result<(), Box<dyn Error>> {
+    let ops = System;
+    ops.set_up(MONITOR, false)?;
+    ops.set_kind(MONITOR, kind)?;
+    ops.set_up(MONITOR, true)?;
+    println!("MODE {}", kind.iftype().name());
+    Ok(())
 }
 
 /// The monitor name sniffer: a separate `owly-monitor-full` process whose
@@ -523,11 +538,13 @@ fn tx_no_ack() -> bool {
 }
 
 fn set_radio_channel(channel: u8) {
-    if !std::path::Path::new(SET_CHANNEL).exists() {
+    let Some(freq) = channel_freq(channel) else { return };
+    if std::path::Path::new(SET_CHANNEL).exists() {
+        let _ = Command::new(SET_CHANNEL).args([MONITOR, freq]).status();
         return;
     }
-    if let Some(freq) = channel_freq(channel) {
-        let _ = Command::new(SET_CHANNEL).args([MONITOR, freq]).status();
+    if let Ok(freq) = freq.parse::<u32>() {
+        let _ = System.set_freq(MONITOR, freq);
     }
 }
 

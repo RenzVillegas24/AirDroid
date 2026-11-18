@@ -33,7 +33,12 @@ log "app $APP_PID exited"
 # The kernel owner watchdog reverts con_mode on its own, and a second
 # owly-mode.sh exit would add another Wi-Fi disable/enable blip. Only make
 # sure Wi-Fi is switched back on: svc wifi enable is a no-op when it already is.
-if [ "$(cat "$CON_MODE" 2>/dev/null)" = "0" ]; then
+if [ ! -e "$CON_MODE" ]; then
+    # ath10k/RaphGhost has no kernel owner watchdog; restore the interface
+    # type through the nl80211 path ourselves.
+    log "ath10k mode; restoring Wi-Fi via $MODE exit"
+    "$MODE" exit >>"$LOG" 2>&1
+elif [ "$(cat "$CON_MODE" 2>/dev/null)" = "0" ]; then
     log "kernel already restored con_mode=0; skipping Wi-Fi cycle"
     svc wifi enable
 else
