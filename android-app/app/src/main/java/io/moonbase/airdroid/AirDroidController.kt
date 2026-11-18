@@ -3515,6 +3515,7 @@ class AirDroidController(private val context: Context) {
             line.startsWith("FOUND ") -> return
             line.startsWith("LOST ") -> return
             line.startsWith("SEND_FILE_PROGRESS ") -> return
+            line.startsWith("progress ") -> return
             line.startsWith("RECEIVE_FILE_PROGRESS ") -> return
             line.startsWith("RECEIVE_PROGRESS") -> return
         }
