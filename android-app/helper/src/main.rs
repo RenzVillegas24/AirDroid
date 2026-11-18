@@ -531,6 +531,27 @@ fn set_radio_channel(channel: u8) {
     }
 }
 
+/// Widen the kernel TCP windows for the AWDL transfer. Android's Wi-Fi HAL
+/// caps tcp_limit_output_bytes at 256 KiB and auto-tunes the receive window
+/// conservatively; both are small for a time-slotted link. These values are
+/// intentionally an experiment and are restored by rebooting the phone.
+fn tune_tcp_for_awdl() {
+    let settings = [
+        ("/proc/sys/net/core/rmem_max", "16777216"),
+        ("/proc/sys/net/core/wmem_max", "16777216"),
+        ("/proc/sys/net/ipv4/tcp_rmem", "262144 4194304 16777216"),
+        ("/proc/sys/net/ipv4/tcp_wmem", "262144 4194304 16777216"),
+        ("/proc/sys/net/ipv4/tcp_limit_output_bytes", "4194304"),
+        ("/proc/sys/net/ipv4/tcp_slow_start_after_idle", "0"),
+    ];
+    for (path, value) in settings {
+        if let Err(e) = std::fs::write(path, format!("{value}\n")) {
+            println!("TCP_TUNE {path} failed: {e}");
+        }
+    }
+    println!("TCP_TUNE rmem_max=16777216 tcp_rmem=4MiB wmem=4MiB limit_output=4MiB slow_start_after_idle=0");
+}
+
 async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiver<Vec<PeerInfo>>), Box<dyn Error>> {
     if !std::path::Path::new("/dev/net/tun").exists()
         && !std::path::Path::new("/dev/tun").exists()
@@ -538,6 +559,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
         return Err("no TUN device; awdl0 cannot be created".into());
     }
     let channel = if channel_freq(channel).is_some() { channel } else { DEFAULT_CHANNEL };
+    tune_tcp_for_awdl();
     let _ = Command::new("ip").args(["link", "set", MONITOR, "up"]).status();
     let addr = read_hidden_mac().await?;
     println!("INJECT_MAC {addr:?}");
@@ -546,18 +568,20 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     let radio = RadioConstraints { channel: Channel(channel), presence: Presence::Fixed };
     let mut cfg = Config::new(addr, "airdroid-k20", radio);
     cfg.rssi_threshold = Some(-85);
-    cfg.max_frame = 2304;
-    // The iPhone advertises HT rates and A-MSDU support. The legacy 12 Mbit/s
-    // BASIC rate plus one frame per TCP segment is what produced the 512 KiB
-    // then stall pattern; use the one-stream MCS 7 rate and aggregate where
-    // the peer accepts it.
-    cfg.rate = TxRate::Ht { mcs: 7, sgi: true };
-    cfg.amsdu = true;
+    // The K20's WMI management-TX path caps a frame at 1532 bytes. A-MSDU
+    // would exceed that and be dropped, so keep one MPDU per injection.
+    cfg.max_frame = 1532;
+    cfg.rate = TxRate::Legacy(108); /* 54 Mbit/s; kernel sets the actual rate */
+    cfg.amsdu = false;
+    // Accept the iPhone's A-MPDU Block Ack session. This only helps if the
+    // K20 monitor RX path answers the ADDBA handshake, which is what we are
+    // measuring here.
+    cfg.accept_addba = true;
     // The ACK/retry experiment, see `TX_NO_ACK_DEFAULT`.
     cfg.no_ack = tx_no_ack();
     println!(
-        "RADIO_CONFIG no_ack={} rate={} amsdu={}",
-        cfg.no_ack, cfg.rate, cfg.amsdu
+        "RADIO_CONFIG no_ack={} rate={} amsdu={} addba={}",
+        cfg.no_ack, cfg.rate, cfg.amsdu, cfg.accept_addba
     );
     let (peers_tx, peers_rx) = watch::channel(Vec::new());
     let native = Native::start(MONITOR, AWDL_IFACE, cfg, peers_tx)
