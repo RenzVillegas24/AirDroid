@@ -8,8 +8,8 @@
 
 CON_MODE=/sys/module/wlan/parameters/con_mode
 OWNER_PATH=/sys/module/wlan/parameters/owly_owner_pid
-FLAG=/data/adb/owly-transfer-mode
-LOG=/data/local/tmp/owly-mode.log
+FLAG=@FLAG@
+LOG=@LOG@
 
 log() {
     echo "$(date 2>/dev/null) $*" >> "$LOG"
@@ -142,7 +142,6 @@ case "$1" in
     reboot-enter)
         # The app's BOOT_COMPLETED receiver applies the flag. KernelSU
         # service.d scripts are not reliable on this K20 build.
-        mkdir -p /data/adb
         touch "$FLAG"
         sync
         log "reboot-enter"

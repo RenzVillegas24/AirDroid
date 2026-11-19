@@ -44,6 +44,14 @@ const AIRDROP_PORT: u16 = 8770;
 const RECEIVER_PORT: u16 = 8771;
 const STATE_DIR: &str = "/data/local/tmp/owly-app/state";
 
+/// The identity directory: the app passes its private one, so uninstall takes
+/// the TLS identity with it. Standalone runs keep the old staging path.
+fn state_dir() -> PathBuf {
+    env::var("OWLY_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(STATE_DIR))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
@@ -873,7 +881,8 @@ async fn session(
 ) -> Result<(), Box<dyn Error>> {
     rustls::crypto::ring::default_provider().install_default().ok();
     std::fs::create_dir_all(&receive_dir)?;
-    std::fs::create_dir_all(STATE_DIR)?;
+    let state = state_dir();
+    std::fs::create_dir_all(&state)?;
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
     let names = Arc::new(Mutex::new(HashMap::new()));
     let mdns = Mdns::new(index).with_burst(Some(Burst {
@@ -881,7 +890,7 @@ async fn session(
         interval: Duration::from_micros(16_400),
         pause: Duration::from_secs(3),
     }));
-    let identity = Identity::load_or_generate(Path::new(STATE_DIR))?;
+    let identity = Identity::load_or_generate(&state)?;
     let mut receiver_config = ReceiverConfig::new(name.clone());
     receiver_config.model_name = "Linux".into();
     receiver_config.ask_timeout = Duration::from_secs(60);
@@ -1411,12 +1420,13 @@ fn staging_usage(dir: &Path) -> (u64, u64) {
 
 async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(&dir)?;
-    std::fs::create_dir_all(STATE_DIR)?;
+    let state = state_dir();
+    std::fs::create_dir_all(&state)?;
     rustls::crypto::ring::default_provider().install_default().ok();
 
     let (native, index, addr, _peers_rx) = start_radio(channel).await?;
     let local = addr.link_local();
-    let identity = Identity::load_or_generate(Path::new(STATE_DIR))?;
+    let identity = Identity::load_or_generate(&state)?;
     let mut config = ReceiverConfig::new(name.clone());
     config.model_name = "Linux".into();
     config.ask_timeout = Duration::from_secs(60);

@@ -1,9 +1,9 @@
 #!/system/bin/sh
 # Restore Wi-Fi if the CrossPair app process disappears without a clean exit.
 APP_PID="$1"
-PID_FILE=/data/local/tmp/owly-watchdog.pid
-LOG=/data/local/tmp/owly-watchdog.log
-MODE=/data/local/tmp/owly-app/owly-mode.sh
+PID_FILE=@PID@
+LOG=@LOG@
+MODE=@MODE@
 CON_MODE=/sys/module/wlan/parameters/con_mode
 
 log() {

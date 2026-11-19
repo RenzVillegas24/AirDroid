@@ -17,6 +17,14 @@ android {
         versionName = "1.7.0"
     }
 
+    packaging {
+        jniLibs {
+            // The helper is executed as root from nativeLibraryDir; it must be
+            // extracted to disk, not loaded from inside the APK.
+            useLegacyPackaging = true
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true

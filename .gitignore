@@ -39,3 +39,4 @@ android-app/local.properties
 # Local OpenCode tooling and signing credentials.
 .opencode/agents/release-installer.md
 .opencode/release-signing.env
+android-app/app/src/main/jniLibs/

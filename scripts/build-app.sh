@@ -30,16 +30,19 @@ fi
 
 if [[ "${SKIP_HELPER_BUILD:-0}" == "1" ]]; then
   echo "== helper (prebuilt) =="
-  [[ -x "$ROOT/android-app/assets/owly-k20-helper" ]] || {
-    echo "missing android-app/assets/owly-k20-helper" >&2
+  [[ -x "$ROOT/android-app/app/src/main/jniLibs/arm64-v8a/libowlyhelper.so" ]] || {
+    echo "missing android-app/app/src/main/jniLibs/arm64-v8a/libowlyhelper.so" >&2
     exit 1
   }
 else
   echo "== helper =="
   cd "$ROOT/android-app/helper"
   "$CARGO" build --release --target aarch64-unknown-linux-musl
-  mkdir -p ../assets
-  cp target/aarch64-unknown-linux-musl/release/owly-k20-helper ../assets/owly-k20-helper
+  # The helper is executed by root from nativeLibraryDir, so it ships as an
+  # extracted native lib rather than an asset.
+  mkdir -p ../app/src/main/jniLibs/arm64-v8a
+  cp target/aarch64-unknown-linux-musl/release/owly-k20-helper \
+    ../app/src/main/jniLibs/arm64-v8a/libowlyhelper.so
 fi
 
 echo "== APK ($MODE) =="

@@ -5,6 +5,7 @@ import android.os.Process as AndroidProcess
 import android.os.SystemClock
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
@@ -263,7 +264,6 @@ data class KernelStatus(
  */
 class CrossPairController(private val context: Context) {
     companion object {
-        private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/CrossPair"
         const val AUTO_CHANNEL = 0
         private const val MIN_AUTO_DWELL_SECS = 6
@@ -280,16 +280,14 @@ class CrossPairController(private val context: Context) {
         /** Expiry grace: AWDL drops announcements while the radio hops. */
         private const val AIRDROP_LOST_GRACE_MS = 15_000L
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
-        private const val WATCHDOG_PID_PATH = "/data/local/tmp/owly-watchdog.pid"
         private const val MODE_SWITCH_TIMEOUT_MS = 60_000L
         private const val BOOT_ENTER_WINDOW_MS = 120_000L
         private const val OWNER_WRITE_TIMEOUT_MS = 5_000L
         private const val WATCHDOG_TIMEOUT_MS = 10_000L
         private const val TIMEOUT_EXIT_CODE = 124
-        private val ASSETS = arrayOf(
+        private val SCRIPTS = arrayOf(
             "owly-mode.sh",
             "owly-watchdog.sh",
-            "owly-k20-helper",
         )
     }
 
@@ -300,6 +298,19 @@ class CrossPairController(private val context: Context) {
     private val sessionMutex = Mutex()
     private val receiveMutex = Mutex()
     private val binDir = File(context.filesDir, "bin")
+    /** Scripts, TLS state and logs; removed with the app on uninstall. */
+    private val appDir = File(context.filesDir, "owly")
+    private val modeScript = File(appDir, "owly-mode.sh")
+    private val watchdogScript = File(appDir, "owly-watchdog.sh")
+    private val stateDir = File(appDir, "state")
+    private val logDir = File(appDir, "logs")
+    private val watchdogPidFile = File(appDir, "watchdog.pid")
+    private val bootEnterFlag = File(appDir, "boot-enter")
+    /** The helper ships as an extracted native lib, so root can exec it. */
+    private val helperBinary = File(
+        context.applicationInfo.nativeLibraryDir,
+        "libowlyhelper.so",
+    )
     private var prepared = false
     @Volatile
     private var bleStartFailed = false
@@ -779,56 +790,61 @@ class CrossPairController(private val context: Context) {
         if (prepared) return
         prepareMutex.withLock {
             if (prepared) return
-            // The assets are copied first, with no root involved: `su` may not
-            // be granted yet at boot or after a reinstall, and failing the
-            // root pkill must not leave the previous install's helper staged.
-            val assetsCopied = withContext(Dispatchers.IO) {
+            // Everything lives in the app's own directory: the scripts are
+            // templates with the paths filled in, and uninstall removes them.
+            val scriptsWritten = withContext(Dispatchers.IO) {
                 try {
-                    binDir.mkdirs()
-                    for (name in ASSETS) {
-                        val out = File(binDir, name)
-                        context.assets.open(name).use { input ->
-                            FileOutputStream(out).use { output -> input.copyTo(output) }
-                        }
-                    }
+                    appDir.mkdirs()
+                    logDir.mkdirs()
+                    stateDir.mkdirs()
+                    writeScript(
+                        "owly-mode.sh",
+                        modeScript,
+                        mapOf(
+                            "@FLAG@" to bootEnterFlag.absolutePath,
+                            "@LOG@" to File(logDir, "owly-mode.log").absolutePath,
+                        ),
+                    )
+                    writeScript(
+                        "owly-watchdog.sh",
+                        watchdogScript,
+                        mapOf(
+                            "@PID@" to watchdogPidFile.absolutePath,
+                            "@LOG@" to File(logDir, "owly-watchdog.log").absolutePath,
+                            "@MODE@" to modeScript.absolutePath,
+                        ),
+                    )
                     true
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        append("Asset install failed: ${e.message}")
+                        append("Script install failed: ${e.message}")
                         status = "ROOT ERROR"
                     }
                     false
                 }
             }
-            if (!assetsCopied) return
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    ProcessBuilder(
-                        "su",
-                        "-c",
-                        "pkill -x owly-k20-helper 2>/dev/null; " +
-                            "pkill -x owly-monitor-full 2>/dev/null; sleep 1; true",
-                    )
-                        .redirectErrorStream(true)
-                        .start()
-                        .waitFor()
-                }
-            }
+            if (!scriptsWritten) return
+            // Stop a helper from an older install and drop the old staging area,
+            // which the app no longer uses or needs.
             val rc = execRoot(
                 label = "install root tools",
-                // Keep only what the APK ships, plus the helper's own state,
-                // so a phone that once carried investigation binaries does not
-                // silently depend on them.
-                command = "mkdir -p $APP_TMP; " +
-                    "find $APP_TMP -mindepth 1 -maxdepth 1 " +
-                    "! -name state ! -name owly-mode.sh ! -name owly-watchdog.sh " +
-                    "! -name owly-k20-helper -exec rm -rf {} +; " +
-                    "cp '${binDir.absolutePath}'/* $APP_TMP/ || exit 1; " +
-                    "chmod 755 $APP_TMP/*; ls -l $APP_TMP",
+                command = "pkill -x owly-k20-helper 2>/dev/null; " +
+                    "pkill -x owly-monitor-full 2>/dev/null; " +
+                    "rm -rf /data/local/tmp/owly-app /data/local/tmp/owly-watchdog.pid " +
+                    "/data/local/tmp/owly-mode.log /data/local/tmp/owly-watchdog.log; " +
+                    "ls -l '${appDir.absolutePath}' '" + helperBinary.absolutePath + "'",
                 requirePrepared = false,
             )
             prepared = rc == 0
         }
+    }
+
+    private fun writeScript(asset: String, out: File, replacements: Map<String, String>) {
+        var text = context.assets.open(asset).bufferedReader().use { it.readText() }
+        replacements.forEach { (token, value) -> text = text.replace(token, value) }
+        out.writeText(text)
+        out.setReadable(true, false)
+        out.setExecutable(true, false)
     }
 
     suspend fun scan() {
@@ -1041,6 +1057,30 @@ class CrossPairController(private val context: Context) {
     }
 
     /** Notification Stop: stop transfers and leave monitor/Transfer mode. */
+    /**
+     * Stops Transfer mode, drops the old staging area, then opens the system
+     * uninstaller. Everything under filesDir goes with the package.
+     */
+    suspend fun uninstallSelf() {
+        runCatching { stopEverythingAndRestoreWifi() }
+        execRoot(
+            label = "cleanup before uninstall",
+            command = "pkill -x owly-k20-helper 2>/dev/null; " +
+                "pkill -x owly-monitor-full 2>/dev/null; " +
+                "rm -rf /data/local/tmp/owly-app /data/local/tmp/owly-watchdog.pid " +
+                "/data/local/tmp/owly-mode.log /data/local/tmp/owly-watchdog.log; true",
+            requirePrepared = false,
+        )
+        withContext(Dispatchers.Main) {
+            runCatching {
+                context.startActivity(
+                    Intent(Intent.ACTION_DELETE, Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }
+    }
+
     suspend fun stopEverythingAndRestoreWifi() {
         stopScanningAndTransfers(stopService = false)
         if (!kernel.monitorReady) {
@@ -1049,7 +1089,7 @@ class CrossPairController(private val context: Context) {
         }
         val rc = execRoot(
             label = "notification stop: exit Transfer mode",
-            command = "$APP_TMP/owly-mode.sh exit",
+            command = "'${modeScript.absolutePath}' exit",
             timeoutMs = MODE_SWITCH_TIMEOUT_MS,
         )
         if (rc == 0) {
@@ -1994,9 +2034,9 @@ class CrossPairController(private val context: Context) {
                 // The PID lets owly-mode.sh arm the kernel owner before it
                 // writes con_mode=4 and self-restore if this process dies.
                 command = if (reboot) {
-                    "$APP_TMP/owly-mode.sh $action"
+                    "'${modeScript.absolutePath}' $action"
                 } else {
-                    "$APP_TMP/owly-mode.sh $action ${AndroidProcess.myPid()}"
+                    "'${modeScript.absolutePath}' $action ${AndroidProcess.myPid()}"
                 },
                 timeoutMs = if (reboot) 0L else MODE_SWITCH_TIMEOUT_MS,
             )
@@ -2014,7 +2054,7 @@ class CrossPairController(private val context: Context) {
                     append("Monitor mode dropped to con_mode=$conMode after enter; re-entering once.")
                     val retryRc = execRoot(
                         label = "re-enter Transfer mode",
-                        command = "$APP_TMP/owly-mode.sh enter ${AndroidProcess.myPid()}",
+                        command = "'${modeScript.absolutePath}' enter ${AndroidProcess.myPid()}",
                         timeoutMs = MODE_SWITCH_TIMEOUT_MS,
                     )
                     if (retryRc == 0) {
@@ -2027,7 +2067,7 @@ class CrossPairController(private val context: Context) {
                     // failure instead of leaving the app in Transfer mode.
                     execRoot(
                         label = "restore Wi-Fi after failed enter",
-                        command = "$APP_TMP/owly-mode.sh exit",
+                        command = "'${modeScript.absolutePath}' exit",
                         timeoutMs = MODE_SWITCH_TIMEOUT_MS,
                     )
                     setMonitorOwner(0)
@@ -2093,7 +2133,7 @@ class CrossPairController(private val context: Context) {
             }
             val rc = execRoot(
                 label = "exit Transfer mode",
-                command = "$APP_TMP/owly-mode.sh $action",
+                command = "'${modeScript.absolutePath}' $action",
                 timeoutMs = if (reboot) 0L else MODE_SWITCH_TIMEOUT_MS,
             )
             if (!reboot && rc == 0) {
@@ -2112,7 +2152,7 @@ class CrossPairController(private val context: Context) {
                 // boot-enter, so the next reboot starts with normal Wi-Fi.
                 runCatching {
                     withContext(Dispatchers.IO) {
-                        ProcessBuilder("su", "-c", "rm -f /data/adb/owly-transfer-mode")
+                        ProcessBuilder("su", "-c", "rm -f '${bootEnterFlag.absolutePath}'")
                             .redirectErrorStream(true)
                             .start()
                             .waitFor()
@@ -3556,7 +3596,8 @@ class CrossPairController(private val context: Context) {
         // path turns every lost unicast frame into a TCP retransmission and
         // collapses to the observed 64 KiB staircase.
         val command = "OWLY_TX_NO_ACK=0 OWLY_UPLOAD=${settings.uploadPolicy.env} " +
-            "$APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
+            "OWLY_STATE_DIR='${stateDir.absolutePath}' " +
+            "'${helperBinary.absolutePath}' session $channel '$name' '$RECEIVE_DIR' 8771"
         append("")
         append("$ starting helper session")
         val process = try {
@@ -4081,7 +4122,7 @@ class CrossPairController(private val context: Context) {
     private fun helper(arguments: String): String =
         "pkill -x owly-k20-helper 2>/dev/null; " +
             "pkill -x owly-monitor-full 2>/dev/null; sleep 1; " +
-            "$APP_TMP/owly-k20-helper $arguments"
+            "OWLY_STATE_DIR='${stateDir.absolutePath}' '${helperBinary.absolutePath}' $arguments"
 
     private fun helperName(): String =
         settings.deviceName.replace("'", "").ifBlank { "CrossPair K20" }
@@ -4162,9 +4203,9 @@ class CrossPairController(private val context: Context) {
         if (pid <= 0) {
             execRoot(
                 label = "stop Wi-Fi watchdog",
-                command = "old=$(cat $WATCHDOG_PID_PATH 2>/dev/null); " +
+                command = "old=$(cat ${watchdogPidFile.absolutePath} 2>/dev/null); " +
                     "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
-                    "rm -f $WATCHDOG_PID_PATH; true",
+                    "rm -f ${watchdogPidFile.absolutePath}; true",
                 requirePrepared = false,
                 timeoutMs = WATCHDOG_TIMEOUT_MS,
             )
@@ -4173,12 +4214,12 @@ class CrossPairController(private val context: Context) {
         var started = false
         execRoot(
             label = "start Wi-Fi watchdog",
-            command = "old=$(cat $WATCHDOG_PID_PATH 2>/dev/null); " +
+            command = "old=$(cat ${watchdogPidFile.absolutePath} 2>/dev/null); " +
                 "[ -n \"\$old\" ] && kill \"\$old\" 2>/dev/null; " +
-                "rm -f $WATCHDOG_PID_PATH; " +
-                "setsid $APP_TMP/owly-watchdog.sh $pid >/dev/null 2>&1 < /dev/null & " +
+                "rm -f ${watchdogPidFile.absolutePath}; " +
+                "setsid '${watchdogScript.absolutePath}' $pid >/dev/null 2>&1 < /dev/null & " +
                 "i=0; while [ \$i -lt 20 ]; do " +
-                "p=\$(cat $WATCHDOG_PID_PATH 2>/dev/null); " +
+                "p=\$(cat ${watchdogPidFile.absolutePath} 2>/dev/null); " +
                 "if [ -n \"\$p\" ] && kill -0 \"\$p\" 2>/dev/null; then " +
                 "echo \"watchdog_pid=\$p\"; exit 0; fi; " +
                 "sleep 0.1; i=\$((i+1)); done; " +
@@ -4208,7 +4249,7 @@ class CrossPairController(private val context: Context) {
     private fun restoreWifiOnCloseBlocking() {
         if (kernel.state != MonitorState.MONITOR) return
         try {
-            ProcessBuilder("su", "-c", "$APP_TMP/owly-mode.sh exit")
+            ProcessBuilder("su", "-c", "'${modeScript.absolutePath}' exit")
                 .redirectErrorStream(true)
                 .start()
                 .waitFor(8, TimeUnit.SECONDS)

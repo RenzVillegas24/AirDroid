@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -23,7 +24,7 @@ class BootReceiver : BroadcastReceiver() {
                 // KernelSU may not expose `su` yet when BOOT_COMPLETED lands.
                 var present = false
                 for (attempt in 1..FLAG_ATTEMPTS) {
-                    present = transferFlagPresent()
+                    present = transferFlagPresent(context)
                     if (present) break
                     Thread.sleep(FLAG_RETRY_MS)
                 }
@@ -32,7 +33,7 @@ class BootReceiver : BroadcastReceiver() {
                     // One shot. The flag is consumed even if the switch fails,
                     // otherwise every later reboot would enter Transfer mode
                     // without anyone asking for it.
-                    transferFlagClear()
+                    transferFlagClear(context)
                     Log.i("CrossPairLog", "boot: flag cleared, starting service")
                     CrossPairService.startBootEnter(context)
                 }
@@ -44,13 +45,16 @@ class BootReceiver : BroadcastReceiver() {
         }.start()
     }
 
-    /** Reads /data/adb/owly-transfer-mode through root. */
-    private fun transferFlagPresent(): Boolean = rootTest("test -e /data/adb/owly-transfer-mode")
+    /** Reads the one-shot boot-enter flag in the app files through root. */
+    private fun transferFlagPresent(context: Context): Boolean =
+        rootTest("test -e '${flagFile(context).absolutePath}'")
 
     /** Removes the one-shot flag; harmless when it is already gone. */
-    private fun transferFlagClear() {
-        rootTest("rm -f /data/adb/owly-transfer-mode")
+    private fun transferFlagClear(context: Context) {
+        rootTest("rm -f '${flagFile(context).absolutePath}'")
     }
+
+    private fun flagFile(context: Context): File = File(context.filesDir, "owly/boot-enter")
 
     private fun rootTest(script: String): Boolean {
         return try {

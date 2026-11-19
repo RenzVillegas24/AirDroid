@@ -5050,6 +5050,8 @@ private fun SettingsScreen(controller: CrossPairController) {
     var visibleDuringTransfer by remember { mutableStateOf(controller.settings.visibleDuringTransfer) }
     var pendingChannel by remember { mutableStateOf<Int?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
+    var showRemoveDialog by remember { mutableStateOf(false) }
+    val settingsScope = rememberCoroutineScope()
     var updateCheckPending by remember { mutableStateOf(false) }
     val updateAvailable = controller.updateState is UpdateState.Available
     val dialogRelease = when (val state = controller.updateState) {
@@ -5644,6 +5646,18 @@ private fun SettingsScreen(controller: CrossPairController) {
                 )
             }
         }
+        item { SectionLabel("REMOVE") }
+        item {
+            SettingsListGroup {
+                SettingsListItem(
+                    icon = R.drawable.ic_delete,
+                    headline = "Remove CrossPair",
+                    supporting = "Stops Transfer mode, deletes the app and its private files. " +
+                        "Received files stay in Download/CrossPair.",
+                    onClick = { showRemoveDialog = true },
+                )
+            }
+        }
         item { SectionLabel("ABOUT") }
         item {
             SettingsListGroup {
@@ -5674,6 +5688,33 @@ private fun SettingsScreen(controller: CrossPairController) {
                 )
             }
         }
+    }
+
+    if (showRemoveDialog) {
+        AlertDialog(
+            onDismissRequest = { showRemoveDialog = false },
+            title = { Text("Remove CrossPair?") },
+            text = {
+                Text(
+                    "Transfer mode is stopped and Wi-Fi restored first. The app, its " +
+                        "scripts and its AirDrop identity are deleted. Received files in " +
+                        "Download/CrossPair are kept.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRemoveDialog = false
+                        settingsScope.launch { controller.uninstallSelf() }
+                    },
+                ) {
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRemoveDialog = false }) { Text("Cancel") }
+            },
+        )
     }
 
     if (showUpdateDialog && dialogRelease != null) {
@@ -5779,14 +5820,14 @@ private fun UpdateAvailableDialog(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = if (notes.isBlank()) {
-                        "No release notes were provided for this build."
-                    } else {
-                        notes
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (notes.isBlank()) {
+                    Text(
+                        text = "No release notes were provided for this build.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    MarkdownText(notes)
+                }
             }
         },
         confirmButton = {
