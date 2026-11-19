@@ -5,6 +5,8 @@ import android.os.SystemClock
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.system.Os
 import android.util.Log
@@ -1021,12 +1023,107 @@ class AirDroidController(private val context: Context) {
         return File(dir, name)
     }
 
+    /**
+     * A picker result as a real filesystem path, when the provider exposes one.
+     *
+     * Nothing here is required for correctness: an unresolved URI falls back to
+     * the cache copy. It only avoids copying files that the root helper can
+     * already read, which is what makes adding a 1 GB file instant.
+     */
+    private fun resolveDirectPath(uri: Uri): String? {
+        if (uri.scheme == "file") return uri.path
+        if (uri.scheme != "content") return null
+        return try {
+            when (uri.authority) {
+                "com.android.externalstorage.documents" -> {
+                    val parts = DocumentsContract.getDocumentId(uri).split(":", limit = 2)
+                    if (parts.size != 2) return null
+                    val volume = if (parts[0].equals("primary", ignoreCase = true)) {
+                        "emulated/0"
+                    } else {
+                        parts[0]
+                    }
+                    "/storage/$volume/${parts[1]}"
+                }
+                "com.android.providers.downloads.documents" -> {
+                    val id = DocumentsContract.getDocumentId(uri)
+                    if (id.startsWith("raw:")) {
+                        id.removePrefix("raw:")
+                    } else {
+                        queryMediaPath(MediaStore.Files.getContentUri("external"), id.substringAfterLast(':'))
+                    }
+                }
+                "com.android.providers.media.documents" -> {
+                    val id = DocumentsContract.getDocumentId(uri)
+                    val type = id.substringBefore(':')
+                    val fileId = id.substringAfter(':')
+                    val base = when (type) {
+                        "image" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                        "video" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                        "audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                        else -> return null
+                    }
+                    queryMediaPath(base, fileId)
+                }
+                "media" -> queryMediaPath(
+                    MediaStore.Files.getContentUri("external"),
+                    uri.lastPathSegment ?: return null,
+                )
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun queryMediaPath(base: Uri, id: String): String? = try {
+        context.contentResolver.query(
+            base,
+            arrayOf(MediaStore.MediaColumns.DATA),
+            "_id=?",
+            arrayOf(id),
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Whether the root helper can open [path]; checked before skipping the copy. */
+    private fun rootCanRead(path: String): Boolean = try {
+        val quoted = "'" + path.replace("'", "'\\''") + "'"
+        val process = ProcessBuilder("su", "-c", "test -r $quoted")
+            .redirectErrorStream(true)
+            .start()
+        if (process.waitFor(3, TimeUnit.SECONDS)) {
+            process.exitValue() == 0
+        } else {
+            process.destroyForcibly()
+            false
+        }
+    } catch (_: Exception) {
+        false
+    }
+
     /** Copies a picker result into the outgoing cache and returns (file, name). */
     suspend fun stageFile(uri: Uri): Pair<File, String>? = withContext(Dispatchers.IO) {
         try {
             val displayName = queryDisplayName(uri) ?: "airdrop-file"
             val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
             Log.i("AirDroidSend", "stageFile display=$displayName clean=$cleanName uri=$uri")
+            // Prefer the provider's own file when the helper can read it: no
+            // copy, so a 1 GB pick is added in milliseconds instead of a
+            // minute of writing.
+            val direct = resolveDirectPath(uri)
+            if (direct != null) {
+                val file = File(direct)
+                if (file.isFile && file.length() > 0 && rootCanRead(direct)) {
+                    Log.i("AirDroidSend", "stageFile direct=$direct (no copy)")
+                    return@withContext file to cleanName
+                }
+            }
+            Log.i("AirDroidSend", "stageFile copying uri=$uri")
             val out = outgoingStagingFile(cleanName)
             val total = querySize(uri)
             context.contentResolver.openInputStream(uri)?.use { input ->

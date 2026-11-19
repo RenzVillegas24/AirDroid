@@ -142,9 +142,17 @@ The UI now reports it: `staging`, `stagingLabel` and `stagingProgress` drive an
 in the peer sheet. The copy reads in 1 MiB chunks and only updates the bar when
 the provider reports a size.
 
-A later change can remove the copy for providers that expose a real path, or
-stream the URI into the helper's stdin; both change the send path, so they are
-out of scope for this fix.
+The copy is skipped when the provider exposes a real path the root helper can
+read: `file://`, external-storage document ids (`primary:Download/x`), the
+Downloads provider's `raw:` ids, and MediaStore ids whose `_data` column is
+still populated. `stageFile` checks the path with `su -c test -r` once and
+falls back to the cache copy if the check fails, so nothing depends on the
+resolution succeeding. Logs say which path was taken:
+
+```
+stageFile direct=/storage/emulated/0/Download/movie.mp4 (no copy)
+stageFile copying uri=content://…
+```
 
 ### 7. Peer order was rebuilt on every update
 
