@@ -22,6 +22,9 @@ AirDrop-capable kernel, and this release only fixes the app.
   stayed in the nearby list after its service was withdrawn.
 - **Peer cards swapped places while signal strength moved.** The list was
   rebuilt on every rssi update and sorted by rssi.
+- **The nearby row was cut at the screen margin** while the empty card drifted
+  off-centre. The row now owns the full width with its own 20 dp content
+  padding, and the other list items carry the margin themselves.
 - **A device could appear before its name did.** The generic "iPhone" label
   stood in for a UUID; the card now shows a loading placeholder until the real
   name arrives.

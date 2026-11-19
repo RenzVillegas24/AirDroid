@@ -1030,24 +1030,24 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 160.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (!controller.kernel.monitorReady) {
             item(key = "kernel-banner") {
-                KernelBanner(controller, Modifier.animateItem())
+                KernelBanner(controller, Modifier.animateItem().padding(horizontal = 20.dp))
             }
         }
         updateRelease?.let { release ->
             item(key = "update-banner") {
-                UpdateBanner(controller, release, Modifier.animateItem())
+                UpdateBanner(controller, release, Modifier.animateItem().padding(horizontal = 20.dp))
             }
         }
         // Peers can only be discovered in monitor mode, so hide the section in Wi-Fi mode.
         // Keyed + animateItem: it fades out and everything below slides up smoothly.
         if (controller.kernel.state != MonitorState.STOCK) {
             item(key = "nearby-label") {
-                SectionLabel("NEARBY AIRDROP", Modifier.animateItem())
+                SectionLabel("NEARBY AIRDROP", Modifier.animateItem().padding(horizontal = 20.dp))
             }
             item(key = "nearby-section") {
                 NearbyPeersSection(
@@ -1062,7 +1062,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
             }
         }
         item(key = "home-tabs") {
-            Box(Modifier.animateItem()) {
+            Box(Modifier.animateItem().padding(horizontal = 20.dp)) {
                 HomeTabs(
                     selected = homeTab,
                     sentCount = sentActive.size + sentDone.size,
@@ -1074,9 +1074,9 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         when (homeTab) {
             HomeTab.SENT -> {
                 if (sentActive.isNotEmpty()) {
-                    item(key = "sending-label") { SectionLabel("SENDING", Modifier.animateItem()) }
+                    item(key = "sending-label") { SectionLabel("SENDING", Modifier.animateItem().padding(horizontal = 20.dp)) }
                     items(sentActive, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) {
+                        Box(Modifier.animateItem().padding(horizontal = 20.dp)) {
                             TransferCard(
                                 transfer = transfer,
                                 localName = myName,
@@ -1091,9 +1091,9 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                     }
                 }
                 if (sentDone.isNotEmpty()) {
-                    item(key = "sent-label") { SectionLabel("SENT", Modifier.animateItem()) }
+                    item(key = "sent-label") { SectionLabel("SENT", Modifier.animateItem().padding(horizontal = 20.dp)) }
                     items(sentDone, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) {
+                        Box(Modifier.animateItem().padding(horizontal = 20.dp)) {
                             TransferCard(
                                 transfer = transfer,
                                 localName = myName,
@@ -1108,7 +1108,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 }
                 if (sentActive.isEmpty() && sentDone.isEmpty()) {
                     item(key = "sent-empty") {
-                        Box(Modifier.animateItem()) {
+                        Box(Modifier.animateItem().padding(horizontal = 20.dp)) {
                             EmptyTransfersCard(
                                 title = "Nothing sent yet",
                                 subtitle = "Tap a nearby phone to send a file.",
@@ -1120,13 +1120,13 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
             HomeTab.RECEIVED -> {
                 if (controller.receiverRunning && !controller.receiveEnabled) {
                     item(key = "receiver-paused") {
-                        ReceiverPausedRow(controller, scope, Modifier.animateItem())
+                        ReceiverPausedRow(controller, scope, Modifier.animateItem().padding(horizontal = 20.dp))
                     }
                 }
                 if (receivedActive.isNotEmpty()) {
-                    item(key = "receiving-label") { SectionLabel("RECEIVING", Modifier.animateItem()) }
+                    item(key = "receiving-label") { SectionLabel("RECEIVING", Modifier.animateItem().padding(horizontal = 20.dp)) }
                     items(receivedActive, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) {
+                        Box(Modifier.animateItem().padding(horizontal = 20.dp)) {
                             val activeFile = transfer.files.firstOrNull {
                                 it.status.isActive
                             }
@@ -1157,9 +1157,9 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                     }
                 }
                 if (receivedDone.isNotEmpty()) {
-                    item(key = "received-label") { SectionLabel("RECEIVED", Modifier.animateItem()) }
+                    item(key = "received-label") { SectionLabel("RECEIVED", Modifier.animateItem().padding(horizontal = 20.dp)) }
                     items(receivedDone, key = { it.id }) { transfer ->
-                        Box(Modifier.animateItem()) {
+                        Box(Modifier.animateItem().padding(horizontal = 20.dp)) {
                             val paths = transfer.files.mapNotNull { it.localPath }
                             TransferCard(
                                 transfer = transfer,
@@ -1199,7 +1199,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
                 }
                 if (receivedActive.isEmpty() && receivedDone.isEmpty()) {
                     item(key = "received-empty") {
-                        Box(Modifier.animateItem()) { EmptyReceivedCard() }
+                        Box(Modifier.animateItem().padding(horizontal = 20.dp)) { EmptyReceivedCard() }
                     }
                 }
             }
@@ -3888,12 +3888,12 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (!controller.kernel.monitorReady) {
             item(key = "kernel-banner") {
-                KernelBanner(controller, Modifier.animateItem())
+                KernelBanner(controller, Modifier.animateItem().padding(horizontal = 20.dp))
             }
         }
         if (controller.kernel.state != MonitorState.STOCK) {
@@ -3909,14 +3909,16 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
                 )
             }
         }
-        item(key = "send-label") { SectionLabel("SEND", Modifier.animateItem()) }
+        item(key = "send-label") { SectionLabel("SEND", Modifier.animateItem().padding(horizontal = 20.dp)) }
         item(key = "send-card") {
-            SendCard(
-                controller = controller,
-                onChooseFile = { picker.launch(arrayOf("*/*")) },
-                onSend = { scope.launch { controller.sendPicked() } },
-                onCancelSend = { controller.cancelSend() },
-            )
+            Box(Modifier.animateItem().padding(horizontal = 20.dp)) {
+                SendCard(
+                    controller = controller,
+                    onChooseFile = { picker.launch(arrayOf("*/*")) },
+                    onSend = { scope.launch { controller.sendPicked() } },
+                    onCancelSend = { controller.cancelSend() },
+                )
+            }
         }
     }
 }
@@ -3949,12 +3951,12 @@ private fun NearbyPeersSection(
         label = "nearbyPeersSection",
     ) { empty ->
         if (empty) {
-            EmptyPeopleCard()
+            EmptyPeopleCard(Modifier.padding(horizontal = 20.dp))
         } else {
             val shown = if (peers.isNotEmpty()) peers else lastPeers[0]
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(vertical = 2.dp),
+                contentPadding = PaddingValues(start = 20.dp, top = 2.dp, end = 20.dp, bottom = 2.dp),
             ) {
                 items(shown, key = { it.mac }) { peer ->
                     val itemModifier = Modifier.animateItem(
@@ -4200,9 +4202,9 @@ private fun SearchingSignalIcon(
 }
 
 @Composable
-private fun EmptyPeopleCard() {
+private fun EmptyPeopleCard(modifier: Modifier = Modifier) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
