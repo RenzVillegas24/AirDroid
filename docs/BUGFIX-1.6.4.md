@@ -18,8 +18,8 @@ AirDrop-capable kernel, and this release only fixes the app.
 - **Stale investigation tools were used silently.** The app depended on files
   left in `/data/local/tmp/owly-app/` by the investigation branches.
 - **A phone that turned AirDrop off stayed listed as ready.** A learned name was
-  treated as proof of readiness, so the peer kept showing as a send target
-  after its service was withdrawn.
+  treated as proof of readiness, so the peer kept showing as a send target and
+  stayed in the nearby list after its service was withdrawn.
 
 No name, MAC, channel or peer table is hardcoded. Names come from the AirDrop
 announcement, channels from the configured channel, MACs from the interfaces.
@@ -108,8 +108,10 @@ purely a label.
   state when neither changed; `AWDL name:` only updates the name.
 - Pending jobs are cancelled on `PEER_GONE`, scan reset and transfer recovery.
 
-A peer that leaves AWDL entirely is still removed by `PEER_GONE`; a peer that
-only withdraws AirDrop stays listed with `airdrop=NOT_READY`.
+The nearby list follows the same rule: it shows AirDrop-ready peers instead of
+"anything with a name", so a phone that turns AirDrop off disappears until its
+service is announced again. `PEER_GONE` still removes a peer that leaves AWDL
+entirely.
 
 ### 6. Investigation boot hooks (device state, not app code)
 

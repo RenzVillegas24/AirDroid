@@ -999,7 +999,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
         if (controller.receiveTransferring) homeTab = HomeTab.RECEIVED
     }
     val myName = controller.settings.deviceName.ifBlank { Build.MODEL }
-    val peers = controller.peers.filter { it.name.isNotBlank() || it.airdropReady }.sortedWith(
+    val peers = controller.peers.filter { it.airdropReady }.sortedWith(
         compareByDescending<Peer> { controller.isPinned(it.mac) }
             .thenByDescending { it.rssi },
     )
@@ -3898,7 +3898,7 @@ private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
         if (controller.kernel.state != MonitorState.STOCK) {
             item(key = "nearby-section") {
                 NearbyPeersSection(
-                    peers = controller.peers.filter { it.name.isNotBlank() || it.airdropReady },
+                    peers = controller.peers.filter { it.airdropReady },
                     selectedMac = controller.selectedMac,
                     isPinned = { false },
                     onPeerClick = { controller.selectPeer(it) },

@@ -1950,7 +1950,7 @@ class AirDroidController(private val context: Context) {
                 instance.isNotBlank() && airdropInstances[instance] == null
             airdropSeenMacs.add(mac)
             airdropLostJobs.remove(mac)?.cancel()
-            if (firstInstance) append("AirDrop service FOUND")
+            if (firstInstance) append("AirDrop service FOUND $mac")
             if (instance.isNotBlank()) airdropInstances[instance] = mac
             if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                 // LOST and FOUND can arrive in quick succession when AirDrop is
@@ -1984,7 +1984,7 @@ class AirDroidController(private val context: Context) {
             val mac = airdropInstances.remove(instance) ?: return
             val stillAdvertised = airdropInstances.values.any { it.equals(mac, ignoreCase = true) }
             if (!stillAdvertised) {
-                append("AirDrop service LOST")
+                append("AirDrop service LOST $mac")
                 airdropFoundJobs.remove(mac)?.cancel()
                 // Not advertised any more: a later PEER line must not turn the
                 // peer ready through `seen` while the debounce is running.
