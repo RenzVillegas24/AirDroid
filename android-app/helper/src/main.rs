@@ -12,7 +12,7 @@ use std::error::Error;
 use std::io::{BufRead, BufReader};
 use std::net::SocketAddrV6;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -41,7 +41,6 @@ const AWDL_IFACE: &str = "awdl0";
 const DEFAULT_CHANNEL: u8 = 44;
 const AIRDROP_PORT: u16 = 8770;
 const RECEIVER_PORT: u16 = 8771;
-const SET_CHANNEL: &str = "/data/local/tmp/owly-app/owly-nl80211-set-channel";
 const STATE_DIR: &str = "/data/local/tmp/owly-app/state";
 
 #[tokio::main]
@@ -92,207 +91,6 @@ fn channel_freq(channel: u8) -> Option<&'static str> {
         149 => Some("5745"),
         _ => None,
     }
-}
-
-/// The monitor name sniffer: a separate `owly-monitor-full` process whose
-/// output is parsed for AWDL `dnm=` display names.
-///
-/// It is stopped during a transfer so it doesn't compete with the upload for
-/// CPU, and started again afterwards. Names already learned stay in the shared
-/// map, so stopping it loses nothing that was already known.
-struct NameSniffer {
-    names: Arc<Mutex<HashMap<String, String>>>,
-    child: Option<Child>,
-    paused: bool,
-}
-
-impl NameSniffer {
-    fn start(names: Arc<Mutex<HashMap<String, String>>>) -> Self {
-        let mut sniffer = NameSniffer {
-            names,
-            child: None,
-            paused: false,
-        };
-        sniffer.spawn();
-        sniffer
-    }
-
-    fn spawn(&mut self) {
-        let Ok(mut child) = Command::new("/data/local/tmp/owly-app/owly-monitor-full")
-            .arg(MONITOR)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
-            return;
-        };
-        let Some(stdout) = child.stdout.take() else {
-            return;
-        };
-        let names = Arc::clone(&self.names);
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().flatten() {
-                let Some(mac) = line.split("sa=").nth(1) else { continue };
-                let mac = mac.split_whitespace().next().unwrap_or("").to_string();
-                let Some(hex) = line.split("bytes=").nth(1) else { continue };
-                let hex = hex.split_whitespace().next().unwrap_or("");
-                let Some(bytes) = decode_hex(hex) else { continue };
-                if let Some(name) = find_dnm(&bytes) {
-                    let mut map = names.lock().unwrap();
-                    if map.get(&mac) != Some(&name) {
-                        println!("AWDL name: {mac} = {name}");
-                        map.insert(mac, name);
-                    }
-                }
-            }
-        });
-        self.child = Some(child);
-    }
-
-    /// Stops the sniffer process while `paused`, restarts it otherwise.
-    /// Idempotent, so it is safe to call after every event.
-    fn set_paused(&mut self, paused: bool) {
-        if self.paused == paused {
-            return;
-        }
-        self.paused = paused;
-        if paused {
-            self.stop();
-        } else {
-            self.spawn();
-        }
-    }
-
-    fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-impl Drop for NameSniffer {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 { return None; }
-    let mut out = Vec::with_capacity(text.len() / 2);
-    let b = text.as_bytes();
-    for i in (0..b.len()).step_by(2) {
-        let hi = (b[i] as char).to_digit(16)?;
-        let lo = (b[i + 1] as char).to_digit(16)?;
-        out.push(((hi << 4) | lo) as u8);
-    }
-    Some(out)
-}
-
-fn find_dnm(bytes: &[u8]) -> Option<String> {
-    if let Some(name) = find_dnm_in_awdl(bytes) {
-        return Some(name);
-    }
-    // Fallback when the monitor line contains only a raw TXT fragment.
-    let needle = b"dnm=";
-    for start in 0..bytes.len().saturating_sub(needle.len()) {
-        if &bytes[start..start + needle.len()] != needle { continue; }
-        let value_start = start + needle.len();
-        let declared_end = start
-            .checked_sub(1)
-            .and_then(|i| bytes.get(i))
-            .map(|len| start.saturating_add(*len as usize))
-            .unwrap_or(value_start);
-        let end = declared_end.max(value_start).min(bytes.len());
-        if end > value_start {
-            let name = String::from_utf8_lossy(&bytes[value_start..end])
-                .trim_end_matches(|c: char| c == '\0' || c == 'V')
-                .trim()
-                .to_string();
-            if name.len() >= 3 {
-                return Some(name);
-            }
-        }
-    }
-    None
-}
-
-/// The iPhone's display name is a DNS-SD TXT string (`dnm=...`) inside the
-/// AWDL Service Response TLV (type 2). Follow the same record layout as
-/// Owly's `omdrop-awdl/awdl-af-parse.py`; do not scan printable bytes.
-fn find_dnm_in_awdl(bytes: &[u8]) -> Option<String> {
-    let category = [0x7f, 0x00, 0x17, 0xf2];
-    let start = bytes.windows(4).position(|w| w == category)?;
-    let body = &bytes[start..];
-    if body.len() < 16 || body[4] != 0x08 {
-        return None;
-    }
-    let mut i = 16usize;
-    while i + 3 <= body.len() {
-        let kind = body[i];
-        let len = u16::from_le_bytes([body[i + 1], body[i + 2]]) as usize;
-        let value_start = i + 3;
-        let value_end = value_start + len;
-        if value_end > body.len() {
-            break;
-        }
-        if kind == 2 {
-            if let Some(name) = dnm_from_service_response(&body[value_start..value_end]) {
-                return Some(name);
-            }
-        }
-        i = value_end;
-    }
-    None
-}
-
-fn dnm_from_service_response(value: &[u8]) -> Option<String> {
-    let mut pos = 0usize;
-    while pos + 5 <= value.len() {
-        let name_len = u16::from_le_bytes([value[pos], value[pos + 1]]) as usize;
-        if name_len < 3 {
-            break;
-        }
-        // name_len counts the type byte, matching Owly's awdl-af-parse.py.
-        let type_pos = pos + 2 + name_len - 1;
-        if type_pos + 3 > value.len() {
-            break;
-        }
-        let rtype = value[type_pos];
-        let data_len = u16::from_be_bytes([value[type_pos + 1], value[type_pos + 2]]) as usize;
-        let data_start = type_pos + 5;
-        let data_end = data_start + data_len;
-        if data_end > value.len() {
-            break;
-        }
-        if rtype == 16 {
-            if let Some(name) = dnm_from_txt(&value[data_start..data_end]) {
-                return Some(name);
-            }
-        }
-        pos = data_end;
-    }
-    None
-}
-
-fn dnm_from_txt(txt: &[u8]) -> Option<String> {
-    let mut i = 0usize;
-    while i < txt.len() {
-        let len = txt[i] as usize;
-        i += 1;
-        if i + len > txt.len() {
-            break;
-        }
-        let string = &txt[i..i + len];
-        i += len;
-        if string.starts_with(b"dnm=") {
-            let name = String::from_utf8_lossy(&string[4..]).trim().to_string();
-            if !name.is_empty() {
-                return Some(name);
-            }
-        }
-    }
-    None
 }
 
 async fn read_hidden_mac() -> Result<MacAddr, Box<dyn Error>> {
@@ -346,6 +144,49 @@ async fn read_hidden_mac() -> Result<MacAddr, Box<dyn Error>> {
 
 fn sender_id(addr: MacAddr) -> String {
     addr.0.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The SRV host label for `name`, DNS-safe: lowercased letters, digits and
+/// single hyphens, at most 63 bytes. Falls back to the service ID so the host
+/// is always derived, never a fixed string.
+fn host_label(name: &str, instance: &str) -> String {
+    let mut label: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    while label.contains("--") {
+        label = label.replace("--", "-");
+    }
+    let label = label.trim_matches('-');
+    if label.is_empty() {
+        format!("owly-{instance}")
+    } else {
+        label.chars().take(63).collect()
+    }
+}
+
+/// Keeps the AirDrop name a receiver announces (`dnm=` in its mDNS TXT), keyed
+/// by its AWDL address. That name is what the AirDrop sheet shows; iOS puts a
+/// UUID in the SRV host name, so the host name must not be used.
+fn remember_service_name(names: &Arc<Mutex<HashMap<String, String>>>, found: &Found) {
+    if found.name.is_empty() {
+        return;
+    }
+    let Some(mac) = MacAddr::from_link_local(found.addr) else {
+        return;
+    };
+    let key = mac.to_string();
+    let mut map = names.lock().unwrap();
+    if map.get(&key) != Some(&found.name) {
+        println!("AWDL name: {key} = {}", found.name);
+        map.insert(key, found.name.clone());
+    }
 }
 
 fn print_peers(peers: &[PeerInfo], names: &HashMap<String, String>) {
@@ -490,12 +331,11 @@ const SEND_DISCOVER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Pauses or resumes background discovery for a transfer. Prints only on a
 /// change, so the UI can show "discovery paused" without log spam.
-fn update_transfer_pause(sniffer: &mut NameSniffer, paused: &mut bool, now: bool) {
+fn update_transfer_pause(paused: &mut bool, now: bool) {
     if *paused == now {
         return;
     }
     *paused = now;
-    sniffer.set_paused(now);
     println!("DISCOVERY_PAUSED paused={now}");
 }
 
@@ -522,13 +362,30 @@ fn tx_no_ack() -> bool {
     }
 }
 
+/// Tunes the monitor interface to `channel`.
+///
+/// The channel is the difference between hearing nothing and hearing the
+/// iPhone: a monitor vdev keeps whatever channel the driver came up on. Tune
+/// through nl80211 in the helper itself, so a fresh install needs nothing
+/// outside the APK.
 fn set_radio_channel(channel: u8) {
-    if !std::path::Path::new(SET_CHANNEL).exists() {
+    let Some(freq) = channel_freq(channel) else {
+        println!("RADIO_CHANNEL channel={channel} unsupported");
         return;
+    };
+    match set_channel_native(freq) {
+        Ok(()) => println!("RADIO_CHANNEL channel={channel} freq={freq} via=nl80211"),
+        Err(e) => println!("RADIO_CHANNEL channel={channel} SET_FAILED {e}"),
     }
-    if let Some(freq) = channel_freq(channel) {
-        let _ = Command::new(SET_CHANNEL).args([MONITOR, freq]).status();
-    }
+}
+
+fn set_channel_native(freq: &str) -> Result<(), Box<dyn Error>> {
+    let index: u32 = std::fs::read_to_string(format!("/sys/class/net/{MONITOR}/ifindex"))?
+        .trim()
+        .parse()?;
+    let freq: u32 = freq.parse()?;
+    owly_radio::nl80211::Nl80211::open()?.set_freq(index, freq)?;
+    Ok(())
 }
 
 /// Widen the kernel TCP windows for the AWDL transfer. Android's Wi-Fi HAL
@@ -601,7 +458,6 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
 async fn scan(seconds: u64, channel: u8) -> Result<(), Box<dyn Error>> {
     let (native, index, _addr, mut peers_rx) = start_radio(channel).await?;
     let names = Arc::new(Mutex::new(HashMap::new()));
-    let mut sniffer = NameSniffer::start(names.clone());
     let mdns = Mdns::new(index);
     let mut browse = mdns.browse().await?;
     println!("SCAN_START seconds={seconds} channel={channel}");
@@ -609,10 +465,13 @@ async fn scan(seconds: u64, channel: u8) -> Result<(), Box<dyn Error>> {
     loop {
         tokio::select! {
             event = browse.events.recv() => match event {
-                Some(BrowseEvent::Found(found)) => println!(
-                    "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
-                    found.instance, found.host, found.addr, found.port, found.flags
-                ),
+                Some(BrowseEvent::Found(found)) => {
+                    remember_service_name(&names, &found);
+                    println!(
+                        "FOUND instance={:?} name={:?} host={:?} addr={} port={} flags=0x{:x}",
+                        found.instance, found.name, found.host, found.addr, found.port, found.flags
+                    );
+                }
                 Some(BrowseEvent::Lost(instance)) => println!("LOST instance={instance:?}"),
                 None => break,
             },
@@ -630,7 +489,6 @@ async fn scan(seconds: u64, channel: u8) -> Result<(), Box<dyn Error>> {
     print_peers(&peers, &names);
     println!("PEER_COUNT {}", peers.len());
     drop(browse);
-    sniffer.stop();
     native.stop();
     Ok(())
 }
@@ -642,7 +500,6 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
     rustls::crypto::ring::default_provider().install_default().ok();
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
     let names = Arc::new(Mutex::new(HashMap::new()));
-    let mut sniffer = NameSniffer::start(names.clone());
     let mdns = Mdns::new(index);
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
@@ -683,7 +540,6 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
         }
         Err(e) => println!("SEND_FILE_ERR source_total={source_total} id=send reason={e}"),
     }
-    sniffer.stop();
     native.stop();
     result.map(|_| ())
 }
@@ -780,6 +636,7 @@ async fn find_and_send(
             loop {
                 match browse.events.try_recv() {
                     Ok(BrowseEvent::Found(found)) => {
+                        remember_service_name(names, &found);
                         println!(
                             "mDNS FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
                             found.instance, found.host, found.addr, found.port, found.flags
@@ -881,6 +738,7 @@ async fn find_and_send(
             tokio::select! {
                 event = browse_event => match event {
                     Some(BrowseEvent::Found(found)) => {
+                        remember_service_name(names, &found);
                         if mdns_matches_target(&found, target_mac) {
                             mdns_found = Some(found);
                         }
@@ -997,7 +855,6 @@ async fn session(
     std::fs::create_dir_all(STATE_DIR)?;
     let (native, index, addr, mut peers_rx) = start_radio(channel).await?;
     let names = Arc::new(Mutex::new(HashMap::new()));
-    let mut sniffer = NameSniffer::start(names.clone());
     let mdns = Mdns::new(index).with_burst(Some(Burst {
         count: 64,
         interval: Duration::from_micros(16_400),
@@ -1019,7 +876,8 @@ async fn session(
     let receiver_control = receiver.control();
     let service = Service {
         instance: sender_id(addr),
-        host: "airdroid-k20".into(),
+        name: name.clone(),
+        host: host_label(&name, &sender_id(addr)),
         port: actual_port,
         addr: local,
         flags: RECEIVER_FLAGS,
@@ -1180,6 +1038,7 @@ async fn session(
                                 event = browse.events.recv() => match event {
                                     Some(BrowseEvent::Found(found)) => {
                                         mdns_cache.lock().unwrap().found(&found);
+                                        remember_service_name(&names, &found);
                                         println!(
                                             "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
                                             found.instance, found.host, found.addr, found.port, found.flags
@@ -1385,6 +1244,7 @@ async fn session(
                 None => break,
                 Some(BrowseEvent::Found(found)) => {
                     mdns_cache.lock().unwrap().found(&found);
+                    remember_service_name(&names, &found);
                     println!(
                         "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
                         found.instance, found.host, found.addr, found.port, found.flags
@@ -1436,11 +1296,10 @@ async fn session(
             }
         }
         // The transfer state is send-task activity plus accepted uploads.
-        // Changing it stops or restarts the name sniffer and is announced so
-        // the UI can show that discovery is paused.
+        // It is announced so the UI can show that discovery is paused.
         let transfer_active = send_active.load(Ordering::SeqCst) || !active_receives.is_empty();
         let paused_now = pause_discovery_on_transfer && transfer_active;
-        update_transfer_pause(&mut sniffer, &mut transfer_paused, paused_now);
+        update_transfer_pause(&mut transfer_paused, paused_now);
         let should_advertise = visible_during_transfer || !transfer_active;
         if should_advertise && registration.is_none() {
             registration = Some(mdns.register(service.clone()).await?);
@@ -1451,7 +1310,6 @@ async fn session(
         }
     }
 
-    sniffer.stop();
     native.stop();
     println!("SESSION_STOPPED");
     Ok(())
@@ -1526,7 +1384,7 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
     let (native, index, addr, _peers_rx) = start_radio(channel).await?;
     let local = addr.link_local();
     let identity = Identity::load_or_generate(Path::new(STATE_DIR))?;
-    let mut config = ReceiverConfig::new(name);
+    let mut config = ReceiverConfig::new(name.clone());
     config.model_name = "Linux".into();
     config.ask_timeout = Duration::from_secs(60);
     let options = ReceiverOptions::new(config, dir.clone());
@@ -1540,7 +1398,8 @@ async fn receive(dir: PathBuf, port: u16, channel: u8, name: String) -> Result<(
     }));
     let service = Service {
         instance: sender_id(addr),
-        host: "airdroid-k20".into(),
+        name: name.clone(),
+        host: host_label(&name, &sender_id(addr)),
         port: actual.port(),
         addr: local,
         flags: RECEIVER_FLAGS,

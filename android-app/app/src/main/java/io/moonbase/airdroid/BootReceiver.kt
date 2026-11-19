@@ -20,8 +20,20 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                if (transferFlagPresent()) {
-                    Log.i("AirDroidLog", "boot: Transfer-mode flag present, starting service")
+                // KernelSU may not expose `su` yet when BOOT_COMPLETED lands.
+                var present = false
+                for (attempt in 1..FLAG_ATTEMPTS) {
+                    present = transferFlagPresent()
+                    if (present) break
+                    Thread.sleep(FLAG_RETRY_MS)
+                }
+                Log.i("AirDroidLog", "boot: Transfer-mode flag present=$present")
+                if (present) {
+                    // One shot. The flag is consumed even if the switch fails,
+                    // otherwise every later reboot would enter Transfer mode
+                    // without anyone asking for it.
+                    transferFlagClear()
+                    Log.i("AirDroidLog", "boot: flag cleared, starting service")
                     AirDroidService.startBootEnter(context)
                 }
             } catch (e: Exception) {
@@ -33,9 +45,16 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     /** Reads /data/adb/owly-transfer-mode through root. */
-    private fun transferFlagPresent(): Boolean {
+    private fun transferFlagPresent(): Boolean = rootTest("test -e /data/adb/owly-transfer-mode")
+
+    /** Removes the one-shot flag; harmless when it is already gone. */
+    private fun transferFlagClear() {
+        rootTest("rm -f /data/adb/owly-transfer-mode")
+    }
+
+    private fun rootTest(script: String): Boolean {
         return try {
-            val process = ProcessBuilder("su", "-c", "test -e /data/adb/owly-transfer-mode")
+            val process = ProcessBuilder("su", "-c", script)
                 .redirectErrorStream(true)
                 .start()
             if (process.waitFor(10, TimeUnit.SECONDS)) {
@@ -47,5 +66,10 @@ class BootReceiver : BroadcastReceiver() {
         } catch (_: Exception) {
             false
         }
+    }
+
+    private companion object {
+        const val FLAG_ATTEMPTS = 5
+        const val FLAG_RETRY_MS = 2_000L
     }
 }

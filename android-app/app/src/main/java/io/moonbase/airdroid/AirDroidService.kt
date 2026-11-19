@@ -71,6 +71,7 @@ class AirDroidService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i("AirDroidLog", "service action=${intent?.action ?: "null"} startId=$startId")
         when (intent?.action) {
             ACTION_STOP -> {
                 val controller = AirDroidControllerHolder.current
@@ -94,7 +95,7 @@ class AirDroidService : Service() {
                 if (controller == null) {
                     Log.w("AirDroidLog", "boot enter requested without a controller")
                 } else {
-                    serviceScope.launch { controller.enterTransferMode() }
+                    serviceScope.launch { controller.enterTransferMode(boot = true) }
                 }
                 return START_STICKY
             }

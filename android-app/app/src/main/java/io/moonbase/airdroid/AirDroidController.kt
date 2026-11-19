@@ -1,6 +1,7 @@
 package io.moonbase.airdroid
 
 import android.os.Process as AndroidProcess
+import android.os.SystemClock
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.net.Uri
@@ -234,6 +235,7 @@ class AirDroidController(private val context: Context) {
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
         private const val WATCHDOG_PID_PATH = "/data/local/tmp/owly-watchdog.pid"
         private const val MODE_SWITCH_TIMEOUT_MS = 60_000L
+        private const val BOOT_ENTER_WINDOW_MS = 120_000L
         private const val OWNER_WRITE_TIMEOUT_MS = 5_000L
         private const val WATCHDOG_TIMEOUT_MS = 10_000L
         private const val TIMEOUT_EXIT_CODE = 124
@@ -711,12 +713,11 @@ class AirDroidController(private val context: Context) {
         if (prepared) return
         prepareMutex.withLock {
             if (prepared) return
-            withContext(Dispatchers.IO) {
+            // The assets are copied first, with no root involved: `su` may not
+            // be granted yet at boot or after a reinstall, and failing the
+            // root pkill must not leave the previous install's helper staged.
+            val assetsCopied = withContext(Dispatchers.IO) {
                 try {
-                    ProcessBuilder("su", "-c", "pkill -x owly-k20-helper 2>/dev/null; pkill -x owly-monitor-full 2>/dev/null; sleep 1; true")
-                        .redirectErrorStream(true)
-                        .start()
-                        .waitFor()
                     binDir.mkdirs()
                     for (name in ASSETS) {
                         val out = File(binDir, name)
@@ -724,16 +725,39 @@ class AirDroidController(private val context: Context) {
                             FileOutputStream(out).use { output -> input.copyTo(output) }
                         }
                     }
+                    true
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         append("Asset install failed: ${e.message}")
                         status = "ROOT ERROR"
                     }
+                    false
+                }
+            }
+            if (!assetsCopied) return
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    ProcessBuilder(
+                        "su",
+                        "-c",
+                        "pkill -x owly-k20-helper 2>/dev/null; " +
+                            "pkill -x owly-monitor-full 2>/dev/null; sleep 1; true",
+                    )
+                        .redirectErrorStream(true)
+                        .start()
+                        .waitFor()
                 }
             }
             val rc = execRoot(
                 label = "install root tools",
-                command = "mkdir -p $APP_TMP; cp '${binDir.absolutePath}'/* $APP_TMP/; " +
+                // Keep only what the APK ships, plus the helper's own state,
+                // so a phone that once carried investigation binaries does not
+                // silently depend on them.
+                command = "mkdir -p $APP_TMP; " +
+                    "find $APP_TMP -mindepth 1 -maxdepth 1 " +
+                    "! -name state ! -name owly-mode.sh ! -name owly-watchdog.sh " +
+                    "! -name owly-k20-helper -exec rm -rf {} +; " +
+                    "cp '${binDir.absolutePath}'/* $APP_TMP/ || exit 1; " +
                     "chmod 755 $APP_TMP/*; ls -l $APP_TMP",
                 requirePrepared = false,
             )
@@ -1586,7 +1610,12 @@ class AirDroidController(private val context: Context) {
         }
     }
 
-    fun enterTransferMode(reboot: Boolean = false) {
+    fun enterTransferMode(reboot: Boolean = false, boot: Boolean = false) {
+        Log.i(
+            "AirDroidLog",
+            "enterTransferMode(reboot=$reboot boot=$boot) modeSwitching=$modeSwitching " +
+                "sending=$sending verifyingKernel=$verifyingKernel support=${kernel.support}",
+        )
         if (modeSwitching || sending) return
         scope.launch {
             modeSwitching = true
@@ -1596,6 +1625,21 @@ class AirDroidController(private val context: Context) {
             while (verifyingKernel && waited < 5_000) {
                 delay(100)
                 waited += 100
+            }
+            // A boot-enter that sat behind a slow `su` must not fire minutes
+            // later when the app is opened: it was a one-shot request for that
+            // boot only.
+            val uptime = SystemClock.elapsedRealtime()
+            if (boot && uptime > BOOT_ENTER_WINDOW_MS) {
+                modeSwitching = false
+                modeAction = null
+                status = if (kernel.monitorReady) "READY" else kernel.state.badge
+                append(
+                    "Boot Transfer mode skipped: ${uptime / 1000}s after boot " +
+                        "(limit ${BOOT_ENTER_WINDOW_MS / 1000}s).",
+                )
+                sendMessage = "Start Transfer mode from Settings."
+                return@launch
             }
             if (kernel.support == KernelSupport.MISSING) {
                 modeSwitching = false
@@ -1754,6 +1798,16 @@ class AirDroidController(private val context: Context) {
             if (rc == 0) {
                 refreshKernelStatus()
                 append("Wi-Fi mode: ${kernel.detail}")
+                // Leaving Transfer mode cancels any pending one-shot
+                // boot-enter, so the next reboot starts with normal Wi-Fi.
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        ProcessBuilder("su", "-c", "rm -f /data/adb/owly-transfer-mode")
+                            .redirectErrorStream(true)
+                            .start()
+                            .waitFor()
+                    }
+                }
             } else {
                 status = "TRANSFER"
                 sendMessage = "Could not restore Wi-Fi. Reboot to Wi-Fi mode."

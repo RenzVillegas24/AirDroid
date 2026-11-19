@@ -13,8 +13,8 @@ android {
         applicationId = "io.moonbase.airdroid"
         minSdk = 23
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.6.3"
+        versionCode = 13
+        versionName = "1.6.4"
     }
 
     buildFeatures {

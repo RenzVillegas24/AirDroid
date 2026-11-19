@@ -5671,7 +5671,7 @@ private fun PeerSheetPreview(itemCount: Int, menuExpanded: Boolean) {
             color = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
             PeerSheetContent(
-                peer = Peer("preview", "RenziPhone", 2, -36),
+                peer = Peer("preview", "iPhone", 2, -36),
                 channel = 149,
                 selectedItems = items,
                 pinned = false,
