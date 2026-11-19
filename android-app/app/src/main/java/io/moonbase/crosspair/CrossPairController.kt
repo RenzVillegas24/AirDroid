@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.os.Build
 import android.os.Process as AndroidProcess
@@ -97,7 +97,7 @@ data class StagingJob(
     val done: Boolean = false,
 )
 
-data class AirDroidSettings(
+data class CrossPairSettings(
     val channel: Int = 0,
     // V2 is the best wake arm for the K20/iPhone pair.
     val bleArm: Int = 1,
@@ -167,7 +167,7 @@ enum class MonitorState(val badge: String) {
  */
 enum class KernelSupport(val label: String) {
     SUPPORTED("CrossPair injection support verified"),
-    MISSING("No AirDroid injection support"),
+    MISSING("No CrossPair injection support"),
     UNKNOWN("Injection support not verified"),
 }
 
@@ -261,7 +261,7 @@ data class KernelStatus(
  * Compose observes the state properties directly; helper output is appended on
  * the main thread so the UI and logs stay consistent.
  */
-class AirDroidController(private val context: Context) {
+class CrossPairController(private val context: Context) {
     companion object {
         private const val APP_TMP = "/data/local/tmp/owly-app"
         const val RECEIVE_DIR = "/sdcard/Download/CrossPair"
@@ -293,7 +293,7 @@ class AirDroidController(private val context: Context) {
         )
     }
 
-    private val prefs = context.getSharedPreferences("airdroid", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("crosspair", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prepareMutex = Mutex()
     private val commandMutex = Mutex()
@@ -309,7 +309,7 @@ class AirDroidController(private val context: Context) {
     private var requestCounter = 0
     private var sendCancelled = false
     private var sendGeneration = 0
-    private val notifications = AirDroidNotifications(context)
+    private val notifications = CrossPairNotifications(context)
 
     var settings by mutableStateOf(loadSettings())
         private set
@@ -755,7 +755,7 @@ class AirDroidController(private val context: Context) {
         }
     }
 
-    private fun loadSettings(): AirDroidSettings = AirDroidSettings(
+    private fun loadSettings(): CrossPairSettings = CrossPairSettings(
         channel = prefs.getInt("channel", AUTO_CHANNEL),
         bleArm = prefs.getInt("bleArm", 1),
         deviceName = prefs.getString("deviceName", "CrossPair K20") ?: "CrossPair K20",
@@ -845,7 +845,7 @@ class AirDroidController(private val context: Context) {
         selectedMac = null
         clearAirdropServices()
         append("")
-        runCatching { AirDroidService.start(context) }
+        runCatching { CrossPairService.start(context) }
         if (settings.channel == AUTO_CHANNEL) {
             scanAuto()
             return
@@ -862,7 +862,7 @@ class AirDroidController(private val context: Context) {
             } else {
                 "Live scan could not start; check the log."
             }
-            runCatching { AirDroidService.stop(context) }
+            runCatching { CrossPairService.stop(context) }
             return
         }
         status = "SCANNING"
@@ -896,12 +896,12 @@ class AirDroidController(private val context: Context) {
                     } else {
                         "Live scan could not start; check the log."
                     }
-                    runCatching { AirDroidService.stop(context) }
+                    runCatching { CrossPairService.stop(context) }
                     return
                 }
                 if (!scanning) {
                     stopSession()
-                    runCatching { AirDroidService.stop(context) }
+                    runCatching { CrossPairService.stop(context) }
                     return
                 }
                 append("Auto scan on channel $channel (${dwellMs / 1000}s dwell)")
@@ -936,7 +936,7 @@ class AirDroidController(private val context: Context) {
                             } else {
                                 "Live scan could not start; check the log."
                             }
-                            runCatching { AirDroidService.stop(context) }
+                            runCatching { CrossPairService.stop(context) }
                             return
                         }
                         val switchedAt = System.currentTimeMillis()
@@ -988,7 +988,7 @@ class AirDroidController(private val context: Context) {
         selectedMac = null
         clearAirdropServices()
         resetReceiverState()
-        if (stopService) runCatching { AirDroidService.stop(context) }
+        if (stopService) runCatching { CrossPairService.stop(context) }
         status = when {
             peers.isEmpty() -> "NO PEERS"
             !kernel.monitorReady -> kernel.state.badge
@@ -1221,7 +1221,7 @@ class AirDroidController(private val context: Context) {
         try {
             val displayName = queryDisplayName(uri) ?: "airdrop-file"
             val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
-            Log.i("AirDroidSend", "stageFile display=$displayName clean=$cleanName uri=$uri")
+            Log.i("CrossPairSend", "stageFile display=$displayName clean=$cleanName uri=$uri")
             // Prefer the provider's own file when the helper can read it: no
             // copy, so a 1 GB pick is added in milliseconds instead of a
             // minute of writing.
@@ -1237,7 +1237,7 @@ class AirDroidController(private val context: Context) {
                 // readability are checked as root, the process that reads it.
                 val usable = rootCanRead(direct)
                 Log.i(
-                    "AirDroidSend",
+                    "CrossPairSend",
                     "stageFile candidate=$direct usable=$usable size=${querySize(uri)}",
                 )
                 if (usable) {
@@ -1245,9 +1245,9 @@ class AirDroidController(private val context: Context) {
                     return@withContext File(direct) to cleanName
                 }
             } else {
-                Log.i("AirDroidSend", "stageFile no path for uri=$uri")
+                Log.i("CrossPairSend", "stageFile no path for uri=$uri")
             }
-            Log.i("AirDroidSend", "stageFile copying uri=$uri")
+            Log.i("CrossPairSend", "stageFile copying uri=$uri")
             val out = outgoingStagingFile(cleanName)
             val total = querySize(uri)
             context.contentResolver.openInputStream(uri)?.use { input ->
@@ -1364,7 +1364,7 @@ class AirDroidController(private val context: Context) {
 
     suspend fun sendPicked() {
         val file = pickedFile ?: return
-        Log.i("AirDroidSend", "sendPicked file=${file.name} display=$pickedDisplayName")
+        Log.i("CrossPairSend", "sendPicked file=${file.name} display=$pickedDisplayName")
         sendFile(file.absolutePath, pickedDisplayName)
     }
 
@@ -1434,7 +1434,7 @@ class AirDroidController(private val context: Context) {
             return
         }
         Log.i(
-            "AirDroidSend",
+            "CrossPairSend",
             "sendFiles count=${cleanItems.size} shown=$shownName files=${cleanItems.map { it.first }}",
         )
         val generation = ++sendGeneration
@@ -1922,7 +1922,7 @@ class AirDroidController(private val context: Context) {
 
     fun enterTransferMode(reboot: Boolean = false, boot: Boolean = false) {
         Log.i(
-            "AirDroidLog",
+            "CrossPairLog",
             "enterTransferMode(reboot=$reboot boot=$boot) modeSwitching=$modeSwitching " +
                 "sending=$sending verifyingKernel=$verifyingKernel support=${kernel.support}",
         )
@@ -2127,7 +2127,7 @@ class AirDroidController(private val context: Context) {
                 // Stop the service after the switch: onDestroy restores Wi-Fi
                 // when the controller is still in monitor mode, so stopping it
                 // earlier would run a second owly-mode.sh exit.
-                runCatching { AirDroidService.stop(context) }
+                runCatching { CrossPairService.stop(context) }
             }
         }
     }
@@ -4093,7 +4093,7 @@ class AirDroidController(private val context: Context) {
             val stamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
             val lines = line.split('\n').map { "$stamp  $it" }
             logs.addAll(lines)
-            lines.forEach { Log.i("AirDroidLog", it) }
+            lines.forEach { Log.i("CrossPairLog", it) }
         }
         if (logs.size > 2500) logs.removeRange(0, logs.size - 2000)
     }
@@ -4262,8 +4262,8 @@ class AirDroidController(private val context: Context) {
 
     fun close() {
         restoreWifiOnCloseBlocking()
-        if (AirDroidService.running) {
-            runCatching { AirDroidService.stop(context) }
+        if (CrossPairService.running) {
+            runCatching { CrossPairService.stop(context) }
         }
         pendingRequest?.let { pending ->
             if (!pending.completion.isCompleted) pending.completion.complete(-1)

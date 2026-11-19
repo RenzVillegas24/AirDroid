@@ -5,12 +5,12 @@ plugins {
 }
 
 android {
-    namespace = "io.moonbase.airdroid"
+    namespace = "io.moonbase.crosspair"
     compileSdk = 36
     buildToolsVersion = "35.0.1"
 
     defaultConfig {
-        applicationId = "io.moonbase.airdroid"
+        applicationId = "io.moonbase.crosspair"
         minSdk = 23
         targetSdk = 36
         versionCode = 14

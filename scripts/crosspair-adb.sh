@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ADB debug control for CrossPair. All output is under logcat tags AirDroidLog and
-# AirDroidDebug. The receiver is protected by android.permission.DUMP.
+# ADB debug control for CrossPair. All output is under logcat tags CrossPairLog and
+# CrossPairDebug. The receiver is protected by android.permission.DUMP.
 set -euo pipefail
 
 ADB="${ADB:-adb}"
-PKG="io.moonbase.airdroid"
+PKG="io.moonbase.crosspair"
 RECEIVER="$PKG/.ControlReceiver"
 
 usage() {
@@ -55,9 +55,9 @@ dump_current() {
   local pid
   pid="$(current_pid)"
   if [[ -n "$pid" ]]; then
-    "$ADB" logcat -d --pid="$pid" -s AirDroidDebug:D AirDroidLog:D '*:S'
+    "$ADB" logcat -d --pid="$pid" -s CrossPairDebug:D CrossPairLog:D '*:S'
   else
-    "$ADB" logcat -d -s AirDroidDebug:D AirDroidLog:D '*:S'
+    "$ADB" logcat -d -s CrossPairDebug:D CrossPairLog:D '*:S'
   fi
 }
 
@@ -65,22 +65,22 @@ case "$command" in
   status)
     broadcast -a "$PKG.debug.STATUS"
     sleep 0.3
-    dump_current | grep 'AirDroidDebug' | tail -n 40
+    dump_current | grep 'CrossPairDebug' | tail -n 40
     ;;
   history)
     broadcast -a "$PKG.debug.HISTORY"
     sleep 0.3
-    dump_current | grep 'AirDroidDebug' | tail -n 80
+    dump_current | grep 'CrossPairDebug' | tail -n 80
     ;;
   log)
-    dump_current | grep 'AirDroidLog' | tail -n 200
+    dump_current | grep 'CrossPairLog' | tail -n 200
     ;;
   follow)
     pid="$(current_pid)"
     if [[ -n "$pid" ]]; then
-      "$ADB" logcat -v time --pid="$pid" -s AirDroidLog:D '*:S'
+      "$ADB" logcat -v time --pid="$pid" -s CrossPairLog:D '*:S'
     else
-      "$ADB" logcat -v time -s AirDroidLog:D '*:S'
+      "$ADB" logcat -v time -s CrossPairLog:D '*:S'
     fi
     ;;
   clear-log)

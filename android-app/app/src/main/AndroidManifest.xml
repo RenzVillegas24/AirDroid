@@ -24,7 +24,7 @@
         android:supportsRtl="true">
 
         <service
-            android:name=".AirDroidService"
+            android:name=".CrossPairService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:stopWithTask="false" />

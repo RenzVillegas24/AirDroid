@@ -1,11 +1,11 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 /**
  * Process-wide controller handle used by notification actions. When the app
  * process is alive, Accept/Decline/Cancel can be handled without opening the
  * activity. A cold process falls back to launching MainActivity.
  */
-object AirDroidControllerHolder {
+object CrossPairControllerHolder {
     @Volatile
-    var current: AirDroidController? = null
+    var current: CrossPairController? = null
 }

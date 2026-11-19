@@ -42,7 +42,7 @@ scripts/build-app.sh release
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.moonbase.airdroid/.MainActivity
+adb shell am start -n io.moonbase.crosspair/.MainActivity
 ```
 
 Grant KernelSU root when the first radio action asks for it.
@@ -67,7 +67,7 @@ scripts/crosspair-adb.sh log
 scripts/crosspair-adb.sh follow
 ```
 
-All app/helper output is mirrored to logcat tag `AirDroidLog`.
+All app/helper output is mirrored to logcat tag `CrossPairLog`.
 
 See `docs/raphael/ADB-DEBUG.md` for the full command set.
 

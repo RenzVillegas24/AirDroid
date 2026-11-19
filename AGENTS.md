@@ -92,19 +92,19 @@ scripts/crosspair-adb.sh exit
 
 Implementation details:
 
-- Receiver: `io.moonbase.airdroid/.ControlReceiver`
+- Receiver: `io.moonbase.crosspair/.ControlReceiver`
 - Protection: `android.permission.DUMP` (adb shell has it)
 - It only works while the app process/controller is alive; the foreground
   service keeps it alive in Transfer mode.
 - Logs are mirrored to logcat:
 
 ```bash
-adb logcat -d -s AirDroidLog:D '*:S'
-adb logcat -d -s AirDroidDebug:D '*:S'
+adb logcat -d -s CrossPairLog:D '*:S'
+adb logcat -d -s CrossPairDebug:D '*:S'
 ```
 
-- `AirDroidLog` contains timestamped app/helper output.
-- `AirDroidDebug` contains status, peers, active transfers, history, and errors.
+- `CrossPairLog` contains timestamped app/helper output.
+- `CrossPairDebug` contains status, peers, active transfers, history, and errors.
 - Use `scripts/crosspair-adb.sh log` or `follow` instead of screencap whenever
   the information is available in logs.
 - Do not print real peer MACs in final user-facing summaries. Use

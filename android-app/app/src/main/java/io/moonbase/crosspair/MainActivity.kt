@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.Manifest
 import android.content.Context
@@ -233,12 +233,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
-    private lateinit var controller: AirDroidController
+    private lateinit var controller: CrossPairController
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        controller = AirDroidControllerHolder.current
-            ?: AirDroidController(applicationContext).also { AirDroidControllerHolder.current = it }
+        controller = CrossPairControllerHolder.current
+            ?: CrossPairController(applicationContext).also { CrossPairControllerHolder.current = it }
         handleNotificationIntent(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
@@ -252,7 +252,7 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             val context = LocalContext.current
-            AirDroidTheme(
+            CrossPairTheme(
                 themeMode = controller.settings.themeMode,
                 tintMode = controller.settings.tintMode,
             ) {
@@ -283,12 +283,12 @@ class MainActivity : ComponentActivity() {
                     showSplash = false
                 }
                 Box(Modifier.fillMaxSize()) {
-                    AirDroidApp(controller = controller, scope = scope)
+                    CrossPairApp(controller = controller, scope = scope)
                     AnimatedVisibility(
                         visible = showSplash,
                         exit = fadeOut(tween(500)) + scaleOut(tween(500), targetScale = 1.06f),
                     ) {
-                        AirDroidSplash()
+                        CrossPairSplash()
                     }
                 }
             }
@@ -315,9 +315,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         // While the foreground service is running it owns the controller, so
         // closing it here would stop the background receiver.
-        if (AirDroidService.running) return
-        if (AirDroidControllerHolder.current === controller) {
-            AirDroidControllerHolder.current = null
+        if (CrossPairService.running) return
+        if (CrossPairControllerHolder.current === controller) {
+            CrossPairControllerHolder.current = null
         }
         controller.close()
     }
@@ -329,27 +329,27 @@ class MainActivity : ComponentActivity() {
      */
     private fun handleNotificationIntent(intent: Intent?) {
         if (intent == null) return
-        val cancelId = intent.getStringExtra(AirDroidNotifications.EXTRA_CANCEL_TRANSFER)
+        val cancelId = intent.getStringExtra(CrossPairNotifications.EXTRA_CANCEL_TRANSFER)
         if (cancelId != null) {
             controller.cancelTransfer(cancelId)
-            intent.removeExtra(AirDroidNotifications.EXTRA_CANCEL_TRANSFER)
+            intent.removeExtra(CrossPairNotifications.EXTRA_CANCEL_TRANSFER)
         }
-        val requestId = intent.getLongExtra(AirDroidNotifications.EXTRA_REQUEST_ID, -1L)
+        val requestId = intent.getLongExtra(CrossPairNotifications.EXTRA_REQUEST_ID, -1L)
         if (requestId >= 0) {
-            val accept = intent.getBooleanExtra(AirDroidNotifications.EXTRA_REQUEST_ACCEPT, false)
+            val accept = intent.getBooleanExtra(CrossPairNotifications.EXTRA_REQUEST_ACCEPT, false)
             controller.resolveIncomingFromNotification(requestId, accept)
-            intent.removeExtra(AirDroidNotifications.EXTRA_REQUEST_ID)
-            intent.removeExtra(AirDroidNotifications.EXTRA_REQUEST_ACCEPT)
+            intent.removeExtra(CrossPairNotifications.EXTRA_REQUEST_ID)
+            intent.removeExtra(CrossPairNotifications.EXTRA_REQUEST_ACCEPT)
         }
     }
 }
 
-private enum class AirDroidTab(
+private enum class CrossPairTab(
     val label: String,
     val subtitle: String,
     @DrawableRes val icon: Int,
 ) {
-    HOME("CrossPair", "Nearby AirDrop and received files", R.drawable.ic_airdroid_home),
+    HOME("CrossPair", "Nearby AirDrop and received files", R.drawable.ic_crosspair_home),
     LOGS("Logs", "Live radio and session output", R.drawable.ic_receipt_long),
     SETTINGS("Settings", "Radio, appearance, and receiver identity", R.drawable.ic_settings),
 }
@@ -377,14 +377,14 @@ private enum class HomeTab(val label: String) {
     RECEIVED("Received"),
 }
 
-private val TOOLBAR_TABS = listOf(AirDroidTab.LOGS, AirDroidTab.HOME, AirDroidTab.SETTINGS)
+private val TOOLBAR_TABS = listOf(CrossPairTab.LOGS, CrossPairTab.HOME, CrossPairTab.SETTINGS)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
-    var tab by remember { mutableStateOf(AirDroidTab.HOME) }
+private fun CrossPairApp(controller: CrossPairController, scope: CoroutineScope) {
+    var tab by remember { mutableStateOf(CrossPairTab.HOME) }
     val pagerState = rememberPagerState(
-        initialPage = TOOLBAR_TABS.indexOf(AirDroidTab.HOME),
+        initialPage = TOOLBAR_TABS.indexOf(CrossPairTab.HOME),
         pageCount = { TOOLBAR_TABS.size },
     )
     val topAppBarState = rememberTopAppBarState()
@@ -406,7 +406,7 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
             tapTarget = null
         }
     }
-    fun selectTab(next: AirDroidTab) {
+    fun selectTab(next: CrossPairTab) {
         val target = TOOLBAR_TABS.indexOf(next)
         if (target == pagerState.currentPage && pagerState.currentPageOffsetFraction == 0f) return
         tapTarget = target
@@ -437,7 +437,7 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
         ) { page ->
             val pageTab = TOOLBAR_TABS[page]
             Column(modifier = Modifier.fillMaxSize()) {
-                AirDroidTopBar(pageTab, controller, scope, scrollBehavior)
+                CrossPairTopBar(pageTab, controller, scope, scrollBehavior)
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -446,14 +446,14 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
                         .fadingEdges(bottom = pageFadeHeight),
                 ) {
                     when (pageTab) {
-                        AirDroidTab.HOME -> HomeScreen(controller, scope)
-                        AirDroidTab.LOGS -> LogsScreen(controller)
-                        AirDroidTab.SETTINGS -> SettingsScreen(controller)
+                        CrossPairTab.HOME -> HomeScreen(controller, scope)
+                        CrossPairTab.LOGS -> LogsScreen(controller)
+                        CrossPairTab.SETTINGS -> SettingsScreen(controller)
                     }
                 }
             }
         }
-        AirDroidFloatingToolbar(
+        CrossPairFloatingToolbar(
             selected = tab,
             pagerPosition = pagerState.currentPage + pagerState.currentPageOffsetFraction,
             tapTarget = tapTarget,
@@ -466,7 +466,7 @@ private fun AirDroidApp(controller: AirDroidController, scope: CoroutineScope) {
 }
 
 @Composable
-private fun BluetoothRequiredDialog(controller: AirDroidController) {
+private fun BluetoothRequiredDialog(controller: CrossPairController) {
     if (controller.status != "BLUETOOTH OFF") return
     val context = LocalContext.current
     AlertDialog(
@@ -502,9 +502,9 @@ private fun BluetoothRequiredDialog(controller: AirDroidController) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AirDroidTopBar(
-    tab: AirDroidTab,
-    controller: AirDroidController,
+private fun CrossPairTopBar(
+    tab: CrossPairTab,
+    controller: CrossPairController,
     scope: CoroutineScope,
     scrollBehavior: TopAppBarScrollBehavior,
 ) {
@@ -551,11 +551,11 @@ private fun AirDroidTopBar(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun TopBarPage(
-    tab: AirDroidTab,
+    tab: CrossPairTab,
     titleStyle: TextStyle,
     subtitleAlpha: Float,
     subtitleHeight: Dp,
-    controller: AirDroidController,
+    controller: CrossPairController,
     scope: CoroutineScope,
     modifier: Modifier = Modifier,
 ) {
@@ -599,7 +599,7 @@ private fun TopBarPage(
             )
         }
         when (tab) {
-            AirDroidTab.HOME -> {
+            CrossPairTab.HOME -> {
                 val transferMode = controller.kernel.state == MonitorState.MONITOR
                 FilledTonalButton(
                     onClick = {
@@ -621,7 +621,7 @@ private fun TopBarPage(
                     } else {
                         Icon(
                             painter = painterResource(
-                                if (transferMode) R.drawable.ic_airdroid_home else R.drawable.ic_wifi_tethering,
+                                if (transferMode) R.drawable.ic_crosspair_home else R.drawable.ic_wifi_tethering,
                             ),
                             contentDescription = null,
                             modifier = Modifier.size(18.dp),
@@ -631,12 +631,12 @@ private fun TopBarPage(
                     Text(if (transferMode) "ON" else "OFF")
                 }
             }
-            AirDroidTab.LOGS -> {
+            CrossPairTab.LOGS -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
                         onClick = {
                             val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-                            saveLogs.launch("airdroid-logs-$stamp.txt")
+                            saveLogs.launch("crosspair-logs-$stamp.txt")
                         },
                     ) {
                         Icon(
@@ -658,18 +658,18 @@ private fun TopBarPage(
                     }
                 }
             }
-            AirDroidTab.SETTINGS -> Unit
+            CrossPairTab.SETTINGS -> Unit
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun AirDroidFloatingToolbar(
-    selected: AirDroidTab,
+private fun CrossPairFloatingToolbar(
+    selected: CrossPairTab,
     pagerPosition: Float,
     tapTarget: Int?,
-    onSelected: (AirDroidTab) -> Unit,
+    onSelected: (CrossPairTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -919,7 +919,7 @@ private fun AirDroidFloatingToolbar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
+private fun HomeScreen(controller: CrossPairController, scope: CoroutineScope) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var sheetPeer by remember { mutableStateOf<Peer?>(null) }
@@ -1293,7 +1293,7 @@ private fun EmptyReceivedCard() {
 
 @Composable
 private fun ReceiverPausedRow(
-    controller: AirDroidController,
+    controller: CrossPairController,
     scope: CoroutineScope,
     modifier: Modifier = Modifier,
 ) {
@@ -1366,7 +1366,7 @@ private fun EmptyTransfersCard(title: String, subtitle: String) {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun <T> AirDroidButtonGroup(
+private fun <T> CrossPairButtonGroup(
     options: List<T>,
     selected: T,
     label: (T) -> String,
@@ -1382,7 +1382,7 @@ private fun <T> AirDroidButtonGroup(
             val option = options[index]
             customItem(
                 buttonGroupContent = {
-                    AirDroidGroupItem(
+                    CrossPairGroupItem(
                         option = option,
                         selected = selected,
                         label = label(option),
@@ -1407,7 +1407,7 @@ private fun <T> AirDroidButtonGroup(
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun <T> ButtonGroupScope.AirDroidGroupItem(
+private fun <T> ButtonGroupScope.CrossPairGroupItem(
     option: T,
     selected: T,
     label: String,
@@ -1448,7 +1448,7 @@ private fun HomeTabs(
     receivedCount: Int,
     onSelected: (HomeTab) -> Unit,
 ) {
-    AirDroidButtonGroup(
+    CrossPairButtonGroup(
         options = HomeTab.entries,
         selected = selected,
         label = { tab ->
@@ -1642,7 +1642,7 @@ private val finishedTransferOrder =
  */
 private fun groupReceivedTransfers(
     items: List<TransferItem>,
-    controller: AirDroidController,
+    controller: CrossPairController,
 ): List<TransferItem> {
     if (items.size <= 1) return items
     return items.groupBy { controller.batchKeyFor(it.id) ?: "single:${it.id}" }
@@ -2927,7 +2927,7 @@ private fun formatClock(timestamp: Long): String =
     SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
 
 @Composable
-private fun IncomingRequestDialog(controller: AirDroidController) {
+private fun IncomingRequestDialog(controller: CrossPairController) {
     val request = controller.incomingRequest ?: return
     val colors = MaterialTheme.colorScheme
     AlertDialog(
@@ -4123,7 +4123,7 @@ private fun zipDocumentTree(context: Context, treeUri: Uri): File? {
 }
 
 @Composable
-private fun SendScreen(controller: AirDroidController, scope: CoroutineScope) {
+private fun SendScreen(controller: CrossPairController, scope: CoroutineScope) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch { controller.pickFile(uri) }
     }
@@ -4262,7 +4262,7 @@ private fun ScanningPeerTile(modifier: Modifier = Modifier) {
  * bubble with signal waves washing out across the whole screen behind it.
  */
 @Composable
-private fun AirDroidSplash() {
+private fun CrossPairSplash() {
     val colors = MaterialTheme.colorScheme
     val enter = remember { Animatable(0f) }
     val text = remember { Animatable(0f) }
@@ -4644,7 +4644,7 @@ private fun PeerCard(
 }
 
 @Composable
-private fun KernelBanner(controller: AirDroidController, modifier: Modifier = Modifier) {
+private fun KernelBanner(controller: CrossPairController, modifier: Modifier = Modifier) {
     val kernel = controller.kernel
     if (kernel.monitorReady) return
     val colors = MaterialTheme.colorScheme
@@ -4736,7 +4736,7 @@ private fun KernelBanner(controller: AirDroidController, modifier: Modifier = Mo
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun UpdateBanner(
-    controller: AirDroidController,
+    controller: CrossPairController,
     release: AppRelease,
     modifier: Modifier = Modifier,
 ) {
@@ -4823,7 +4823,7 @@ private fun UpdateBanner(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun SendCard(
-    controller: AirDroidController,
+    controller: CrossPairController,
     onChooseFile: () -> Unit,
     onSend: () -> Unit,
     onCancelSend: () -> Unit,
@@ -5008,7 +5008,7 @@ private fun SendCard(
 }
 
 @Composable
-private fun LogsScreen(controller: AirDroidController) {
+private fun LogsScreen(controller: CrossPairController) {
     val colors = MaterialTheme.colorScheme
     val listState = rememberLazyListState()
     LaunchedEffect(controller.logs.size) {
@@ -5036,7 +5036,7 @@ private fun LogsScreen(controller: AirDroidController) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsScreen(controller: AirDroidController) {
+private fun SettingsScreen(controller: CrossPairController) {
     val colors = MaterialTheme.colorScheme
     val uriHandler = LocalUriHandler.current
     var channel by remember { mutableIntStateOf(controller.settings.channel) }
@@ -5170,7 +5170,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                     val channelText = when {
                         controller.lockedChannel != null ->
                             "Locked channel ${controller.lockedChannel}"
-                        controller.settings.channel == AirDroidController.AUTO_CHANNEL ->
+                        controller.settings.channel == CrossPairController.AUTO_CHANNEL ->
                             "Auto · scanning channel ${controller.activeChannel}"
                         else -> "Channel ${controller.settings.channel} · fixed"
                     }
@@ -5290,7 +5290,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    AirDroidButtonGroup(
+                    CrossPairButtonGroup(
                         options = ThemeMode.entries,
                         selected = themeMode,
                         label = { it.label },
@@ -5323,7 +5323,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    AirDroidButtonGroup(
+                    CrossPairButtonGroup(
                         options = TintMode.entries,
                         selected = tintMode,
                         label = { it.label },
@@ -5342,7 +5342,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                 SettingsListItem(
                     icon = R.drawable.ic_folder,
                     headline = "Incoming storage",
-                    supporting = AirDroidController.RECEIVE_DIR,
+                    supporting = CrossPairController.RECEIVE_DIR,
                 )
                 SettingsListItem(
                     icon = R.drawable.ic_sensors,
@@ -5372,7 +5372,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    AirDroidButtonGroup(
+                    CrossPairButtonGroup(
                         options = listOf(0, 44, 6, 149),
                         selected = channel,
                         label = { option ->
@@ -5422,7 +5422,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    AirDroidButtonGroup(
+                    CrossPairButtonGroup(
                         options = listOf(6, 12, 18, 24, 30),
                         selected = autoChannelDwellSecs,
                         label = { "${it}s" },
@@ -5457,7 +5457,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    AirDroidButtonGroup(
+                    CrossPairButtonGroup(
                         options = UploadPolicy.entries,
                         selected = uploadPolicy,
                         label = { it.label },
@@ -5503,7 +5503,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                     }
                     Spacer(Modifier.height(10.dp))
                     val bleOptions = listOf("A", "V2", "B")
-                    AirDroidButtonGroup(
+                    CrossPairButtonGroup(
                         options = bleOptions,
                         selected = bleOptions.getOrElse(bleArm) { "A" },
                         label = { it },
@@ -5659,8 +5659,8 @@ private fun SettingsScreen(controller: AirDroidController) {
                 SettingsListItem(
                     icon = R.drawable.ic_computer,
                     headline = "GitHub repository",
-                    supporting = "RenzVillegas24/AirDroid",
-                    onClick = { uriHandler.openUri("https://github.com/RenzVillegas24/AirDroid") },
+                    supporting = "RenzVillegas24/CrossPair",
+                    onClick = { uriHandler.openUri("https://github.com/RenzVillegas24/CrossPair") },
                 )
                 SettingsListItem(
                     icon = R.drawable.ic_memory,
@@ -5670,7 +5670,7 @@ private fun SettingsScreen(controller: AirDroidController) {
                 SettingsListItem(
                     icon = R.drawable.ic_smartphone,
                     headline = "Device",
-                    supporting = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nKernel ${controller.kernel.release}\nAirDroid support · ${controller.kernel.support.label}\nRadio · WCN3990 · monitor + hidden STA",
+                    supporting = "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.DEVICE}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nKernel ${controller.kernel.release}\nCrossPair support · ${controller.kernel.support.label}\nRadio · WCN3990 · monitor + hidden STA",
                 )
             }
         }
@@ -5808,7 +5808,7 @@ private fun UpdateAvailableDialog(
     )
 }
 
-private fun updateSupporting(controller: AirDroidController): String {
+private fun updateSupporting(controller: CrossPairController): String {
     if (controller.updateDownloading) {
         return controller.updateMessage.ifBlank { "Downloading update..." }
     }

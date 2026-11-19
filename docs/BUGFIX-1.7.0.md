@@ -1,7 +1,30 @@
 # 1.7.0 release
 
-App release. No kernel or boot-image change: 1.6.3 already required the
-AirDrop-capable kernel, and this release only fixes the app.
+First release under the **CrossPair** name. The repository, app label and
+package are renamed:
+
+- repo: `RenzVillegas24/CrossPair`
+- package: `io.moonbase.crosspair`
+- ADB receiver: `io.moonbase.crosspair/.ControlReceiver`
+- received files: `/sdcard/Download/CrossPair`
+
+Because the package changed, this installs as a **new app**: settings and the
+KernelSU grant do not carry over from `io.moonbase.crosspair`, and received
+files from the old app stay in `/sdcard/Download/CrossPair`.
+
+Also in this release: an **Upload mode** setting (Auto, Stream, Compress,
+Type, Chunked), per-file progress while adding files, and a peer list that
+follows AirDrop readiness instead of learned names.
+
+Internal names follow the product name as well: `CrossPairController`,
+`CrossPairService`, `CrossPairNotifications`, the `CrossPairLog` /
+`CrossPairSend` / `CrossPairDebug` log tags, the notification channel, the
+preferences file and the launcher drawables. Release signing moved to
+`CROSSPAIR_KEYSTORE*` and the workflow now expects a
+`CROSSPAIR_KEYSTORE_BASE64` repository secret.
+
+No kernel or boot-image change: 1.6.3 already required the AirDrop-capable
+kernel, and this release only changes the app.
 
 ## User-facing fixes
 
@@ -74,7 +97,7 @@ Fix, in the protocol layer:
   name and falls back to ARPA.
 - `owly-airdrop`: publish our own `dnm=<configured name>` in the mDNS TXT and
   derive the SRV host label from that name instead of the hardcoded
-  `airdroid-k20`.
+  `crosspair-k20`.
 
 ### 3. Staging depended on root at the wrong moment
 
@@ -222,11 +245,11 @@ Both phones, same build, AirDrop open on the iPhone:
 ## Files changed
 
 - `android-app/helper/src/main.rs`
-- `android-app/app/src/main/java/io/moonbase/airdroid/AirDroidController.kt`
-- `android-app/app/src/main/java/io/moonbase/airdroid/BootReceiver.kt`
-- `android-app/app/src/main/java/io/moonbase/airdroid/AirDroidService.kt`
-- `android-app/app/src/main/java/io/moonbase/airdroid/ControlReceiver.kt`
-- `android-app/app/src/main/java/io/moonbase/airdroid/MainActivity.kt` (preview fixture name)
+- `android-app/app/src/main/java/io/moonbase/crosspair/CrossPairController.kt`
+- `android-app/app/src/main/java/io/moonbase/crosspair/BootReceiver.kt`
+- `android-app/app/src/main/java/io/moonbase/crosspair/CrossPairService.kt`
+- `android-app/app/src/main/java/io/moonbase/crosspair/ControlReceiver.kt`
+- `android-app/app/src/main/java/io/moonbase/crosspair/MainActivity.kt` (preview fixture name)
 - `android-app/app/build.gradle.kts` (1.7.0, versionCode 14)
 - `third_party/owly/crates/owly-awdl/src/tlv.rs`
 - `third_party/owly/crates/owly-awdl/src/node.rs`

@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -16,20 +16,20 @@ import androidx.annotation.RequiresApi
  * the stable transfer ID. Discovery, receiver readiness, and channel search
  * never post here; only real transfers and real incoming `/Ask` requests do.
  */
-class AirDroidNotifications(private val context: Context) {
+class CrossPairNotifications(private val context: Context) {
     companion object {
-        const val CHANNEL_TRANSFERS = "airdroid_transfers"
-        const val CHANNEL_REQUESTS = "airdroid_requests"
+        const val CHANNEL_TRANSFERS = "crosspair_transfers"
+        const val CHANNEL_REQUESTS = "crosspair_requests"
 
-        const val EXTRA_REQUEST_ID = "io.moonbase.airdroid.extra.REQUEST_ID"
-        const val EXTRA_REQUEST_ACCEPT = "io.moonbase.airdroid.extra.REQUEST_ACCEPT"
-        const val EXTRA_CANCEL_TRANSFER = "io.moonbase.airdroid.extra.CANCEL_TRANSFER"
+        const val EXTRA_REQUEST_ID = "io.moonbase.crosspair.extra.REQUEST_ID"
+        const val EXTRA_REQUEST_ACCEPT = "io.moonbase.crosspair.extra.REQUEST_ACCEPT"
+        const val EXTRA_CANCEL_TRANSFER = "io.moonbase.crosspair.extra.CANCEL_TRANSFER"
 
-        const val ACTION_ACCEPT = "io.moonbase.airdroid.action.ACCEPT"
-        const val ACTION_DECLINE = "io.moonbase.airdroid.action.DECLINE"
-        const val ACTION_CANCEL = "io.moonbase.airdroid.action.CANCEL"
+        const val ACTION_ACCEPT = "io.moonbase.crosspair.action.ACCEPT"
+        const val ACTION_DECLINE = "io.moonbase.crosspair.action.DECLINE"
+        const val ACTION_CANCEL = "io.moonbase.crosspair.action.CANCEL"
 
-        private const val GROUP_KEY = "io.moonbase.airdroid.TRANSFERS"
+        private const val GROUP_KEY = "io.moonbase.crosspair.TRANSFERS"
         private const val SUMMARY_ID = 4000
         private const val REQUEST_ID = 4100
         private const val FIRST_TRANSFER_ID = 4200
@@ -108,7 +108,7 @@ class AirDroidNotifications(private val context: Context) {
             CHANNEL_TRANSFERS,
             "CrossPair transfers",
             text,
-            R.drawable.ic_airdroid_notification,
+            R.drawable.ic_crosspair_notification,
         )
         builder
             .setGroupSummary(true)
@@ -155,7 +155,7 @@ class AirDroidNotifications(private val context: Context) {
             Notification.Builder(context).setPriority(Notification.PRIORITY_HIGH)
         }
         builder
-            .setSmallIcon(R.drawable.ic_airdroid_notification)
+            .setSmallIcon(R.drawable.ic_crosspair_notification)
             .setContentTitle(title)
             .setContentText(summary)
             .setStyle(Notification.BigTextStyle().bigText(bigText))
@@ -198,7 +198,7 @@ class AirDroidNotifications(private val context: Context) {
                 append(transfer.transferredBytes.readableBytes())
             }
         }
-        val icon = R.drawable.ic_airdroid_notification
+        val icon = R.drawable.ic_crosspair_notification
         val builder = baseBuilder(CHANNEL_TRANSFERS, title, text, icon)
         builder
             .setCategory(Notification.CATEGORY_PROGRESS)
@@ -244,7 +244,7 @@ class AirDroidNotifications(private val context: Context) {
                 "${transfer.fileName} · ${transfer.error?.takeIf { it.isNotBlank() } ?: "Cancelled"}"
             else -> transfer.fileName
         }
-        val icon = R.drawable.ic_airdroid_notification
+        val icon = R.drawable.ic_crosspair_notification
         val builder = baseBuilder(CHANNEL_TRANSFERS, title, text, icon)
         builder
             .setCategory(Notification.CATEGORY_STATUS)

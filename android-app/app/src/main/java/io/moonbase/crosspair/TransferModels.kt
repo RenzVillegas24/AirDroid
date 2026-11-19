@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 /** Direction of a tracked AirDrop file transfer. */
 enum class TransferDirection {

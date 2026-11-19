@@ -4,8 +4,8 @@ The release app exposes a local debug receiver while the controller/service is
 running. It is protected by `android.permission.DUMP`, which the adb shell user
 holds; normal apps cannot call it.
 
-All app and helper output is mirrored to logcat under `AirDroidLog`, with
-millisecond timestamps. Controller state is under `AirDroidDebug`.
+All app and helper output is mirrored to logcat under `CrossPairLog`, with
+millisecond timestamps. Controller state is under `CrossPairDebug`.
 
 ## Commands
 
@@ -56,11 +56,11 @@ name.
 Every action can also be sent directly:
 
 ```bash
-adb shell am broadcast -n io.moonbase.airdroid/.ControlReceiver \
-  -a io.moonbase.airdroid.debug.STATUS
-adb shell am broadcast -n io.moonbase.airdroid/.ControlReceiver \
-  -a io.moonbase.airdroid.debug.SEND --es path /sdcard/Download/example.bin
-adb logcat -d -s AirDroidLog:D '*:S'
+adb shell am broadcast -n io.moonbase.crosspair/.ControlReceiver \
+  -a io.moonbase.crosspair.debug.STATUS
+adb shell am broadcast -n io.moonbase.crosspair/.ControlReceiver \
+  -a io.moonbase.crosspair.debug.SEND --es path /sdcard/Download/example.bin
+adb logcat -d -s CrossPairLog:D '*:S'
 ```
 
 ## Notes

@@ -81,8 +81,8 @@ used as the AWDL identity.
   restores Wi-Fi if the app process disappears without a clean exit.
 - `pack-base-mission.sh` — packs the base monitor+hidden-STA kernel without
   `wlan.con_mode=4`; kept on the investigation branches.
-- `android-app/app/src/main/java/io/moonbase/airdroid/BootReceiver.kt` — checks
-  the Transfer-mode flag after boot and starts `AirDroidService`, which enters
+- `android-app/app/src/main/java/io/moonbase/crosspair/BootReceiver.kt` — checks
+  the Transfer-mode flag after boot and starts `CrossPairService`, which enters
   through the normal owner/watchdog-armed path.
 - `android-app/app/src/main/assets/owly-mode.sh` — packaged copy of the mode
   switcher installed by the app.

@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -25,12 +25,12 @@ import kotlinx.coroutines.launch
  * The notification is deliberately quiet and is not a discovery/readiness
  * event; it is the platform-required foreground-service indicator.
  */
-class AirDroidService : Service() {
+class CrossPairService : Service() {
     companion object {
-        const val ACTION_START = "io.moonbase.airdroid.service.START"
-        const val ACTION_STOP = "io.moonbase.airdroid.service.STOP"
-        const val ACTION_BOOT_ENTER = "io.moonbase.airdroid.service.BOOT_ENTER"
-        private const val CHANNEL_ID = "airdroid_background"
+        const val ACTION_START = "io.moonbase.crosspair.service.START"
+        const val ACTION_STOP = "io.moonbase.crosspair.service.STOP"
+        const val ACTION_BOOT_ENTER = "io.moonbase.crosspair.service.BOOT_ENTER"
+        private const val CHANNEL_ID = "crosspair_background"
         private const val NOTIFICATION_ID = 4099
         private const val STOP_REQUEST = 4099
 
@@ -39,18 +39,18 @@ class AirDroidService : Service() {
             private set
 
         fun start(context: Context) {
-            val intent = Intent(context, AirDroidService::class.java).setAction(ACTION_START)
+            val intent = Intent(context, CrossPairService::class.java).setAction(ACTION_START)
             ContextCompat.startForegroundService(context, intent)
         }
 
         /** Applies the Transfer-mode boot flag through the normal enter path. */
         fun startBootEnter(context: Context) {
-            val intent = Intent(context, AirDroidService::class.java).setAction(ACTION_BOOT_ENTER)
+            val intent = Intent(context, CrossPairService::class.java).setAction(ACTION_BOOT_ENTER)
             ContextCompat.startForegroundService(context, intent)
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, AirDroidService::class.java))
+            context.stopService(Intent(context, CrossPairService::class.java))
         }
     }
 
@@ -60,9 +60,9 @@ class AirDroidService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
-        if (AirDroidControllerHolder.current == null) {
+        if (CrossPairControllerHolder.current == null) {
             ownsController = true
-            AirDroidControllerHolder.current = AirDroidController(applicationContext).also {
+            CrossPairControllerHolder.current = CrossPairController(applicationContext).also {
                 it.verifyKernelWithRoot()
             }
         }
@@ -71,18 +71,18 @@ class AirDroidService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i("AirDroidLog", "service action=${intent?.action ?: "null"} startId=$startId")
+        Log.i("CrossPairLog", "service action=${intent?.action ?: "null"} startId=$startId")
         when (intent?.action) {
             ACTION_STOP -> {
-                val controller = AirDroidControllerHolder.current
+                val controller = CrossPairControllerHolder.current
                 serviceScope.launch {
                     if (controller?.modeSwitching == true) {
                         // Stopping now would abandon an in-flight mode switch.
-                        Log.w("AirDroidLog", "stop ignored while a radio mode switch is running")
+                        Log.w("CrossPairLog", "stop ignored while a radio mode switch is running")
                         return@launch
                     }
                     controller?.stopEverythingAndRestoreWifi()
-                        ?: Log.w("AirDroidLog", "stop requested without a controller")
+                        ?: Log.w("CrossPairLog", "stop requested without a controller")
                     stopForeground(true)
                     stopSelf()
                 }
@@ -91,9 +91,9 @@ class AirDroidService : Service() {
             ACTION_BOOT_ENTER -> {
                 // The receiver only checks the flag; the switch itself runs here
                 // so the kernel owner and root watchdog are armed first.
-                val controller = AirDroidControllerHolder.current
+                val controller = CrossPairControllerHolder.current
                 if (controller == null) {
-                    Log.w("AirDroidLog", "boot enter requested without a controller")
+                    Log.w("CrossPairLog", "boot enter requested without a controller")
                 } else {
                     serviceScope.launch { controller.enterTransferMode(boot = true) }
                 }
@@ -107,10 +107,10 @@ class AirDroidService : Service() {
         running = false
         serviceScope.cancel()
         if (ownsController) {
-            val controller = AirDroidControllerHolder.current
+            val controller = CrossPairControllerHolder.current
             if (controller != null) {
                 controller.close()
-                AirDroidControllerHolder.current = null
+                CrossPairControllerHolder.current = null
             }
         }
         super.onDestroy()
@@ -145,7 +145,7 @@ class AirDroidService : Service() {
         val stop = PendingIntent.getService(
             this,
             STOP_REQUEST,
-            Intent(this, AirDroidService::class.java).setAction(ACTION_STOP),
+            Intent(this, CrossPairService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = if (Build.VERSION.SDK_INT >= 26) {

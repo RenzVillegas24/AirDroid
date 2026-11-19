@@ -112,8 +112,8 @@ normal mode.
   notification.
 - Foreground service keeps the receiver/controller alive while backgrounded.
 - Settings for pausing peer discovery and staying visible during transfers.
-- ADB control/log interface (`scripts/crosspair-adb.sh`, `AirDroidLog`,
-  `AirDroidDebug`).
+- ADB control/log interface (`scripts/crosspair-adb.sh`, `CrossPairLog`,
+  `CrossPairDebug`).
 - Open/Share uses the received directory directly; no cache copy.
 
 Full bring-up logs, monitor/injection tools, captures, and boot-image
@@ -207,7 +207,7 @@ boot image built from the CrossPair kernel branch.
 
 ```bash
 adb install -r android-app/app/build/outputs/apk/release/app-release.apk
-adb shell am start -n io.moonbase.airdroid/.MainActivity
+adb shell am start -n io.moonbase.crosspair/.MainActivity
 ```
 
 Open the app and grant root when KernelSU asks. The app needs root to switch

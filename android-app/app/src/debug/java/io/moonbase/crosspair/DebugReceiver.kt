@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
  *
  * The K20's KernelSU grant is scoped to the app process, so `adb shell su`
  * does not work. This receiver runs commands as the app (which can invoke
- * `su`) and publishes their output to /data/local/tmp/airdroid-debug.txt.
+ * `su`) and publishes their output to /data/local/tmp/crosspair-debug.txt.
  *
  * The receiver is exported so `adb shell am broadcast` can reach it. It is
  * debug-only and requires a per-install token stored in the app's private
@@ -22,8 +22,8 @@ import java.util.concurrent.TimeUnit
  */
 class DebugReceiver : BroadcastReceiver() {
     companion object {
-        const val ACTION = "io.moonbase.airdroid.DEBUG"
-        const val OUTPUT = "/data/local/tmp/airdroid-debug.txt"
+        const val ACTION = "io.moonbase.crosspair.DEBUG"
+        const val OUTPUT = "/data/local/tmp/crosspair-debug.txt"
         @Volatile private var debugBle: BleAdvertiser? = null
 
         private fun debugToken(context: Context): String {
@@ -42,7 +42,7 @@ class DebugReceiver : BroadcastReceiver() {
         if (intent.getBooleanExtra("ble", false)) {
             val advertiser = debugBle ?: BleAdvertiser(context).also { debugBle = it }
             val arm = intent.getIntExtra("arm", 0)
-            advertiser.restart(arm, true) { Log.i("AirDroidDebug", "BLE $it") }
+            advertiser.restart(arm, true) { Log.i("CrossPairDebug", "BLE $it") }
         }
         val command = intent.getStringExtra("cmd")
             ?: intent.getStringExtra("b64")?.let {
@@ -77,7 +77,7 @@ class DebugReceiver : BroadcastReceiver() {
                 result.append("ERROR: ").append(e.message).append('\n')
             }
             writeOutput(context, result.toString())
-            Log.i("AirDroidDebug", result.toString())
+            Log.i("CrossPairDebug", result.toString())
             pending.finish()
         }.start()
     }

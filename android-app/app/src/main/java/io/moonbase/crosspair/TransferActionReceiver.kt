@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -7,23 +7,23 @@ import android.content.Intent
 /** Handles Accept/Decline/Cancel actions without opening the activity. */
 class TransferActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val controller = AirDroidControllerHolder.current
+        val controller = CrossPairControllerHolder.current
         when (intent.action) {
-            AirDroidNotifications.ACTION_ACCEPT,
-            AirDroidNotifications.ACTION_DECLINE,
+            CrossPairNotifications.ACTION_ACCEPT,
+            CrossPairNotifications.ACTION_DECLINE,
             -> {
-                val requestId = intent.getLongExtra(AirDroidNotifications.EXTRA_REQUEST_ID, -1L)
+                val requestId = intent.getLongExtra(CrossPairNotifications.EXTRA_REQUEST_ID, -1L)
                 if (requestId >= 0 && controller != null) {
                     controller.resolveIncomingFromNotification(
                         requestId,
-                        intent.action == AirDroidNotifications.ACTION_ACCEPT,
+                        intent.action == CrossPairNotifications.ACTION_ACCEPT,
                     )
                 } else {
                     launchActivity(context, intent)
                 }
             }
-            AirDroidNotifications.ACTION_CANCEL -> {
-                val transferId = intent.getStringExtra(AirDroidNotifications.EXTRA_CANCEL_TRANSFER)
+            CrossPairNotifications.ACTION_CANCEL -> {
+                val transferId = intent.getStringExtra(CrossPairNotifications.EXTRA_CANCEL_TRANSFER)
                 if (transferId != null && controller != null) {
                     controller.cancelTransfer(transferId)
                 } else {

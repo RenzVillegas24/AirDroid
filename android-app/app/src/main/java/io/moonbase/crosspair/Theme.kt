@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.app.Activity
 import android.os.Build
@@ -34,7 +34,7 @@ enum class TintMode(val label: String) {
     SYSTEM("System"),
 }
 
-private val AirDroidDarkColors = darkColorScheme(
+private val CrossPairDarkColors = darkColorScheme(
     primary = Color(0xFF3DDC84),
     onPrimary = Color(0xFF00391F),
     primaryContainer = Color(0xFF0E5A36),
@@ -72,7 +72,7 @@ private val AirDroidDarkColors = darkColorScheme(
     surfaceContainerHighest = Color(0xFF1F3652),
 )
 
-private val AirDroidLightColors = lightColorScheme(
+private val CrossPairLightColors = lightColorScheme(
     primary = Color(0xFF0B1B33),
     onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFFB9F3D0),
@@ -110,7 +110,7 @@ private val AirDroidLightColors = lightColorScheme(
     surfaceContainerHighest = Color(0xFFDEE4DE),
 )
 
-private val AirDroidTypography = Typography(
+private val CrossPairTypography = Typography(
     displaySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
@@ -194,7 +194,7 @@ private val AirDroidTypography = Typography(
     ),
 )
 
-private val AirDroidShapes = Shapes(
+private val CrossPairShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
@@ -203,7 +203,7 @@ private val AirDroidShapes = Shapes(
 )
 
 @Composable
-fun AirDroidTheme(
+fun CrossPairTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     tintMode: TintMode = TintMode.CUSTOM,
     content: @Composable () -> Unit,
@@ -219,8 +219,8 @@ fun AirDroidTheme(
     val colorScheme = when {
         useDynamicTint && darkTheme -> dynamicDarkColorScheme(context)
         useDynamicTint -> dynamicLightColorScheme(context)
-        darkTheme -> AirDroidDarkColors
-        else -> AirDroidLightColors
+        darkTheme -> CrossPairDarkColors
+        else -> CrossPairLightColors
     }
     if (!view.isInEditMode) {
         SideEffect {
@@ -233,8 +233,8 @@ fun AirDroidTheme(
     }
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = AirDroidTypography,
-        shapes = AirDroidShapes,
+        typography = CrossPairTypography,
+        shapes = CrossPairShapes,
         content = content,
     )
 }

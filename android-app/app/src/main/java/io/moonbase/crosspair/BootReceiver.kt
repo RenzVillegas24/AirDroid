@@ -1,4 +1,4 @@
-package io.moonbase.airdroid
+package io.moonbase.crosspair
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -27,17 +27,17 @@ class BootReceiver : BroadcastReceiver() {
                     if (present) break
                     Thread.sleep(FLAG_RETRY_MS)
                 }
-                Log.i("AirDroidLog", "boot: Transfer-mode flag present=$present")
+                Log.i("CrossPairLog", "boot: Transfer-mode flag present=$present")
                 if (present) {
                     // One shot. The flag is consumed even if the switch fails,
                     // otherwise every later reboot would enter Transfer mode
                     // without anyone asking for it.
                     transferFlagClear()
-                    Log.i("AirDroidLog", "boot: flag cleared, starting service")
-                    AirDroidService.startBootEnter(context)
+                    Log.i("CrossPairLog", "boot: flag cleared, starting service")
+                    CrossPairService.startBootEnter(context)
                 }
             } catch (e: Exception) {
-                Log.w("AirDroidLog", "boot: could not apply Transfer-mode flag: ${e.message}")
+                Log.w("CrossPairLog", "boot: could not apply Transfer-mode flag: ${e.message}")
             } finally {
                 pending.finish()
             }

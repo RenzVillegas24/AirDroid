@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Restore Wi-Fi if the AirDroid app process disappears without a clean exit.
+# Restore Wi-Fi if the CrossPair app process disappears without a clean exit.
 APP_PID="$1"
 PID_FILE=/data/local/tmp/owly-watchdog.pid
 LOG=/data/local/tmp/owly-watchdog.log

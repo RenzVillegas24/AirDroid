@@ -58,12 +58,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let path = args.get(2).ok_or("usage: helper send <file> [mac] <channel>")?;
             let target = args.get(3).filter(|s| s.as_str() != "-");
             let channel = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
-            let name = args.get(5).cloned().unwrap_or_else(|| "AirDroid K20".into());
+            let name = args.get(5).cloned().unwrap_or_else(|| "CrossPair K20".into());
             send(PathBuf::from(path), target.cloned(), channel, name).await
         }
         "session" => {
             let channel = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
-            let name = args.get(3).cloned().unwrap_or_else(|| "AirDroid K20".into());
+            let name = args.get(3).cloned().unwrap_or_else(|| "CrossPair K20".into());
             let dir = PathBuf::from(
                 args.get(4).cloned().unwrap_or_else(|| "/sdcard/Download/CrossPair".into()),
             );
@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let dir = PathBuf::from(args.get(2).ok_or("usage: helper receive <dir> <port> <channel>")?);
             let port = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(RECEIVER_PORT);
             let channel = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
-            let name = args.get(5).cloned().unwrap_or_else(|| "AirDroid K20".into());
+            let name = args.get(5).cloned().unwrap_or_else(|| "CrossPair K20".into());
             receive(dir, port, channel, name).await
         }
         "help" | "--help" | "-h" => {

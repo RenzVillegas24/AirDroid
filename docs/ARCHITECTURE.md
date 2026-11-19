@@ -9,7 +9,7 @@ K20 kernel work together.
 MainActivity / Compose UI
         │
         ▼
-AirDroidController + AirDroidService
+CrossPairController + CrossPairService
         │  commands and log lines
         ▼
 owly-k20-helper (Rust)
@@ -277,10 +277,10 @@ monitor hooks, hidden STA or WMI TX support that live in the kernel.
 ## Source map
 
 ```text
-android-app/app/src/main/java/io/moonbase/airdroid/
+android-app/app/src/main/java/io/moonbase/crosspair/
   MainActivity.kt          Compose UI
-  AirDroidController.kt    state, commands, peers, transfers
-  AirDroidService.kt       foreground service
+  CrossPairController.kt    state, commands, peers, transfers
+  CrossPairService.kt       foreground service
   ControlReceiver.kt       ADB controls
 
 android-app/helper/src/main.rs

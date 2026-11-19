@@ -7,7 +7,7 @@ bring-up history and boot-image tooling live on the investigation branches.
 
 ```bash
 git clone https://github.com/RenzVillegas24/CrossPair.git
-cd airdroid
+cd crosspair
 git submodule update --init third_party/owly
 ```
 
@@ -46,7 +46,7 @@ path is committed in `gradle.properties`.
 
 ```bash
 adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.moonbase.airdroid/.MainActivity
+adb shell am start -n io.moonbase.crosspair/.MainActivity
 ```
 
 Grant KernelSU root when the first radio action asks for it.
@@ -124,7 +124,7 @@ scripts/crosspair-adb.sh follow
 All app/helper output is mirrored to logcat:
 
 ```bash
-adb logcat -d -s AirDroidLog:D '*:S'
+adb logcat -d -s CrossPairLog:D '*:S'
 ```
 
 See [ADB-DEBUG.md](raphael/ADB-DEBUG.md) for the full command set.

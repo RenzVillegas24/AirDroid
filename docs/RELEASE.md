@@ -6,8 +6,8 @@ Release builds are unsigned by default. Use a private keystore; never commit it.
 
 ```bash
 keytool -genkeypair -v \
-  -keystore "$HOME/.android/airdroid-release.jks" \
-  -alias airdroid \
+  -keystore "$HOME/.android/crosspair-release.jks" \
+  -alias crosspair \
   -keyalg RSA \
   -keysize 4096 \
   -validity 10000 \
@@ -41,10 +41,10 @@ scripts/sign-release.sh
 Or non-interactive via environment variables:
 
 ```bash
-export AIRDROID_KEYSTORE="$HOME/.android/airdroid-release.jks"
-export AIRDROID_KEY_ALIAS=airdroid
-export AIRDROID_KEYSTORE_PASSWORD='...'
-export AIRDROID_KEY_PASSWORD='...'
+export CROSSPAIR_KEYSTORE="$HOME/.android/crosspair-release.jks"
+export CROSSPAIR_KEY_ALIAS=crosspair
+export CROSSPAIR_KEYSTORE_PASSWORD='...'
+export CROSSPAIR_KEY_PASSWORD='...'
 
 scripts/sign-release.sh
 ```
@@ -89,7 +89,7 @@ Release Kernel
 Both workflows take a `version`, an optional `tag`, and a required Markdown
 `changelog`. If `tag` is empty, `v<version>` is used. The app asset is
 `CrossPair-<version>.apk`; the kernel asset is
-`boot-airdroid-raphael-<version>.img`.
+`boot-crosspair-raphael-<version>.img`.
 
 The changelog is the release body. Generated GitHub notes are disabled so a
 release cannot be published with only a `Full Changelog` link.
@@ -99,19 +99,19 @@ release cannot be published with only a `Full Changelog` link.
 Add these under **Settings → Secrets and variables → Actions**:
 
 ```text
-AIRDROID_KEYSTORE_BASE64
-AIRDROID_KEYSTORE_PASSWORD
-AIRDROID_KEY_PASSWORD
-AIRDROID_KEY_ALIAS              (optional; defaults to airdroid)
+CROSSPAIR_KEYSTORE_BASE64
+CROSSPAIR_KEYSTORE_PASSWORD
+CROSSPAIR_KEY_PASSWORD
+CROSSPAIR_KEY_ALIAS              (optional; defaults to crosspair)
 ```
 
 Create the base64 value locally without printing the key:
 
 ```bash
-base64 -w0 "$HOME/.android/airdroid-release.jks" > /tmp/airdroid-release.b64
+base64 -w0 "$HOME/.android/crosspair-release.jks" > /tmp/crosspair-release.b64
 ```
 
-Paste the file contents into `AIRDROID_KEYSTORE_BASE64`. Never commit the
+Paste the file contents into `CROSSPAIR_KEYSTORE_BASE64`. Never commit the
 keystore, the base64 value, or either password.
 
 The app workflow builds the ARM64 helper with `cross`, builds the release APK,
@@ -125,8 +125,8 @@ release.
 packs the result with the tracked `out/ramdisk` and `out/dtb` and publishes:
 
 ```text
-boot-airdroid-raphael-<version>.img
-boot-airdroid-raphael-<version>.img.sha256
+boot-crosspair-raphael-<version>.img
+boot-crosspair-raphael-<version>.img.sha256
 ```
 
 This workflow is intentionally manual because kernel output is device-specific

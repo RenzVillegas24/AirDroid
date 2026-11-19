@@ -96,14 +96,14 @@ jobs:
       - name: Decode release keystore
         shell: bash
         env:
-          KEYSTORE_B64: ${{ secrets.AIRDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_B64: ${{ secrets.CROSSPAIR_KEYSTORE_BASE64 }}
         run: |
           if [[ -z "$KEYSTORE_B64" ]]; then
-            echo "missing repository secret AIRDROID_KEYSTORE_BASE64" >&2
+            echo "missing repository secret CROSSPAIR_KEYSTORE_BASE64" >&2
             exit 1
           fi
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/airdroid-release.jks"
-          chmod 600 "$RUNNER_TEMP/airdroid-release.jks"
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/crosspair-release.jks"
+          chmod 600 "$RUNNER_TEMP/crosspair-release.jks"
 
       - name: Build unsigned release APK
         env:
@@ -113,17 +113,17 @@ jobs:
       - name: Sign release APK
         shell: bash
         env:
-          AIRDROID_KEYSTORE: ${{ runner.temp }}/airdroid-release.jks
-          AIRDROID_KEY_ALIAS: ${{ secrets.AIRDROID_KEY_ALIAS || 'airdroid' }}
-          AIRDROID_KEYSTORE_PASSWORD: ${{ secrets.AIRDROID_KEYSTORE_PASSWORD }}
-          AIRDROID_KEY_PASSWORD: ${{ secrets.AIRDROID_KEY_PASSWORD }}
+          CROSSPAIR_KEYSTORE: ${{ runner.temp }}/crosspair-release.jks
+          CROSSPAIR_KEY_ALIAS: ${{ secrets.CROSSPAIR_KEY_ALIAS || 'crosspair' }}
+          CROSSPAIR_KEYSTORE_PASSWORD: ${{ secrets.CROSSPAIR_KEYSTORE_PASSWORD }}
+          CROSSPAIR_KEY_PASSWORD: ${{ secrets.CROSSPAIR_KEY_PASSWORD }}
         run: |
-          if [[ -z "$AIRDROID_KEYSTORE_PASSWORD" ]]; then
-            echo "missing repository secret AIRDROID_KEYSTORE_PASSWORD" >&2
+          if [[ -z "$CROSSPAIR_KEYSTORE_PASSWORD" ]]; then
+            echo "missing repository secret CROSSPAIR_KEYSTORE_PASSWORD" >&2
             exit 1
           fi
-          if [[ -z "$AIRDROID_KEY_PASSWORD" ]]; then
-            echo "missing repository secret AIRDROID_KEY_PASSWORD" >&2
+          if [[ -z "$CROSSPAIR_KEY_PASSWORD" ]]; then
+            echo "missing repository secret CROSSPAIR_KEY_PASSWORD" >&2
             exit 1
           fi
           APK_OUT="$RUNNER_TEMP/CrossPair-${VERSION}.apk"
