@@ -1,7 +1,9 @@
 package io.moonbase.crosspair
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.media.MediaScannerConnection
 import android.content.pm.PackageManager
@@ -231,6 +233,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -243,6 +246,25 @@ import kotlin.coroutines.resume
 
 class MainActivity : ComponentActivity() {
     private lateinit var controller: CrossPairController
+    private var mediaAccessResult: CompletableDeferred<Boolean>? = null
+    private val mediaAccessLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        mediaAccessResult?.complete(result.values.any { it })
+        mediaAccessResult = null
+    }
+
+    suspend fun requestMediaAccess(permissions: List<String>): Boolean {
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) return true
+        if (mediaAccessResult != null) return false
+        val deferred = CompletableDeferred<Boolean>()
+        mediaAccessResult = deferred
+        mediaAccessLauncher.launch(missing.toTypedArray())
+        return withTimeoutOrNull(120_000) { deferred.await() } ?: false
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -4058,17 +4080,11 @@ private suspend fun openReceivedFile(context: Context, path: String) {
         }
         return
     }
+    ensureMediaAccess(context, listOf(path))
     val mime = mimeTypeFor(path)
     // Galleries only open MediaStore entries; a FileProvider URI gets
     // "Media not found" from them. Ask the scanner for the media URI first.
-    val scanned = withTimeoutOrNull(3_000) {
-        suspendCancellableCoroutine<Uri?> { cont ->
-            MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf(mime)) { _, uri ->
-                if (cont.isActive) cont.resume(uri)
-            }
-        }
-    }
-    val mediaUri = scanned?.takeIf { it.scheme == "content" }
+    val mediaUri = mediaUriFor(context, path, mime)
     val uri = mediaUri ?: shareableUri(context, path)
     if (uri == null) {
         withContext(Dispatchers.Main) {
@@ -4076,20 +4092,90 @@ private suspend fun openReceivedFile(context: Context, path: String) {
         }
         return
     }
-    Log.i("CrossPairOpen", "open path=$path uri=$uri mime=$mime media=${mediaUri != null}")
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, mime)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    withContext(Dispatchers.Main) {
-        try {
-            context.startActivity(
-                if (mediaUri != null) intent else Intent.createChooser(intent, "Open with"),
-            )
-        } catch (_: Exception) {
+    val grant = canGrantMediaAccess(context, listOf(path))
+    Log.i("CrossPairOpen", "open path=$path uri=$uri mime=$mime media=${mediaUri != null} grant=$grant")
+    val opened = startViewer(context, uri, mime, chooser = mediaUri == null, grant = grant)
+    if (!opened) {
+        withContext(Dispatchers.Main) {
             Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
         }
     }
+}
+
+private suspend fun startViewer(
+    context: Context,
+    uri: Uri,
+    mime: String,
+    chooser: Boolean,
+    grant: Boolean,
+): Boolean = withContext(Dispatchers.Main) {
+    fun build(withGrant: Boolean): Intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mime)
+        if (withGrant) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    fun launch(withGrant: Boolean) {
+        val intent = build(withGrant)
+        context.startActivity(if (chooser) Intent.createChooser(intent, "Open with") else intent)
+    }
+    try {
+        launch(grant)
+        true
+    } catch (error: Exception) {
+        Log.w("CrossPairOpen", "open failed grant=$grant uri=$uri", error)
+        if (!grant) return@withContext false
+        // Photos and gallery apps hold their own media permission and can
+        // read a MediaStore URI without an explicit grant from us.
+        try {
+            launch(false)
+            true
+        } catch (error2: Exception) {
+            Log.w("CrossPairOpen", "open without grant failed uri=$uri", error2)
+            false
+        }
+    }
+}
+
+private suspend fun mediaUriFor(context: Context, path: String, mime: String): Uri? =
+    withTimeoutOrNull(3_000) {
+        suspendCancellableCoroutine<Uri?> { cont ->
+            MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf(mime)) { _, uri ->
+                if (cont.isActive) cont.resume(uri)
+            }
+        }
+    }?.takeIf { it.scheme == "content" }
+
+private suspend fun ensureMediaAccess(context: Context, paths: List<String>) {
+    val activity = context.findActivity() as? MainActivity ?: return
+    val permissions = requiredMediaPermissions(paths)
+    if (permissions.isEmpty()) return
+    activity.requestMediaAccess(permissions)
+}
+
+private fun canGrantMediaAccess(context: Context, paths: List<String>): Boolean =
+    requiredMediaPermissions(paths).all {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+private fun requiredMediaPermissions(paths: List<String>): List<String> {
+    if (Build.VERSION.SDK_INT < 33) return listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    return paths.mapNotNull { path ->
+        when (mimeTypeFor(path).substringBefore('/')) {
+            "image" -> Manifest.permission.READ_MEDIA_IMAGES
+            "video" -> Manifest.permission.READ_MEDIA_VIDEO
+            "audio" -> Manifest.permission.READ_MEDIA_AUDIO
+            else -> null
+        }
+    }.distinct()
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
 
 private suspend fun shareReceivedFile(context: Context, path: String) {
@@ -4097,7 +4183,11 @@ private suspend fun shareReceivedFile(context: Context, path: String) {
 }
 
 private suspend fun shareReceivedFiles(context: Context, paths: List<String>) {
-    val uris = paths.mapNotNull { shareableUri(context, it) }
+    ensureMediaAccess(context, paths)
+    val uris = paths.mapNotNull { path ->
+        val mime = mimeTypeFor(path)
+        mediaUriFor(context, path, mime) ?: shareableUri(context, path)
+    }
     if (uris.isEmpty()) return
     val intent = if (uris.size == 1) {
         Intent(Intent.ACTION_SEND).apply {
@@ -4110,11 +4200,15 @@ private suspend fun shareReceivedFiles(context: Context, paths: List<String>) {
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
         }
     }
-    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    if (canGrantMediaAccess(context, paths)) {
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     withContext(Dispatchers.Main) {
         try {
             context.startActivity(Intent.createChooser(intent, "Share received files"))
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w("CrossPairOpen", "share failed uris=$uris", error)
             Toast.makeText(context, "No app can share these files", Toast.LENGTH_SHORT).show()
         }
     }
