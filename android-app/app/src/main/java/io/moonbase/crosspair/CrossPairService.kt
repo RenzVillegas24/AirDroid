@@ -60,14 +60,16 @@ class CrossPairService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
+        // Promote to foreground before anything that can be slow: a pending
+        // startForegroundService() that misses the window crashes the process.
+        createChannel()
+        startForeground(NOTIFICATION_ID, buildNotification())
         if (CrossPairControllerHolder.current == null) {
             ownsController = true
             CrossPairControllerHolder.current = CrossPairController(applicationContext).also {
                 it.verifyKernelWithRoot()
             }
         }
-        createChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
