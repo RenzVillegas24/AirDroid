@@ -170,6 +170,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -362,7 +364,13 @@ private enum class PeerAction(val label: String, @DrawableRes val icon: Int) {
     PASTE("Paste", R.drawable.ic_content_paste),
 }
 
-private data class StagedItem(val path: String, val name: String, val size: Long)
+private data class StagedItem(
+    val path: String,
+    val name: String,
+    val size: Long,
+    /** The staging job that produced this file, so its row keeps one identity from add to ready. */
+    val jobId: Long? = null,
+)
 
 private enum class HomeTab(val label: String) {
     SENT("Sent"),
@@ -918,17 +926,22 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     var sheetItems by remember { mutableStateOf<List<StagedItem>>(emptyList()) }
     var cameraFile by remember { mutableStateOf<File?>(null) }
 
-    fun addStaged(items: List<Pair<File, String>>) {
+    fun addStaged(items: List<Pair<File, String>>, jobId: Long? = null) {
         if (items.isEmpty()) return
         sheetItems = sheetItems + items.map { (file, name) ->
-            StagedItem(file.absolutePath, name, controller.stagedSize(file.absolutePath, file.length()))
+            StagedItem(
+                file.absolutePath,
+                name,
+                controller.stagedSize(file.absolutePath, file.length()),
+                jobId,
+            )
         }
     }
 
     fun addUris(uris: List<Uri>) {
         if (uris.isEmpty()) return
         scope.launch {
-            controller.stageFiles(uris) { addStaged(listOf(it)) }
+            controller.stageFiles(uris) { file, jobId -> addStaged(listOf(file), jobId) }
         }
     }
 
@@ -2223,6 +2236,10 @@ private const val BlinkHalfPeriodMs = 250
 private const val BlinkCount = 3
 private const val BlinkLifetimeMs = 1_600L
 
+/** Shown in place of the file type icon for the three blinks of a just-added file. */
+@DrawableRes
+private val DoneIconRes = R.drawable.ic_check_circle
+
 /**
  * The slide a row still has to play after it was re-slotted (e.g. progress -> done).
  *
@@ -2268,6 +2285,8 @@ private fun AnimatedFileSlot(
     onOpen: (() -> Unit)?,
     shift: SlotShift,
     visibility: MutableTransitionState<Boolean>,
+    stagedStyle: Boolean = false,
+    onRemove: (() -> Unit)? = null,
 ) {
     visibility.targetState = visible
     // Remember the last real slot so a row that is leaving keeps its gap while it shrinks
@@ -2305,6 +2324,8 @@ private fun AnimatedFileSlot(
                     received = received,
                     justCompleted = justCompleted,
                     onOpen = onOpen,
+                    onRemove = onRemove,
+                    stagedStyle = stagedStyle,
                 )
             }
         }
@@ -2585,6 +2606,8 @@ private fun TransferFileRow(
     justCompleted: Boolean,
     onOpen: (() -> Unit)?,
     onRemove: (() -> Unit)? = null,
+    /** Sheet rows: no trailing done mark; the file icon turns into a check during the blink. */
+    stagedStyle: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     val transferring = file.status == TransferStatus.TRANSFERRING
@@ -2626,8 +2649,10 @@ private fun TransferFileRow(
     )
     // Exactly three smooth on/off pulses, then back to the normal row color.
     val blink = remember { Animatable(0f) }
+    var checkShown by remember { mutableStateOf(false) }
     LaunchedEffect(justCompleted) {
         blink.snapTo(0f)
+        checkShown = stagedStyle && justCompleted
         if (justCompleted) {
             repeat(BlinkCount) {
                 blink.animateTo(
@@ -2639,6 +2664,8 @@ private fun TransferFileRow(
                     animationSpec = tween(BlinkHalfPeriodMs, easing = LinearEasing),
                 )
             }
+            // Three blinks done: the check turns back into the file type icon.
+            checkShown = false
         }
     }
     val rowColor = if (blink.value > 0f) {
@@ -2721,18 +2748,24 @@ private fun TransferFileRow(
                         modifier = Modifier.size(34.dp),
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(fileIcon(file.name)),
-                                contentDescription = null,
-                                tint = if (failed) {
-                                    colors.onErrorContainer
-                                } else if (received) {
-                                    colors.onTertiaryContainer
-                                } else {
-                                    colors.onPrimaryContainer
-                                },
-                                modifier = Modifier.size(19.dp),
-                            )
+                            Crossfade(
+                                targetState = if (checkShown) DoneIconRes else fileIcon(file.name),
+                                animationSpec = tween(160),
+                                label = "fileIcon",
+                            ) { iconRes ->
+                                Icon(
+                                    painter = painterResource(iconRes),
+                                    contentDescription = null,
+                                    tint = if (failed) {
+                                        colors.onErrorContainer
+                                    } else if (received) {
+                                        colors.onTertiaryContainer
+                                    } else {
+                                        colors.onPrimaryContainer
+                                    },
+                                    modifier = Modifier.size(19.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -2783,12 +2816,14 @@ private fun TransferFileRow(
                 )
             }
             when (file.status) {
-                TransferStatus.COMPLETE -> Icon(
-                    painter = painterResource(R.drawable.ic_check_circle),
-                    contentDescription = "Complete",
-                    tint = colors.primary,
-                    modifier = Modifier.size(21.dp),
-                )
+                TransferStatus.COMPLETE -> if (!stagedStyle) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_check_circle),
+                        contentDescription = "Complete",
+                        tint = colors.primary,
+                        modifier = Modifier.size(21.dp),
+                    )
+                }
                 TransferStatus.CANCELLED -> Icon(
                     painter = painterResource(R.drawable.ic_close),
                     contentDescription = "Cancelled",
@@ -3206,19 +3241,21 @@ private fun PeerSheetContent(
                     )
                 }
             }
+            // The group is always in the list, so a removed last row can still shrink away.
+            item(key = "files-group") {
+                FilesGroup(
+                    staged = selectedItems,
+                    jobs = stagingJobs,
+                    onRemoveStaged = onRemoveItem,
+                    onRemoveStaging = onRemoveStaging,
+                    modifier = Modifier
+                        .animateItem()
+                        .padding(horizontal = 20.dp),
+                )
+            }
             if (selectedItems.isEmpty() && stagingJobs.isEmpty()) {
                 item(key = "emptyItems") {
-                    EmptyItemsState(modifier = Modifier.padding(horizontal = 20.dp))
-                }
-            } else {
-                item(key = "files-group") {
-                    FilesGroup(
-                        staged = selectedItems,
-                        jobs = stagingJobs,
-                        onRemoveStaged = onRemoveItem,
-                        onRemoveStaging = onRemoveStaging,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                    )
+                    EmptyItemsState(modifier = Modifier.animateItem().padding(horizontal = 20.dp))
                 }
             }
         }
@@ -3769,7 +3806,18 @@ private fun AttachControls(
     }
 }
 
-/** Staged files and files still being added, in the transfer group shape. */
+/** One row of the sheet's file list. */
+private class StagedRow(val file: TransferFile, val onRemove: () -> Unit)
+
+/** A row that left the list and stays composed until its shrink animation ends. */
+private class RowGhost(val row: StagedRow, val index: Int)
+
+/**
+ * Staged files and files still being added, animated like the Send and Receive lists: rows
+ * grow in with the bouncy expand, slide to their done slot when they finish, blink three times
+ * (the file icon turns into a check for those blinks) and shrink away when removed.
+ * There is no "n of n done" header.
+ */
 @Composable
 private fun FilesGroup(
     staged: List<StagedItem>,
@@ -3778,41 +3826,132 @@ private fun FilesGroup(
     onRemoveStaging: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (staged.isEmpty() && jobs.isEmpty()) return
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val stridePx = with(density) { (TransferFileRowHeight + TransferItemGap).toPx() }
+
+    // Live rows. A file that is ready replaces its own job row (same key), so one row follows
+    // the file from "adding" to "ready". Files being added sit on top, ready files below.
+    val stagedRows = staged.map { item -> StagedRow(item.asTransferFile()) { onRemoveStaged(item) } }
+    val stagedKeys = stagedRows.mapTo(HashSet()) { it.file.id }
+    val jobRows = jobs
+        .map { job -> StagedRow(job.asTransferFile()) { onRemoveStaging(job.id) } }
+        .filter { it.file.id !in stagedKeys }
+    val live = (jobRows + stagedRows).sortedBy { fileQueueRank(it.file) }
+    val liveIds = live.mapTo(HashSet()) { it.file.id }
+
+    // Rows that just left stay composed as ghosts so they can shrink instead of vanishing.
+    val initialIds = remember { liveIds.toSet() }
+    val ghosts = remember { LinkedHashMap<String, RowGhost>() }
+    val previous = remember { ArrayList<StagedRow>() }
+    var ghostVersion by remember { mutableIntStateOf(0) }
+    @Suppress("UNUSED_VARIABLE") val ghostTick = ghostVersion
+    previous.forEachIndexed { index, row ->
+        if (row.file.id !in liveIds && row.file.id !in ghosts) {
+            ghosts[row.file.id] = RowGhost(StagedRow(row.file) {}, index)
+        }
+    }
+    ghosts.keys.removeAll(liveIds)
+    val display = ArrayList<StagedRow>(live)
+    ghosts.values.sortedBy { it.index }.forEach { ghost ->
+        display.add(ghost.index.coerceAtMost(display.size), ghost.row)
+    }
+    previous.clear()
+    previous.addAll(display)
+
+    val orderedIds = display.map { it.file.id }
+    val visibleIds = display.map { it.file.id }.filter { it in liveIds }
+
+    // Blink: a row that finishes (or a ready file that arrives on its own) blinks in place.
+    val blinks = remember { mutableStateMapOf<String, Long>() }
+    val seenStatuses = remember { mutableMapOf<String, TransferStatus>() }
+    val statusKey = live.map { it.file.id to it.file.status }
+    LaunchedEffect(statusKey) {
+        seenStatuses.keys.retainAll(liveIds)
+        live.forEach { row ->
+            val file = row.file
+            val before = seenStatuses[file.id]
+            val finished = file.status == TransferStatus.COMPLETE && (
+                (before != null && before.isActive) ||
+                    (before == null && file.id !in initialIds)
+                )
+            if (finished) {
+                val stamp = SystemClock.elapsedRealtime()
+                blinks[file.id] = stamp
+                scope.launch {
+                    delay(BlinkLifetimeMs)
+                    if (blinks[file.id] == stamp) blinks.remove(file.id)
+                }
+            }
+            seenStatuses[file.id] = file.status
+        }
+    }
+
+    // Same slot-shift bookkeeping as the transfer list: runs before layout, so a row that
+    // changes slot slides from where it was instead of jumping.
+    val shifts = remember { mutableMapOf<String, SlotShift>() }
+    val visibilityStates = remember { mutableMapOf<String, MutableTransitionState<Boolean>>() }
+    val lastLayout = remember { SlotLayout(orderedIds, visibleIds) }
+    SideEffect {
+        if (lastLayout.order != orderedIds || lastLayout.visible != visibleIds) {
+            val oldSlot = HashMap<String, Int>()
+            val wasVisible = lastLayout.visible.toHashSet()
+            lastLayout.order
+                .filter { it in wasVisible }
+                .forEachIndexed { index, id -> oldSlot[id] = index }
+            var occupiedAbove = 0
+            orderedIds.forEach { id ->
+                val oldIndex = oldSlot[id]
+                if (oldIndex != null) {
+                    val delta = oldIndex - occupiedAbove
+                    if (delta != 0) {
+                        shifts.getOrPut(id) { SlotShift() }.shiftBy(delta * stridePx, scope)
+                    }
+                    occupiedAbove++
+                }
+            }
+            val idSet = orderedIds.toHashSet()
+            shifts.keys.retainAll(idSet)
+            visibilityStates.keys.retainAll(idSet)
+            lastLayout.order = orderedIds
+            lastLayout.visible = visibleIds
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(TransferGroupShape),
     ) {
-        FileGroupHeader(
-            done = staged.size + jobs.count { it.done },
-            total = staged.size + jobs.size,
-            active = true,
-            received = false,
-            expanded = true,
-            onClick = {},
-            toggleable = false,
-        )
-        jobs.forEach { job ->
-            Box(Modifier.padding(top = TransferItemGap)) {
-                TransferFileRow(
-                    file = job.asTransferFile(),
+        display.forEach { row ->
+            val id = row.file.id
+            key(id) {
+                val visible = id in liveIds
+                // Rows present when the sheet opened start shown; later ones grow in.
+                val visibility = visibilityStates.getOrPut(id) {
+                    MutableTransitionState(id in initialIds)
+                }
+                val shift = shifts.getOrPut(id) { SlotShift() }
+                AnimatedFileSlot(
+                    file = row.file,
                     received = false,
-                    justCompleted = false,
+                    visible = visible,
+                    targetIndex = visibleIds.indexOf(id),
+                    hasHeader = false,
+                    justCompleted = blinks.containsKey(id),
                     onOpen = null,
-                    onRemove = { onRemoveStaging(job.id) },
+                    shift = shift,
+                    visibility = visibility,
+                    stagedStyle = true,
+                    onRemove = row.onRemove,
                 )
-            }
-        }
-        staged.forEach { item ->
-            Box(Modifier.padding(top = TransferItemGap)) {
-                TransferFileRow(
-                    file = item.asTransferFile(),
-                    received = false,
-                    justCompleted = false,
-                    onOpen = null,
-                    onRemove = { onRemoveStaged(item) },
-                )
+                if (!visible) {
+                    LaunchedEffect(Unit) {
+                        snapshotFlow { visibility.isIdle && !visibility.currentState }.first { it }
+                        ghosts.remove(id)
+                        ghostVersion++
+                    }
+                }
             }
         }
     }
@@ -3823,7 +3962,7 @@ private fun StagingJob.asTransferFile(): TransferFile {
     val total = size ?: 0L
     val moved = if (total > 0) (((progress ?: 0f) * total).toLong()).coerceAtMost(total) else 0L
     return TransferFile(
-        id = "staging-$id",
+        id = "file-$id",
         name = name,
         totalBytes = total,
         transferredBytes = moved,
@@ -3837,7 +3976,7 @@ private fun StagingJob.asTransferFile(): TransferFile {
 
 /** A staged file as a completed transfer row. */
 private fun StagedItem.asTransferFile(): TransferFile = TransferFile(
-    id = "staged-$path",
+    id = jobId?.let { "file-$it" } ?: "staged-$path",
     name = name,
     totalBytes = size,
     transferredBytes = size,

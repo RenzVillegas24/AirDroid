@@ -1291,7 +1291,7 @@ class AirDroidController(private val context: Context) {
 
     suspend fun pickFile(uri: Uri) {
         var picked: Pair<File, String>? = null
-        stageFiles(listOf(uri)) { picked = it }
+        stageFiles(listOf(uri)) { file, _ -> picked = file }
         pickedFile = picked?.first
         pickedDisplayName = picked?.second
         sendMessage = when {
@@ -1310,7 +1310,7 @@ class AirDroidController(private val context: Context) {
      */
     suspend fun stageFiles(
         uris: List<Uri>,
-        onReady: suspend (Pair<File, String>) -> Unit,
+        onReady: suspend (Pair<File, String>, Long) -> Unit,
     ): Int {
         if (uris.isEmpty()) return 0
         var ready = 0
@@ -1341,12 +1341,12 @@ class AirDroidController(private val context: Context) {
                     }
                 }
                 if (result != null) {
-                    // Let the check show before the file moves into the list.
+                    // The row keeps its identity (the job id travels with the file), so
+                    // the list slides it into its done slot and blinks it there.
                     stagingJobs = stagingJobs.map {
                         if (it.id == job.id) it.copy(progress = 1f, done = true) else it
                     }
-                    delay(350)
-                    onReady(result)
+                    onReady(result, job.id)
                     ready++
                 }
             } finally {
