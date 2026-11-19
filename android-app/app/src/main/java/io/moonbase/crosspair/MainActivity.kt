@@ -3,10 +3,12 @@ package io.moonbase.crosspair
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.media.MediaScannerConnection
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -233,8 +235,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.coroutines.resume
 
 class MainActivity : ComponentActivity() {
     private lateinit var controller: CrossPairController
@@ -2418,8 +2423,15 @@ private fun TransferFileList(
         .maxByOrNull { it.completedAt ?: 0L }
         ?.id
     val visibleDoneId = recentDoneId ?: pendingDoneId
-    // Every file is always shown; the group no longer collapses to three rows.
-    val visibleIds: List<String> = orderedFiles.map { it.id }
+    val visibleIds: List<String> = when {
+        expanded -> orderedFiles.map { it.id }
+        // While collapsed, keep the current row and the actual next queued row
+        // visible, and use the third slot for the just-finished blink. This
+        // keeps the group at exactly three rows.
+        active && visibleDoneId != null -> activeIds.take(2) + visibleDoneId
+        active -> activeIds.take(3)
+        else -> emptyList()
+    }
     val visibleSet = visibleIds.toHashSet()
     val orderedIds = orderedFiles.map { it.id }
     val density = LocalDensity.current
@@ -2479,9 +2491,8 @@ private fun TransferFileList(
                 total = files.size,
                 active = active,
                 received = received,
-                expanded = true,
-                onClick = {},
-                toggleable = false,
+                expanded = expanded,
+                onClick = onToggle,
             )
         }
         // Keep every row composed. This is what lets the bouncy expand run for
@@ -4041,27 +4052,40 @@ private fun fileIcon(name: String): Int {
 
 private suspend fun openReceivedFile(context: Context, path: String) {
     val file = File(path)
-    val uri = shareableUri(context, path)
-    if (uri == null || !file.exists()) {
+    if (!file.exists()) {
         withContext(Dispatchers.Main) {
-            Toast.makeText(
-                context,
-                "That file is no longer on this phone",
-                Toast.LENGTH_SHORT,
-            ).show()
+            Toast.makeText(context, "That file is no longer on this phone", Toast.LENGTH_SHORT).show()
         }
         return
     }
+    val mime = mimeTypeFor(path)
+    // Galleries only open MediaStore entries; a FileProvider URI gets
+    // "Media not found" from them. Ask the scanner for the media URI first.
+    val scanned = withTimeoutOrNull(3_000) {
+        suspendCancellableCoroutine<Uri?> { cont ->
+            MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf(mime)) { _, uri ->
+                if (cont.isActive) cont.resume(uri)
+            }
+        }
+    }
+    val mediaUri = scanned?.takeIf { it.scheme == "content" }
+    val uri = mediaUri ?: shareableUri(context, path)
+    if (uri == null) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
+        }
+        return
+    }
+    Log.i("CrossPairOpen", "open path=$path uri=$uri mime=$mime media=${mediaUri != null}")
     val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, mimeTypeFor(path))
+        setDataAndType(uri, mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     withContext(Dispatchers.Main) {
-        // A chooser lets the user pick a viewer that handles a FileProvider
-        // URI; some galleries only open MediaStore entries and report
-        // "Media not found" for everything else.
         try {
-            context.startActivity(Intent.createChooser(intent, "Open with"))
+            context.startActivity(
+                if (mediaUri != null) intent else Intent.createChooser(intent, "Open with"),
+            )
         } catch (_: Exception) {
             Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
         }
