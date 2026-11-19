@@ -427,6 +427,8 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
 
     let radio = RadioConstraints { channel: Channel(channel), presence: Presence::Fixed };
     let mut cfg = Config::new(addr, "airdroid-k20", radio);
+    // A phone, not a Mac: peers show the phone icon and label.
+    cfg.devclass = owly_awdl::tlv::devclass::IOS;
     cfg.rssi_threshold = Some(-85);
     // The K20's WMI management-TX path caps a frame at 1532 bytes. A-MSDU
     // would exceed that and be dropped, so keep one MPDU per injection.

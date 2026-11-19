@@ -25,6 +25,9 @@ AirDrop-capable kernel, and this release only fixes the app.
 - **A device could appear before its name did.** The generic "iPhone" label
   stood in for a UUID; the card now shows a loading placeholder until the real
   name arrives.
+- **The phones looked like computers.** The AWDL Version TLV announced macOS,
+  so the other phone drew a PC icon. It now announces the phone class and the
+  app labels it "Phone".
 
 No name, MAC, channel or peer table is hardcoded. Names come from the AirDrop
 announcement, channels from the configured channel, MACs from the interfaces.

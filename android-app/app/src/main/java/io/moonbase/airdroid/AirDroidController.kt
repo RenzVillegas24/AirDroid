@@ -4025,14 +4025,14 @@ fun Peer.hasDisplayName(): Boolean = name.isNotBlank() && !PEER_UUID.matches(nam
 fun Peer.displayName(): String {
     if (hasDisplayName()) return name
     return when (devclass) {
-        2 -> "iPhone"
+        2 -> "Phone"
         1 -> "Computer"
         else -> "Nearby device"
     }
 }
 
 fun Peer.typeLabel(): String = when (devclass) {
-    2 -> "iPhone"
+    2 -> "Phone"
     1 -> "Computer"
     else -> "AirDrop device"
 }

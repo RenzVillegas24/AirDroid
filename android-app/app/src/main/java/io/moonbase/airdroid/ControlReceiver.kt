@@ -165,21 +165,21 @@ class ControlReceiver : BroadcastReceiver() {
             "AirDroidDebug",
             "status=${controller.status} scanning=${controller.scanning} " +
                 "receiver=${controller.receiverRunning} " +
-                "peers=${controller.peers.count { it.name.isNotBlank() || it.airdropReady }} " +
+                "peers=${controller.peers.count { it.airdropReady }} " +
                 "sent=${controller.completedTransfers.count { it.direction == TransferDirection.SENT }} " +
                 "received=${controller.completedTransfers.count { it.direction == TransferDirection.RECEIVED }}",
         )
         controller.selectedPeer?.let {
             Log.i(
                 "AirDroidDebug",
-                "selected=${it.mac} ${it.name} rssi=${it.rssi} " +
+                "selected=${it.mac} ${it.name} devclass=${it.devclass} rssi=${it.rssi} " +
                     "channel=${it.awdlChannel} airdrop=${it.airdropState}",
             )
         }
         controller.peers.forEach { peer ->
             Log.i(
                 "AirDroidDebug",
-                "peer=${peer.mac} name=${peer.name} rssi=${peer.rssi} " +
+                "peer=${peer.mac} name=${peer.name} devclass=${peer.devclass} rssi=${peer.rssi} " +
                     "channel=${peer.awdlChannel} airdrop=${peer.airdropState}",
             )
         }
