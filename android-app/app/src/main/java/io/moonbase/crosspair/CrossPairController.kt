@@ -1058,10 +1058,11 @@ class CrossPairController(private val context: Context) {
 
     /** Notification Stop: stop transfers and leave monitor/Transfer mode. */
     /**
-     * Stops Transfer mode, drops the old staging area, then opens the system
-     * uninstaller. Everything under filesDir goes with the package.
+     * Stops Transfer mode and drops the old staging area. The caller opens the
+     * system uninstaller from an Activity, which is the only context Android
+     * lets show that dialog reliably.
      */
-    suspend fun uninstallSelf() {
+    suspend fun prepareForUninstall() {
         runCatching { stopEverythingAndRestoreWifi() }
         execRoot(
             label = "cleanup before uninstall",
@@ -1071,14 +1072,6 @@ class CrossPairController(private val context: Context) {
                 "/data/local/tmp/owly-mode.log /data/local/tmp/owly-watchdog.log; true",
             requirePrepared = false,
         )
-        withContext(Dispatchers.Main) {
-            runCatching {
-                context.startActivity(
-                    Intent(Intent.ACTION_DELETE, Uri.parse("package:${context.packageName}"))
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            }
-        }
     }
 
     suspend fun stopEverythingAndRestoreWifi() {

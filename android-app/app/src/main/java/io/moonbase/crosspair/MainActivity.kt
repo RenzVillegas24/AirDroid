@@ -116,6 +116,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.HorizontalFloatingToolbar
@@ -5051,7 +5052,10 @@ private fun SettingsScreen(controller: CrossPairController) {
     var pendingChannel by remember { mutableStateOf<Int?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showRemoveDialog by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf(false) }
+    var removalNote by remember { mutableStateOf<String?>(null) }
     val settingsScope = rememberCoroutineScope()
+    val settingsContext = LocalContext.current
     var updateCheckPending by remember { mutableStateOf(false) }
     val updateAvailable = controller.updateState is UpdateState.Available
     val dialogRelease = when (val state = controller.updateState) {
@@ -5459,26 +5463,35 @@ private fun SettingsScreen(controller: CrossPairController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    CrossPairButtonGroup(
-                        options = UploadPolicy.entries,
-                        selected = uploadPolicy,
-                        label = { it.label },
-                        onSelected = {
-                            uploadPolicy = it
-                            val current = controller.settings
-                            controller.saveSettings(
-                                current.channel,
-                                current.bleArm,
-                                current.deviceName,
-                                current.themeMode,
-                                current.tintMode,
-                                current.pauseDiscoveryDuringTransfer,
-                                current.visibleDuringTransfer,
-                                it,
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    val choose: (UploadPolicy) -> Unit = { policy ->
+                        uploadPolicy = policy
+                        val current = controller.settings
+                        controller.saveSettings(
+                            current.channel,
+                            current.bleArm,
+                            current.deviceName,
+                            current.themeMode,
+                            current.tintMode,
+                            current.pauseDiscoveryDuringTransfer,
+                            current.visibleDuringTransfer,
+                            policy,
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        UploadPolicy.entries.chunked(3).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                row.forEach { policy ->
+                                    FilterChip(
+                                        selected = uploadPolicy == policy,
+                                        onClick = { choose(policy) },
+                                        label = { Text(policy.label) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(6.dp))
                     Text(
                         text = uploadPolicy.summary,
@@ -5626,6 +5639,7 @@ private fun SettingsScreen(controller: CrossPairController) {
                 SettingsListItem(
                     icon = R.drawable.ic_refresh,
                     headline = "App updates",
+                    busy = controller.updateState is UpdateState.Checking,
                     supporting = updateSupporting(controller),
                     trailing = when (controller.updateState) {
                         UpdateState.Checking -> "Checking"
@@ -5652,9 +5666,11 @@ private fun SettingsScreen(controller: CrossPairController) {
                 SettingsListItem(
                     icon = R.drawable.ic_delete,
                     headline = "Remove CrossPair",
-                    supporting = "Stops Transfer mode, deletes the app and its private files. " +
+                    supporting = removalNote
+                        ?: "Stops Transfer mode, deletes the app and its private files. " +
                         "Received files stay in Download/CrossPair.",
-                    onClick = { showRemoveDialog = true },
+                    busy = removing,
+                    onClick = { if (!removing) showRemoveDialog = true },
                 )
             }
         }
@@ -5705,7 +5721,28 @@ private fun SettingsScreen(controller: CrossPairController) {
                 TextButton(
                     onClick = {
                         showRemoveDialog = false
-                        settingsScope.launch { controller.uninstallSelf() }
+                        settingsScope.launch {
+                            removing = true
+                            removalNote = "Stopping Transfer mode and cleaning up…"
+                            controller.prepareForUninstall()
+                            removalNote = "Cleanup done. Confirm the uninstall in the system dialog."
+                            removing = false
+                            val pkg = Uri.parse("package:${settingsContext.packageName}")
+                            val opened = runCatching {
+                                settingsContext.startActivity(Intent(Intent.ACTION_DELETE, pkg))
+                            }.isSuccess
+                            if (!opened) {
+                                runCatching {
+                                    settingsContext.startActivity(
+                                        Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            pkg,
+                                        ),
+                                    )
+                                }
+                                removalNote = "Open App info → Uninstall to remove CrossPair."
+                            }
+                        }
                     },
                 ) {
                     Text("Remove", color = MaterialTheme.colorScheme.error)
@@ -5887,7 +5924,7 @@ private fun ModeButtonContent(
 }
 
 @Composable
-private fun SettingsIconBubble(@DrawableRes icon: Int) {
+private fun SettingsIconBubble(@DrawableRes icon: Int, busy: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     Surface(
         shape = CircleShape,
@@ -5895,12 +5932,20 @@ private fun SettingsIconBubble(@DrawableRes icon: Int) {
         modifier = Modifier.size(40.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(
-                painter = painterResource(icon),
-                contentDescription = null,
-                tint = colors.onPrimaryContainer,
-                modifier = Modifier.size(22.dp),
-            )
+            if (busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    strokeWidth = 2.dp,
+                    color = colors.onPrimaryContainer,
+                )
+            } else {
+                Icon(
+                    painter = painterResource(icon),
+                    contentDescription = null,
+                    tint = colors.onPrimaryContainer,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
     }
 }
@@ -5924,6 +5969,7 @@ private fun SettingsListItem(
     supporting: String,
     trailing: String? = null,
     avatarRes: Int? = null,
+    busy: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -5952,7 +5998,7 @@ private fun SettingsListItem(
                             .clip(CircleShape),
                     )
                 } else {
-                    SettingsIconBubble(icon)
+                    SettingsIconBubble(icon, busy)
                 }
             },
             headlineContent = {
