@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AirDroid"
+rootProject.name = "CrossPair"
 include(":app")
