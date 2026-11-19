@@ -116,7 +116,6 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.HorizontalFloatingToolbar
@@ -5463,35 +5462,26 @@ private fun SettingsScreen(controller: CrossPairController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    val choose: (UploadPolicy) -> Unit = { policy ->
-                        uploadPolicy = policy
-                        val current = controller.settings
-                        controller.saveSettings(
-                            current.channel,
-                            current.bleArm,
-                            current.deviceName,
-                            current.themeMode,
-                            current.tintMode,
-                            current.pauseDiscoveryDuringTransfer,
-                            current.visibleDuringTransfer,
-                            policy,
-                        )
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        UploadPolicy.entries.chunked(3).forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                row.forEach { policy ->
-                                    FilterChip(
-                                        selected = uploadPolicy == policy,
-                                        onClick = { choose(policy) },
-                                        label = { Text(policy.label) },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
-                                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                            }
-                        }
-                    }
+                    CrossPairButtonGroup(
+                        options = UploadPolicy.entries,
+                        selected = uploadPolicy,
+                        label = { it.label },
+                        onSelected = {
+                            uploadPolicy = it
+                            val current = controller.settings
+                            controller.saveSettings(
+                                current.channel,
+                                current.bleArm,
+                                current.deviceName,
+                                current.themeMode,
+                                current.tintMode,
+                                current.pauseDiscoveryDuringTransfer,
+                                current.visibleDuringTransfer,
+                                it,
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Spacer(Modifier.height(6.dp))
                     Text(
                         text = uploadPolicy.summary,
