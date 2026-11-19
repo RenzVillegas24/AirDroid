@@ -1052,8 +1052,8 @@ async fn session(
                                         mdns_cache.lock().unwrap().found(&found);
                                         remember_service_name(&names, &found);
                                         println!(
-                                            "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
-                                            found.instance, found.host, found.addr, found.port, found.flags
+                                            "FOUND instance={:?} name={:?} host={:?} addr={} port={} flags=0x{:x}",
+                                            found.instance, found.name, found.host, found.addr, found.port, found.flags
                                         );
                                     }
                                     Some(BrowseEvent::Withdrawn(instance)) => {
@@ -1262,8 +1262,8 @@ async fn session(
                     mdns_cache.lock().unwrap().found(&found);
                     remember_service_name(&names, &found);
                     println!(
-                        "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
-                        found.instance, found.host, found.addr, found.port, found.flags
+                        "FOUND instance={:?} name={:?} host={:?} addr={} port={} flags=0x{:x}",
+                        found.instance, found.name, found.host, found.addr, found.port, found.flags
                     );
                 }
                 Some(BrowseEvent::Withdrawn(instance)) => {
