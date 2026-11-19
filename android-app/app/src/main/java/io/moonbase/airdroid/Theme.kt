@@ -30,7 +30,7 @@ enum class ThemeMode(val label: String) {
 }
 
 enum class TintMode(val label: String) {
-    CUSTOM("AirDroid"),
+    CUSTOM("CrossPair"),
     SYSTEM("System"),
 }
 

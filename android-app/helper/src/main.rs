@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let channel = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_CHANNEL);
             let name = args.get(3).cloned().unwrap_or_else(|| "AirDroid K20".into());
             let dir = PathBuf::from(
-                args.get(4).cloned().unwrap_or_else(|| "/sdcard/Download/AirDroid".into()),
+                args.get(4).cloned().unwrap_or_else(|| "/sdcard/Download/CrossPair".into()),
             );
             let port = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(RECEIVER_PORT);
             session(channel, name, dir, port).await
@@ -432,7 +432,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     set_radio_channel(channel);
 
     let radio = RadioConstraints { channel: Channel(channel), presence: Presence::Fixed };
-    let mut cfg = Config::new(addr, "airdroid-k20", radio);
+    let mut cfg = Config::new(addr, "crosspair-k20", radio);
     // A phone, not a Mac: peers show the phone icon and label.
     cfg.devclass = owly_awdl::tlv::devclass::IOS;
     cfg.rssi_threshold = Some(-85);

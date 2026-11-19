@@ -101,7 +101,7 @@ data class AirDroidSettings(
     val channel: Int = 0,
     // V2 is the best wake arm for the K20/iPhone pair.
     val bleArm: Int = 1,
-    val deviceName: String = "AirDroid K20",
+    val deviceName: String = "CrossPair K20",
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val tintMode: TintMode = TintMode.CUSTOM,
     val pauseDiscoveryDuringTransfer: Boolean = true,
@@ -166,7 +166,7 @@ enum class MonitorState(val badge: String) {
  * verified by reading the boot command line through root.
  */
 enum class KernelSupport(val label: String) {
-    SUPPORTED("AirDroid injection support verified"),
+    SUPPORTED("CrossPair injection support verified"),
     MISSING("No AirDroid injection support"),
     UNKNOWN("Injection support not verified"),
 }
@@ -197,7 +197,7 @@ data class KernelStatus(
             return copy(
                 state = MonitorState.MONITOR,
                 detail = if (support == KernelSupport.MISSING) {
-                    "Monitor mode is available, but AirDroid injection support was not found."
+                    "Monitor mode is available, but CrossPair injection support was not found."
                 } else {
                     "Ready for AirDrop discovery and transfers."
                 },
@@ -264,7 +264,7 @@ data class KernelStatus(
 class AirDroidController(private val context: Context) {
     companion object {
         private const val APP_TMP = "/data/local/tmp/owly-app"
-        const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
+        const val RECEIVE_DIR = "/sdcard/Download/CrossPair"
         const val AUTO_CHANNEL = 0
         private const val MIN_AUTO_DWELL_SECS = 6
         private const val MAX_AUTO_DWELL_SECS = 30
@@ -460,7 +460,7 @@ class AirDroidController(private val context: Context) {
 
     init {
         status = if (kernel.monitorReady) "READY" else kernel.state.badge
-        append("AirDroid K20")
+        append("CrossPair K20")
         append("AirDrop over AWDL · Jetpack Compose · Material 3")
         append("Channel ${settings.channel} · BLE arm ${settings.bleArm}")
         append("Kernel ${kernel.release}")
@@ -577,7 +577,7 @@ class AirDroidController(private val context: Context) {
     suspend fun saveLogs(uri: Uri): Boolean {
         val snapshot = logs.toList()
         val header = buildString {
-            appendLine("# AirDroid ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            appendLine("# CrossPair ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             appendLine("# Kernel ${kernel.release}")
             appendLine("# Saved ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}")
             appendLine()
@@ -684,7 +684,7 @@ class AirDroidController(private val context: Context) {
         uploadPolicy: UploadPolicy = settings.uploadPolicy,
     ) {
         val previous = settings
-        val cleanName = deviceName.trim().ifBlank { "AirDroid K20" }
+        val cleanName = deviceName.trim().ifBlank { "CrossPair K20" }
         val effectiveChannel = channel
         settings = settings.copy(
             channel = effectiveChannel,
@@ -758,7 +758,7 @@ class AirDroidController(private val context: Context) {
     private fun loadSettings(): AirDroidSettings = AirDroidSettings(
         channel = prefs.getInt("channel", AUTO_CHANNEL),
         bleArm = prefs.getInt("bleArm", 1),
-        deviceName = prefs.getString("deviceName", "AirDroid K20") ?: "AirDroid K20",
+        deviceName = prefs.getString("deviceName", "CrossPair K20") ?: "CrossPair K20",
         themeMode = prefs.getString("themeMode", ThemeMode.SYSTEM.name)
             ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
             ?: ThemeMode.SYSTEM,
@@ -1818,7 +1818,7 @@ class AirDroidController(private val context: Context) {
         if (kernel.monitorReady && kernel.support != KernelSupport.MISSING) return true
         if (kernel.monitorReady && kernel.support == KernelSupport.MISSING) {
             status = "KERNEL SUPPORT MISSING"
-            sendMessage = "This kernel does not include AirDroid injection support."
+            sendMessage = "This kernel does not include CrossPair injection support."
             append("Radio action blocked: ${kernel.support.label}.")
             return false
         }
@@ -1955,7 +1955,7 @@ class AirDroidController(private val context: Context) {
                 modeSwitching = false
                 modeAction = null
                 status = "KERNEL SUPPORT MISSING"
-                sendMessage = "This kernel does not include AirDroid injection support."
+                sendMessage = "This kernel does not include CrossPair injection support."
                 append("Transfer mode blocked: ${kernel.support.label}.")
                 return@launch
             }
@@ -4084,7 +4084,7 @@ class AirDroidController(private val context: Context) {
             "$APP_TMP/owly-k20-helper $arguments"
 
     private fun helperName(): String =
-        settings.deviceName.replace("'", "").ifBlank { "AirDroid K20" }
+        settings.deviceName.replace("'", "").ifBlank { "CrossPair K20" }
 
     private fun append(line: String) {
         if (line.isEmpty()) {

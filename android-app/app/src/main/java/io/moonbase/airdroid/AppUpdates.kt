@@ -14,7 +14,7 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** A release published at github.com/RenzVillegas24/AirDroid/releases. */
+/** A release published at github.com/RenzVillegas24/CrossPair/releases. */
 data class AppRelease(
     val version: String,
     val tag: String,
@@ -43,8 +43,8 @@ sealed interface UpdateState {
  */
 object AppUpdates {
     private const val API_URL =
-        "https://api.github.com/repos/RenzVillegas24/AirDroid/releases/latest"
-    private const val USER_AGENT = "AirDroid-Android"
+        "https://api.github.com/repos/RenzVillegas24/CrossPair/releases/latest"
+    private const val USER_AGENT = "CrossPair-Android"
 
     suspend fun check(currentVersion: String): UpdateState = withContext(Dispatchers.IO) {
         try {
@@ -101,10 +101,10 @@ object AppUpdates {
     ): File = withContext(Dispatchers.IO) {
         val remote = release.apkUrl
             ?: throw IllegalStateException("This release does not contain an APK.")
-        val safeName = (release.apkName ?: "AirDroid-${release.version}.apk")
+        val safeName = (release.apkName ?: "CrossPair-${release.version}.apk")
             .substringAfterLast('/')
             .replace(Regex("[^A-Za-z0-9._-]"), "_")
-            .ifBlank { "AirDroid-${release.version}.apk" }
+            .ifBlank { "CrossPair-${release.version}.apk" }
         val directory = File(context.cacheDir, "updates").apply { mkdirs() }
         val target = File(directory, safeName)
         val partial = File(directory, "$safeName.part")
@@ -175,7 +175,7 @@ object AppUpdates {
                     Uri.parse("package:${context.packageName}"),
                 ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(settingsIntent)
-                return "Allow AirDroid to install unknown apps, then tap Install update again."
+                return "Allow CrossPair to install unknown apps, then tap Install update again."
             }
             val uri = FileProvider.getUriForFile(
                 context,

@@ -1,6 +1,6 @@
-# 1.6.4 bug fix
+# 1.7.0 release
 
-App-only release. No kernel or boot-image change: 1.6.3 already required the
+App release. No kernel or boot-image change: 1.6.3 already required the
 AirDrop-capable kernel, and this release only fixes the app.
 
 ## User-facing fixes
@@ -212,7 +212,7 @@ not part of this release.
 Both phones, same build, AirDrop open on the iPhone:
 
 - `RADIO_CHANNEL channel=149 freq=5745 via=nl80211`
-- peers resolve as `RenziPhone` (iPhone) and `AirDroid K20` (the other phone)
+- peers resolve as `RenziPhone` (iPhone) and `CrossPair K20` (the other phone)
 - `/data/local/tmp/owly-app/` contains only the three assets and `state/`
 - after a normal reboot: `boot: Transfer-mode flag present=false`, Wi-Fi on,
   no helper process, no monitor mode
@@ -227,12 +227,12 @@ Both phones, same build, AirDrop open on the iPhone:
 - `android-app/app/src/main/java/io/moonbase/airdroid/AirDroidService.kt`
 - `android-app/app/src/main/java/io/moonbase/airdroid/ControlReceiver.kt`
 - `android-app/app/src/main/java/io/moonbase/airdroid/MainActivity.kt` (preview fixture name)
-- `android-app/app/build.gradle.kts` (1.6.4, versionCode 13)
+- `android-app/app/build.gradle.kts` (1.7.0, versionCode 14)
 - `third_party/owly/crates/owly-awdl/src/tlv.rs`
 - `third_party/owly/crates/owly-awdl/src/node.rs`
 - `third_party/owly/crates/owly-awdl/src/peer.rs`
 - `third_party/owly/crates/owly-airdrop/src/proto/mdns.rs`
-- `scripts/airdroid-adb.sh`
+- `scripts/crosspair-adb.sh`
 
 The Owly changes are local to the pinned submodule; they need a fork commit and
 a submodule bump before the release tag.

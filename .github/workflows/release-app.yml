@@ -126,7 +126,7 @@ jobs:
             echo "missing repository secret AIRDROID_KEY_PASSWORD" >&2
             exit 1
           fi
-          APK_OUT="$RUNNER_TEMP/AirDroid-${VERSION}.apk"
+          APK_OUT="$RUNNER_TEMP/CrossPair-${VERSION}.apk"
           scripts/sign-release.sh \
             android-app/app/build/outputs/apk/release/app-release-unsigned.apk \
             "$APK_OUT"
@@ -135,7 +135,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AirDroid-${{ env.VERSION }}-apk
+          name: CrossPair-${{ env.VERSION }}-apk
           path: ${{ env.APK_PATH }}
           if-no-files-found: error
 
@@ -143,7 +143,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
-          name: AirDroid ${{ env.VERSION }}
+          name: CrossPair ${{ env.VERSION }}
           files: ${{ env.APK_PATH }}
           body: ${{ inputs.changelog }}
           prerelease: ${{ inputs.prerelease }}

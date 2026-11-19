@@ -155,7 +155,7 @@ class AirDroidService : Service() {
         }
         return builder
             .setSmallIcon(R.drawable.ic_download)
-            .setContentTitle("AirDroid is listening")
+            .setContentTitle("CrossPair is listening")
             .setContentText("Background AirDrop receiver is active")
             .setContentIntent(content)
             .setCategory(Notification.CATEGORY_SERVICE)

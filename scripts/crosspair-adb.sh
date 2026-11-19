@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADB debug control for AirDroid. All output is under logcat tags AirDroidLog and
+# ADB debug control for CrossPair. All output is under logcat tags AirDroidLog and
 # AirDroidDebug. The receiver is protected by android.permission.DUMP.
 set -euo pipefail
 
@@ -9,7 +9,7 @@ RECEIVER="$PKG/.ControlReceiver"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/airdroid-adb.sh <command> [args]
+Usage: scripts/crosspair-adb.sh <command> [args]
 
   status                 print controller/peer/transfer state
   history                print received files and completed transfers

@@ -2,7 +2,7 @@
 
 - `build-app.sh` — build the Rust helper from `third_party/owly`, copy it into
   `android-app/assets/`, and build the APK.
-- `airdroid-adb.sh` — ADB control/log interface for the running app.
+- `crosspair-adb.sh` — ADB control/log interface for the running app.
 
 The app bundles only:
 

@@ -25,7 +25,7 @@ production app or build.
 android-app/       Kotlin app + Rust helper
 kernel/            pinned Evolution-X kernel fork submodule
 third_party/owly/  pinned Owly fork submodule
-scripts/           build-app.sh, airdroid-adb.sh
+scripts/           build-app.sh, crosspair-adb.sh
 docs/              SETUP.md, ADB-DEBUG.md, BASE-IMPROVEMENT.md
 ```
 
@@ -66,28 +66,28 @@ scripts/build-app.sh release
 Use the app control receiver, not screenshots, for routine debugging.
 
 ```bash
-scripts/airdroid-adb.sh status
-scripts/airdroid-adb.sh history
-scripts/airdroid-adb.sh log
-scripts/airdroid-adb.sh follow
+scripts/crosspair-adb.sh status
+scripts/crosspair-adb.sh history
+scripts/crosspair-adb.sh log
+scripts/crosspair-adb.sh follow
 ```
 
 Control commands:
 
 ```bash
-scripts/airdroid-adb.sh scan
-scripts/airdroid-adb.sh stop
-scripts/airdroid-adb.sh accept
-scripts/airdroid-adb.sh decline
-scripts/airdroid-adb.sh send /sdcard/Download/file.bin <redacted-mac>
-scripts/airdroid-adb.sh send-text "hello" <redacted-mac>
-scripts/airdroid-adb.sh cancel <transfer-id>
-scripts/airdroid-adb.sh pin <redacted-mac>
-scripts/airdroid-adb.sh delete /sdcard/Download/AirDroid/file
-scripts/airdroid-adb.sh channel 6
-scripts/airdroid-adb.sh name "AirDroid K20"
-scripts/airdroid-adb.sh enter
-scripts/airdroid-adb.sh exit
+scripts/crosspair-adb.sh scan
+scripts/crosspair-adb.sh stop
+scripts/crosspair-adb.sh accept
+scripts/crosspair-adb.sh decline
+scripts/crosspair-adb.sh send /sdcard/Download/file.bin <redacted-mac>
+scripts/crosspair-adb.sh send-text "hello" <redacted-mac>
+scripts/crosspair-adb.sh cancel <transfer-id>
+scripts/crosspair-adb.sh pin <redacted-mac>
+scripts/crosspair-adb.sh delete /sdcard/Download/CrossPair/file
+scripts/crosspair-adb.sh channel 6
+scripts/crosspair-adb.sh name "CrossPair K20"
+scripts/crosspair-adb.sh enter
+scripts/crosspair-adb.sh exit
 ```
 
 Implementation details:
@@ -105,7 +105,7 @@ adb logcat -d -s AirDroidDebug:D '*:S'
 
 - `AirDroidLog` contains timestamped app/helper output.
 - `AirDroidDebug` contains status, peers, active transfers, history, and errors.
-- Use `scripts/airdroid-adb.sh log` or `follow` instead of screencap whenever
+- Use `scripts/crosspair-adb.sh log` or `follow` instead of screencap whenever
   the information is available in logs.
 - Do not print real peer MACs in final user-facing summaries. Use
   `<redacted-mac>` in docs and commits.
@@ -115,8 +115,8 @@ adb logcat -d -s AirDroidDebug:D '*:S'
 1. Build and install the app.
 2. Ask the user to open AirDrop only when a live iPhone test is ready.
 3. Enter Transfer mode from Settings.
-4. Use `scripts/airdroid-adb.sh status` to confirm peers/transfers.
-5. Use `scripts/airdroid-adb.sh log` for timestamped progress.
+4. Use `scripts/crosspair-adb.sh status` to confirm peers/transfers.
+5. Use `scripts/crosspair-adb.sh log` for timestamped progress.
 6. For speed issues, compare progress timestamps and byte counts; identify
    gaps before changing code.
 7. After the test, exit Transfer mode and restore Wi-Fi unless the user is

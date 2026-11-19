@@ -6,7 +6,7 @@ bring-up history and boot-image tooling live on the investigation branches.
 ## 1. Clone and submodules
 
 ```bash
-git clone https://github.com/RenzVillegas24/AirDroid.git
+git clone https://github.com/RenzVillegas24/CrossPair.git
 cd airdroid
 git submodule update --init third_party/owly
 ```
@@ -59,11 +59,11 @@ The running kernel must support:
 - the hidden injection STA (`wlan_inj0`)
 - the monitor TX path used by Owly
 
-The AirDroid kernel fork is pinned in `kernel/`:
+The CrossPair kernel fork is pinned in `kernel/`:
 
 ```text
 RenzVillegas24/kernel_xiaomi_raphael
-branch: AirDroid/main
+branch: CrossPair/main
 ```
 
 ### Kernel build status
@@ -116,9 +116,9 @@ Settings -> Radio mode -> Exit Transfer mode
 ## 6. ADB control and logs
 
 ```bash
-scripts/airdroid-adb.sh status
-scripts/airdroid-adb.sh log
-scripts/airdroid-adb.sh follow
+scripts/crosspair-adb.sh status
+scripts/crosspair-adb.sh log
+scripts/crosspair-adb.sh follow
 ```
 
 All app/helper output is mirrored to logcat:

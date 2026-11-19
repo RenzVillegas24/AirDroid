@@ -10,9 +10,9 @@ millisecond timestamps. Controller state is under `AirDroidDebug`.
 ## Commands
 
 ```bash
-scripts/airdroid-adb.sh status
-scripts/airdroid-adb.sh log
-scripts/airdroid-adb.sh follow
+scripts/crosspair-adb.sh status
+scripts/crosspair-adb.sh log
+scripts/crosspair-adb.sh follow
 ```
 
 `status` prints scanning/receiver state, peers, active transfers, and the
@@ -20,31 +20,31 @@ current incoming request. `log` dumps the timestamped buffer; `follow` streams
 it live.
 
 ```bash
-scripts/airdroid-adb.sh scan
-scripts/airdroid-adb.sh stop
-scripts/airdroid-adb.sh accept
-scripts/airdroid-adb.sh decline
-scripts/airdroid-adb.sh history
+scripts/crosspair-adb.sh scan
+scripts/crosspair-adb.sh stop
+scripts/crosspair-adb.sh accept
+scripts/crosspair-adb.sh decline
+scripts/crosspair-adb.sh history
 ```
 
 ```bash
-scripts/airdroid-adb.sh send /sdcard/Download/example.bin <redacted-mac>
-scripts/airdroid-adb.sh send-text "hello" <redacted-mac>
-scripts/airdroid-adb.sh cancel <transfer-id>
-scripts/airdroid-adb.sh pin <redacted-mac>
-scripts/airdroid-adb.sh delete /sdcard/Download/AirDroid/example.jpg
+scripts/crosspair-adb.sh send /sdcard/Download/example.bin <redacted-mac>
+scripts/crosspair-adb.sh send-text "hello" <redacted-mac>
+scripts/crosspair-adb.sh cancel <transfer-id>
+scripts/crosspair-adb.sh pin <redacted-mac>
+scripts/crosspair-adb.sh delete /sdcard/Download/CrossPair/example.jpg
 ```
 
 The peer MAC is optional when a peer is already selected. It is read at
 runtime; do not commit real device identifiers.
 
 ```bash
-scripts/airdroid-adb.sh channel 6
-scripts/airdroid-adb.sh name "AirDroid K20"
-scripts/airdroid-adb.sh enter
-scripts/airdroid-adb.sh exit
-scripts/airdroid-adb.sh reboot-enter
-scripts/airdroid-adb.sh reboot-exit
+scripts/crosspair-adb.sh channel 6
+scripts/crosspair-adb.sh name "CrossPair K20"
+scripts/crosspair-adb.sh enter
+scripts/crosspair-adb.sh exit
+scripts/crosspair-adb.sh reboot-enter
+scripts/crosspair-adb.sh reboot-exit
 ```
 
 `channel` saves the fixed monitor channel (`0` = auto) and drops the live

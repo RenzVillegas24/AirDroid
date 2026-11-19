@@ -1,4 +1,4 @@
-# AirDroid K20
+# CrossPair K20
 
 Android AirDrop/AWDL app for the Redmi K20 Pro (`raphael`, WCN3990).
 
@@ -62,9 +62,9 @@ repository root and on the investigation branches.
 ## ADB debugging
 
 ```bash
-scripts/airdroid-adb.sh status
-scripts/airdroid-adb.sh log
-scripts/airdroid-adb.sh follow
+scripts/crosspair-adb.sh status
+scripts/crosspair-adb.sh log
+scripts/crosspair-adb.sh follow
 ```
 
 All app/helper output is mirrored to logcat tag `AirDroidLog`.

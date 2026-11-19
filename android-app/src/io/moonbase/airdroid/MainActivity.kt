@@ -43,7 +43,7 @@ class MainActivity : Activity() {
             "owly-k20-helper",
         )
         private const val APP_TMP = "/data/local/tmp/owly-app"
-        private const val RECEIVE_DIR = "/sdcard/Download/AirDroid"
+        private const val RECEIVE_DIR = "/sdcard/Download/CrossPair"
         private const val PICK_FILE = 4101
         private const val PREFS = "airdroid"
 

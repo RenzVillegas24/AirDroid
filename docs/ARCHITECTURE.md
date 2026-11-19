@@ -245,7 +245,7 @@ When an iPhone sends an offer:
 3. the user accepts or declines
 4. the receiver writes the upload into a staging directory
 5. the helper emits per-file progress and completion events
-6. the final file is moved into `/sdcard/Download/AirDroid`
+6. the final file is moved into `/sdcard/Download/CrossPair`
 
 `abort-receive <id>` cancels only that request. The receiver keeps listening
 for other transfers.

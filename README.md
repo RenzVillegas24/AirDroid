@@ -1,6 +1,6 @@
-<img src="docs/assets/airdroid-icon.png" width="128" alt="AirDroid">
+<img src="docs/assets/crosspair-icon.png" width="128" alt="CrossPair">
 
-# AirDroid
+# CrossPair
 
 AirDrop over AWDL for the Redmi K20 Pro / Mi 9T Pro (`raphael`, WCN3990),
 built as a Jetpack Compose Android app with a Rust radio/AirDrop helper.
@@ -24,7 +24,7 @@ scope.
 
 ## How it works
 
-AirDroid is split into four layers:
+CrossPair is split into four layers:
 
 ```text
 Compose app
@@ -112,7 +112,7 @@ normal mode.
   notification.
 - Foreground service keeps the receiver/controller alive while backgrounded.
 - Settings for pausing peer discovery and staying visible during transfers.
-- ADB control/log interface (`scripts/airdroid-adb.sh`, `AirDroidLog`,
+- ADB control/log interface (`scripts/crosspair-adb.sh`, `AirDroidLog`,
   `AirDroidDebug`).
 - Open/Share uses the received directory directly; no cache copy.
 
@@ -130,8 +130,8 @@ experiments/investigation-tools
 ```text
 android-app/       Android app and Rust helper source
 kernel/            Evolution-X kernel_xiaomi_raphael fork (git submodule)
-third_party/owly/  AirDroid Owly fork with K20 radio fixes (git submodule)
-scripts/           build-app.sh and airdroid-adb.sh
+third_party/owly/  CrossPair Owly fork with K20 radio fixes (git submodule)
+scripts/           build-app.sh and crosspair-adb.sh
 docs/              setup, ADB debugging, release, and transfer notes
 ```
 
@@ -156,8 +156,8 @@ Prerequisites:
 - `git`
 
 ```bash
-git clone https://github.com/RenzVillegas24/AirDroid.git
-cd AirDroid
+git clone https://github.com/RenzVillegas24/CrossPair.git
+cd CrossPair
 git submodule update --init third_party/owly
 scripts/build-app.sh debug
 ```
@@ -186,12 +186,12 @@ state machine and test matrix.
 
 ## Using on a phone
 
-### 1. Flash the AirDroid kernel
+### 1. Flash the CrossPair kernel
 
 The app needs the monitor-mode/injection kernel. A normal K20 kernel will
 install the APK but cannot start the AirDrop radio.
 
-Build or obtain the AirDroid kernel first, then flash its boot image. Keep a
+Build or obtain the CrossPair kernel first, then flash its boot image. Keep a
 backup of the stock boot image.
 
 ```bash
@@ -201,7 +201,7 @@ fastboot reboot
 ```
 
 The bootloader must be unlocked. If you are not rebuilding the kernel, use a
-boot image built from the AirDroid kernel branch.
+boot image built from the CrossPair kernel branch.
 
 ### 2. Install the app
 
@@ -245,9 +245,9 @@ Use **Auto** channel selection unless you are troubleshooting. Auto prefers
 ### 5. Receive from iPhone
 
 1. Keep the app in Transfer mode.
-2. On the iPhone, choose **AirDrop → AirDroid K20**.
+2. On the iPhone, choose **AirDrop → CrossPair K20**.
 3. Accept the offer on the Android phone.
-4. Received files are saved under `/sdcard/Download/AirDroid`.
+4. Received files are saved under `/sdcard/Download/CrossPair`.
 
 The transfer card has a **Stop** action for an active receive. It aborts only
 that transfer; the receiver stays available.
@@ -264,9 +264,9 @@ root watchdog restores Wi-Fi; reboot if the radio is still in monitor mode.
 ### 7. Useful checks
 
 ```bash
-scripts/airdroid-adb.sh status
-scripts/airdroid-adb.sh log
-scripts/airdroid-adb.sh follow
+scripts/crosspair-adb.sh status
+scripts/crosspair-adb.sh log
+scripts/crosspair-adb.sh follow
 ```
 
 See [docs/raphael/ADB-DEBUG.md](docs/raphael/ADB-DEBUG.md) for the full ADB
@@ -276,9 +276,9 @@ command set.
 
 - Upstream base:
   [Evolution-X-Devices/kernel_xiaomi_raphael](https://github.com/Evolution-X-Devices/kernel_xiaomi_raphael)
-- AirDroid fork:
+- CrossPair fork:
   [RenzVillegas24/kernel_xiaomi_raphael](https://github.com/RenzVillegas24/kernel_xiaomi_raphael),
-  branch `AirDroid/main`
+  branch `CrossPair/main`
 - Submodule: `kernel/`
 
 ```bash
@@ -298,7 +298,7 @@ manually.
 Prerequisites:
 
 - aarch64 kernel toolchain compatible with the 4.14 tree
-- the K20 `raphael` defconfig from the AirDroid kernel fork
+- the K20 `raphael` defconfig from the CrossPair kernel fork
 - Android SDK build-tools (`unpack_bootimg`, `mkbootimg`) or an equivalent
   boot-image packer
 - an unlocked bootloader and a stock boot-image backup

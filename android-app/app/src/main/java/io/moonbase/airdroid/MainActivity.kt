@@ -349,7 +349,7 @@ private enum class AirDroidTab(
     val subtitle: String,
     @DrawableRes val icon: Int,
 ) {
-    HOME("AirDroid", "Nearby AirDrop and received files", R.drawable.ic_airdroid_home),
+    HOME("CrossPair", "Nearby AirDrop and received files", R.drawable.ic_airdroid_home),
     LOGS("Logs", "Live radio and session output", R.drawable.ic_receipt_long),
     SETTINGS("Settings", "Radio, appearance, and receiver identity", R.drawable.ic_settings),
 }
@@ -4079,7 +4079,7 @@ private suspend fun shareReceivedFiles(context: Context, paths: List<String>) {
 }
 
 /**
- * FileProvider exposes both the app cache and Download/AirDroid, so received
+ * FileProvider exposes both the app cache and Download/CrossPair, so received
  * files can be opened or shared without copying them first.
  */
 private fun shareableUri(context: Context, path: String): Uri? {
@@ -4310,7 +4310,7 @@ private fun AirDroidSplash() {
                 },
             ) {
                 Text(
-                    text = "AirDroid",
+                    text = "CrossPair",
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Bold,
                     color = colors.onSurface,
@@ -4771,12 +4771,12 @@ private fun UpdateBanner(
                 Text(
                     text = if (controller.updateDownloading) {
                         controller.updateMessage.ifBlank {
-                            "Downloading AirDroid ${release.version}..."
+                            "Downloading CrossPair ${release.version}..."
                         }
                     } else if (release.apkUrl != null) {
-                        "AirDroid ${release.version} is available. Review the changes before updating."
+                        "CrossPair ${release.version} is available. Review the changes before updating."
                     } else {
-                        "AirDroid ${release.version} is available. Review the release page."
+                        "CrossPair ${release.version} is available. Review the release page."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onPrimaryContainer.copy(alpha = 0.82f),
@@ -5313,9 +5313,9 @@ private fun SettingsScreen(controller: AirDroidController) {
                             )
                             Text(
                                 text = if (Build.VERSION.SDK_INT >= 31) {
-                                    "AirDroid palette or Android dynamic color"
+                                    "CrossPair palette or Android dynamic color"
                                 } else {
-                                    "AirDroid palette; system tint needs Android 12+"
+                                    "CrossPair palette; system tint needs Android 12+"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,
@@ -5757,9 +5757,9 @@ private fun UpdateAvailableDialog(
         title = {
             Text(
                 if (isUpdateAvailable) {
-                    "AirDroid ${release.version} is available"
+                    "CrossPair ${release.version} is available"
                 } else {
-                    "AirDroid ${release.version} release notes"
+                    "CrossPair ${release.version} release notes"
                 },
             )
         },

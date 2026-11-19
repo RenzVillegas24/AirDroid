@@ -106,7 +106,7 @@ class AirDroidNotifications(private val context: Context) {
         val text = if (activeCount == 1) "1 active transfer" else "$activeCount active transfers"
         val builder = baseBuilder(
             CHANNEL_TRANSFERS,
-            "AirDroid transfers",
+            "CrossPair transfers",
             text,
             R.drawable.ic_airdroid_notification,
         )
@@ -230,7 +230,7 @@ class AirDroidNotifications(private val context: Context) {
                 TransferDirection.SENT -> "Send cancelled"
                 TransferDirection.RECEIVED -> "Receive cancelled"
             }
-            else -> "AirDroid transfer"
+            else -> "CrossPair transfer"
         }
         val text = when {
             transfer.status == TransferStatus.COMPLETE &&
