@@ -393,7 +393,14 @@ class AirDroidController(private val context: Context) {
     /** Files being copied into the outgoing cache, one row each. */
     var stagingJobs by mutableStateOf<List<StagingJob>>(emptyList())
         private set
+    private val cancelledStaging = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     val staging: Boolean get() = stagingJobs.isNotEmpty()
+
+    /** Drops a file that is still being added; the copy stops at the next chunk. */
+    fun cancelStagingJob(id: Long) {
+        cancelledStaging.add(id)
+        stagingJobs = stagingJobs.filterNot { it.id == id }
+    }
     /** Size reported by the picker for a staged path the app may not stat. */
     private val stagedSizes = mutableMapOf<String, Long>()
     private var pickedDisplayName: String? = null
@@ -1209,7 +1216,7 @@ class AirDroidController(private val context: Context) {
     /** Copies a picker result into the outgoing cache and returns (file, name). */
     private suspend fun stageFile(
         uri: Uri,
-        onProgress: (Float?) -> Unit = {},
+        onProgress: (Float?) -> Boolean = { true },
     ): Pair<File, String>? = withContext(Dispatchers.IO) {
         try {
             val displayName = queryDisplayName(uri) ?: "airdrop-file"
@@ -1252,8 +1259,16 @@ class AirDroidController(private val context: Context) {
                         if (read < 0) break
                         output.write(buffer, 0, read)
                         copied += read
-                        if (total != null && total > 0) {
-                            onProgress((copied.toFloat() / total).coerceIn(0f, 1f))
+                        if (!onProgress(
+                                if (total != null && total > 0) {
+                                    (copied.toFloat() / total).coerceIn(0f, 1f)
+                                } else {
+                                    null
+                                },
+                            )
+                        ) {
+                            out.delete()
+                            return@withContext null
                         }
                     }
                 }
@@ -1316,8 +1331,13 @@ class AirDroidController(private val context: Context) {
             }
             try {
                 val result = stageFile(uri) { progress ->
-                    stagingJobs = stagingJobs.map {
-                        if (it.id == job.id) it.copy(progress = progress) else it
+                    if (cancelledStaging.remove(job.id)) {
+                        false
+                    } else {
+                        stagingJobs = stagingJobs.map {
+                            if (it.id == job.id) it.copy(progress = progress) else it
+                        }
+                        true
                     }
                 }
                 if (result != null) {
