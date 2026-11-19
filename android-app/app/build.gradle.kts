@@ -13,8 +13,8 @@ android {
         applicationId = "io.moonbase.crosspair"
         minSdk = 23
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.7.1"
+        versionCode = 16
+        versionName = "1.7.2"
     }
 
     packaging {

@@ -32,6 +32,7 @@ use owly_airdrop::proto::receiver::Config as ReceiverConfig;
 use owly_airdrop::proto::sender::Config as SenderConfig;
 use owly_airdrop::proto::sender::UploadMode;
 use owly_awdl::{Channel, Config, MacAddr, Presence, RadioConstraints, TxRate};
+use owly_awdl::tlv::{HtCapabilities, VhtCapabilities};
 use owly_radio::native::Native;
 use owly_radio::radio::PeerInfo;
 use tokio::sync::watch;
@@ -385,15 +386,48 @@ fn tx_no_ack() -> bool {
 /// iPhone: a monitor vdev keeps whatever channel the driver came up on. Tune
 /// through nl80211 in the helper itself, so a fresh install needs nothing
 /// outside the APK.
-fn set_radio_channel(channel: u8) {
+/// Tunes the monitor. Returns whether 80 MHz was accepted; the VHT
+/// capabilities are only announced when the monitor can hear them.
+fn set_radio_channel(channel: u8) -> bool {
     let Some(freq) = channel_freq(channel) else {
         println!("RADIO_CHANNEL channel={channel} unsupported");
-        return;
+        return false;
     };
-    match set_channel_native(freq) {
-        Ok(()) => println!("RADIO_CHANNEL channel={channel} freq={freq} via=nl80211"),
-        Err(e) => println!("RADIO_CHANNEL channel={channel} SET_FAILED {e}"),
+    // 80 MHz blocks: 149/153/157/161 centers on 155 (5775 MHz),
+    // 36/40/44/48 centers on 42 (5210 MHz). Other channels stay 20 MHz.
+    let center80 = match channel {
+        149 => Some(5775),
+        44 => Some(5210),
+        _ => None,
+    };
+    if let Some(center) = center80 {
+        match set_channel_80_native(freq, center) {
+            Ok(()) => {
+                println!("RADIO_CHANNEL channel={channel} freq={freq} width=80");
+                return true;
+            }
+            Err(e) => println!("RADIO_CHANNEL channel={channel} width=80 failed: {e}"),
+        }
     }
+    match set_channel_native(freq) {
+        Ok(()) => {
+            println!("RADIO_CHANNEL channel={channel} freq={freq} width=20");
+            false
+        }
+        Err(e) => {
+            println!("RADIO_CHANNEL channel={channel} SET_FAILED {e}");
+            false
+        }
+    }
+}
+
+fn set_channel_80_native(freq: &str, center: u32) -> Result<(), Box<dyn Error>> {
+    let index: u32 = std::fs::read_to_string(format!("/sys/class/net/{MONITOR}/ifindex"))?
+        .trim()
+        .parse()?;
+    let freq: u32 = freq.parse()?;
+    owly_radio::nl80211::Nl80211::open()?.set_freq_width(index, freq, 3, center)?;
+    Ok(())
 }
 
 fn set_channel_native(freq: &str) -> Result<(), Box<dyn Error>> {
@@ -437,7 +471,7 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     let _ = Command::new("ip").args(["link", "set", MONITOR, "up"]).status();
     let addr = read_hidden_mac().await?;
     println!("INJECT_MAC {addr:?}");
-    set_radio_channel(channel);
+    let width80 = set_radio_channel(channel);
 
     let radio = RadioConstraints { channel: Channel(channel), presence: Presence::Fixed };
     let mut cfg = Config::new(addr, "crosspair-k20", radio);
@@ -455,9 +489,11 @@ async fn start_radio(channel: u8) -> Result<(Native, u32, MacAddr, watch::Receiv
     cfg.accept_addba = true;
     // The ACK/retry experiment, see `TX_NO_ACK_DEFAULT`.
     cfg.no_ack = tx_no_ack();
+    cfg.ht = if width80 { HtCapabilities::TWO_STREAM } else { HtCapabilities::ONE_STREAM };
+    cfg.vht = if width80 { Some(VhtCapabilities::VHT80_2SS) } else { None };
     println!(
-        "RADIO_CONFIG no_ack={} rate={} amsdu={} addba={}",
-        cfg.no_ack, cfg.rate, cfg.amsdu, cfg.accept_addba
+        "RADIO_CONFIG no_ack={} rate={} amsdu={} addba={} vht80={}",
+        cfg.no_ack, cfg.rate, cfg.amsdu, cfg.accept_addba, width80
     );
     let (peers_tx, peers_rx) = watch::channel(Vec::new());
     let native = Native::start(MONITOR, AWDL_IFACE, cfg, peers_tx)

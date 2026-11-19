@@ -68,8 +68,8 @@ OFFERED
   Auto sees a peer on a different channel, it switches to the dominant
   channel before locking. This prevents a fixed 2.4 GHz monitor from
   staying on channel 6 while the iPhone spends most slots on 149.
-- The helper uses the iPhone's HT rate (MCS 7, short GI) and A-MSDU where the
-  peer advertises support.
+- The receiver advertises VHT80 2SS and tunes the monitor to 80 MHz on 149 or
+  44, with a 20 MHz fallback. Sends stay on the 54 Mbps management-TX path.
 
 ## Test matrix
 
