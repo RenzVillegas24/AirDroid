@@ -1886,18 +1886,29 @@ class AirDroidController(private val context: Context) {
             val wasReady = existing.any {
                 it.mac.equals(mac, ignoreCase = true) && it.airdropReady
             }
-            existing.removeAll { it.mac.equals(mac, ignoreCase = true) }
-            existing.add(
-                Peer(
-                    mac,
-                    name,
-                    devclass,
-                    rssi,
-                    airdropState = state,
-                    awdlChannel = awdlChannel,
-                ),
+            val previousName = existing.firstOrNull {
+                it.mac.equals(mac, ignoreCase = true)
+            }?.name
+            // Replace in place: rebuilding the list on every rssi update moved
+            // the card to the end, which the list showed as peers swapping.
+            val updated = Peer(
+                mac,
+                name,
+                devclass,
+                rssi,
+                airdropState = state,
+                awdlChannel = awdlChannel,
             )
+            val at = existing.indexOfFirst { it.mac.equals(mac, ignoreCase = true) }
+            if (at >= 0) {
+                existing[at] = updated
+            } else {
+                existing.add(updated)
+            }
             peers = existing
+            if (previousName != name && name.isNotBlank()) {
+                append("Peer name: $name")
+            }
             if (!wasReady && state == AirdropState.READY) {
                 append(
                     "Peer ready: ${name.ifBlank { "unnamed" }} " +
@@ -3784,7 +3795,6 @@ class AirDroidController(private val context: Context) {
         when {
             line.startsWith("PEER ") -> return
             line.startsWith("PEER_GONE ") -> return
-            line.startsWith("AWDL name:") -> return
             line.startsWith("AWDL peers now") -> return
             line.startsWith("FOUND ") -> return
             line.startsWith("LOST ") -> return
@@ -3997,8 +4007,16 @@ class AirDroidController(private val context: Context) {
     }
 }
 
+/** iOS advertises a UUID as its AWDL host name; it is not a display name. */
+private val PEER_UUID = Regex(
+    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+)
+
+/** Whether the peer has announced the name a user should see. */
+fun Peer.hasDisplayName(): Boolean = name.isNotBlank() && !PEER_UUID.matches(name.trim())
+
 fun Peer.displayName(): String {
-    if (name.isNotBlank() && !name.matches(Regex("[0-9a-fA-F-]{36}"))) return name
+    if (hasDisplayName()) return name
     return when (devclass) {
         2 -> "iPhone"
         1 -> "Computer"

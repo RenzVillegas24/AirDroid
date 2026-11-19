@@ -1000,8 +1000,9 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     }
     val myName = controller.settings.deviceName.ifBlank { Build.MODEL }
     val peers = controller.peers.filter { it.airdropReady }.sortedWith(
-        compareByDescending<Peer> { controller.isPinned(it.mac) }
-            .thenByDescending { it.rssi },
+        // Stable order: pinned first, then discovery order. Sorting by rssi
+        // made the cards swap places whenever a beacon moved a few dB.
+        compareByDescending<Peer> { controller.isPinned(it.mac) },
     )
     val sentActive = controller.activeTransfers
         .filter { it.direction == TransferDirection.SENT }
@@ -3956,17 +3957,24 @@ private fun NearbyPeersSection(
                 contentPadding = PaddingValues(vertical = 2.dp),
             ) {
                 items(shown, key = { it.mac }) { peer ->
-                    PeerCard(
-                        peer = peer,
-                        selected = selectedMac == peer.mac,
-                        pinned = isPinned(peer.mac),
-                        onClick = { onPeerClick(peer) },
-                        modifier = Modifier.animateItem(
-                            fadeInSpec = tween(300),
-                            placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
-                            fadeOutSpec = tween(200),
-                        ),
+                    val itemModifier = Modifier.animateItem(
+                        fadeInSpec = tween(300),
+                        placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                        fadeOutSpec = tween(200),
                     )
+                    // A nearby AirDrop device whose name has not arrived yet:
+                    // show a placeholder, never a bare card or a UUID.
+                    if (!peer.hasDisplayName()) {
+                        PeerLoadingCard(modifier = itemModifier)
+                    } else {
+                        PeerCard(
+                            peer = peer,
+                            selected = selectedMac == peer.mac,
+                            pinned = isPinned(peer.mac),
+                            onClick = { onPeerClick(peer) },
+                            modifier = itemModifier,
+                        )
+                    }
                 }
                 // Discovery is paused by the helper while a transfer is running, so the
                 // scanning tile should disappear instead of implying that peers are still
@@ -4228,6 +4236,53 @@ private fun EmptyPeopleCard() {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+/**
+ * Placeholder for a device that is AirDrop-ready but has not announced its name
+ * yet. Same footprint as [PeerCard] so the row does not jump when the name
+ * arrives.
+ */
+@Composable
+private fun PeerLoadingCard(modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val pulse = rememberInfiniteTransition(label = "peerLoading")
+    val alpha by pulse.animateFloat(
+        initialValue = 0.30f,
+        targetValue = 0.75f,
+        animationSpec = infiniteRepeatable(tween(850), RepeatMode.Reverse),
+        label = "peerLoadingAlpha",
+    )
+    fun bar(width: Dp, height: Dp, shape: Dp) = Modifier
+        .width(width)
+        .height(height)
+        .clip(RoundedCornerShape(shape))
+        .background(colors.onSurface.copy(alpha = alpha * 0.25f))
+
+    ElevatedCard(
+        modifier = modifier.width(152.dp),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(containerColor = colors.surfaceContainerLow),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(colors.surfaceVariant.copy(alpha = alpha * 0.6f)),
+            )
+            Spacer(Modifier.height(9.dp))
+            Box(Modifier.then(bar(84.dp, 12.dp, 6.dp)))
+            Spacer(Modifier.height(7.dp))
+            Box(Modifier.then(bar(52.dp, 9.dp, 4.dp)))
         }
     }
 }

@@ -232,6 +232,9 @@ fn emit_peer_updates(
                 || old.info.rssi != peer.rssi
         });
         if changed {
+            if known.get(&mac).map_or(true, |old| old.name != name) {
+                println!("PEER_NAME mac={mac} name={name}");
+            }
             println!(
                 "PEER mac={mac} name={name} devclass={} rssi={} channel={}",
                 peer.devclass,

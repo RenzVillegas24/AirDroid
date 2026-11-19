@@ -20,6 +20,11 @@ AirDrop-capable kernel, and this release only fixes the app.
 - **A phone that turned AirDrop off stayed listed as ready.** A learned name was
   treated as proof of readiness, so the peer kept showing as a send target and
   stayed in the nearby list after its service was withdrawn.
+- **Peer cards swapped places while signal strength moved.** The list was
+  rebuilt on every rssi update and sorted by rssi.
+- **A device could appear before its name did.** The generic "iPhone" label
+  stood in for a UUID; the card now shows a loading placeholder until the real
+  name arrives.
 
 No name, MAC, channel or peer table is hardcoded. Names come from the AirDrop
 announcement, channels from the configured channel, MACs from the interfaces.
@@ -113,7 +118,20 @@ The nearby list follows the same rule: it shows AirDrop-ready peers instead of
 service is announced again. `PEER_GONE` still removes a peer that leaves AWDL
 entirely.
 
-### 6. Investigation boot hooks (device state, not app code)
+### 6. Peer order was rebuilt on every update
+
+`handlePeerLine` removed the peer and appended it again on every `PEER` line, and
+the UI sorted by rssi. Any beacon that moved a few dB therefore moved the card,
+and every update moved it to the end before sorting. The list now replaces the
+peer in place and sorts only by pinned state (Kotlin's sort is stable), so the
+order is discovery order and does not change while the radio hears the same
+peers.
+
+A peer that is AirDrop-ready but has not sent its `dnm=` yet renders a pulsing
+placeholder card instead of the class fallback. `hasDisplayName()` uses a strict
+UUID match, so a real 36-character name is not hidden.
+
+### 7. Investigation boot hooks (device state, not app code)
 
 The development phone had KernelSU boot scripts from November that wrote
 `con_mode=4` unconditionally:
