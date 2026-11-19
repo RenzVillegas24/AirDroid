@@ -106,9 +106,11 @@ the only `LOST` the browser would ever emit.
 Fix: readiness is a state machine over the service events, and the name is
 purely a label.
 
-- `FOUND` adds the MAC to `seen`; `LOST` removes it.
-- `LOST` schedules the downgrade after the same 1.2 s debounce `FOUND` uses;
-  a `FOUND` inside that window cancels it, so radio hopping cannot flicker.
+- `FOUND` adds the MAC to `seen`; `LOST` and `WITHDRAWN` remove it.
+- The mDNS browser now tells a **goodbye** (`TTL 0`, `Withdrawn`) from an
+  **expiry** (`Lost`). A goodbye hides the card after the 1.2 s debounce; an
+  expiry waits a 15 s grace because AWDL drops announcements while the radio
+  hops. A `FOUND` inside either window cancels it, so hopping cannot flicker.
 - `PEER` updates take the state from `lost` / `seen`, and keep the previous
   state when neither changed; `AWDL name:` only updates the name.
 - Pending jobs are cancelled on `PEER_GONE`, scan reset and transfer recovery.

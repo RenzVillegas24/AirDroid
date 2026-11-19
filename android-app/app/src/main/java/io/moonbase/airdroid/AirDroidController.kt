@@ -234,6 +234,8 @@ class AirDroidController(private val context: Context) {
         private const val PROGRESS_UI_INTERVAL_MS = 100L
         /** FOUND/LOST debounce: the radio hops, so both flap. */
         private const val AIRDROP_EVENT_DEBOUNCE_MS = 1_200L
+        /** Expiry grace: AWDL drops announcements while the radio hops. */
+        private const val AIRDROP_LOST_GRACE_MS = 15_000L
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
         private const val WATCHDOG_PID_PATH = "/data/local/tmp/owly-watchdog.pid"
         private const val MODE_SWITCH_TIMEOUT_MS = 60_000L
@@ -1990,22 +1992,27 @@ class AirDroidController(private val context: Context) {
                 }
                 if (selectedMac == null) selectedMac = mac
             }
-        } else if (line.startsWith("LOST ")) {
+        } else if (line.startsWith("WITHDRAWN ") || line.startsWith("LOST ")) {
+            // A goodbye means the receiver is leaving on purpose; a plain
+            // expiry also happens while it is still there, because AWDL drops
+            // announcements while the radio hops.
+            val withdrawn = line.startsWith("WITHDRAWN ")
             val instance = between(line, "instance=\"", "\"")
             val mac = airdropInstances.remove(instance) ?: return
             val stillAdvertised = airdropInstances.values.any { it.equals(mac, ignoreCase = true) }
             if (!stillAdvertised) {
-                append("AirDrop service LOST $mac")
+                append(
+                    if (withdrawn) "AirDrop service withdrawn $mac" else "AirDrop service LOST $mac",
+                )
                 airdropFoundJobs.remove(mac)?.cancel()
                 // Not advertised any more: a later PEER line must not turn the
-                // peer ready through `seen` while the debounce is running.
+                // peer ready through `seen` while the grace is running.
                 airdropSeenMacs.removeAll { it.equals(mac, ignoreCase = true) }
-                // Symmetric debounce with FOUND: a FOUND inside the window
-                // cancels this, so the card does not flicker while the radio
-                // hops, and a real LOST still lands after one window.
                 airdropLostJobs.remove(mac)?.cancel()
                 airdropLostJobs[mac] = scope.launch {
-                    delay(AIRDROP_EVENT_DEBOUNCE_MS)
+                    delay(
+                        if (withdrawn) AIRDROP_EVENT_DEBOUNCE_MS else AIRDROP_LOST_GRACE_MS,
+                    )
                     markAirdropNotReady(mac)
                     airdropLostJobs.remove(mac)
                 }
@@ -3301,8 +3308,8 @@ class AirDroidController(private val context: Context) {
             }
             line.startsWith("PEER ") || line.startsWith("PEER_GONE ") ||
                 line.startsWith("AWDL name:") -> handlePeerLine(line)
-            line.startsWith("FOUND ") || line.startsWith("LOST ") ->
-                handleAirdropServiceLine(line)
+            line.startsWith("FOUND ") || line.startsWith("LOST ") ||
+                line.startsWith("WITHDRAWN ") -> handleAirdropServiceLine(line)
             line.startsWith("RECEIVE_") || line.startsWith("RECEIVED ") ->
                 handleReceiveStateLine(line)
             line.startsWith("SEND_FILE_") -> handleSendFileEvent(line)

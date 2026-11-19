@@ -475,6 +475,9 @@ async fn scan(seconds: u64, channel: u8) -> Result<(), Box<dyn Error>> {
                         found.instance, found.name, found.host, found.addr, found.port, found.flags
                     );
                 }
+                Some(BrowseEvent::Withdrawn(instance)) => {
+                    println!("WITHDRAWN instance={instance:?}")
+                }
                 Some(BrowseEvent::Lost(instance)) => println!("LOST instance={instance:?}"),
                 None => break,
             },
@@ -648,6 +651,10 @@ async fn find_and_send(
                             mdns_found = Some(found);
                         }
                     }
+                    Ok(BrowseEvent::Withdrawn(instance)) => {
+                        println!("mDNS WITHDRAWN instance={instance:?}");
+                        mdns_found = None;
+                    }
                     Ok(BrowseEvent::Lost(instance)) => {
                         println!("mDNS LOST instance={instance:?}");
                         mdns_found = None;
@@ -746,7 +753,7 @@ async fn find_and_send(
                             mdns_found = Some(found);
                         }
                     }
-                    Some(BrowseEvent::Lost(_)) | None => {}
+                    Some(BrowseEvent::Withdrawn(_)) | Some(BrowseEvent::Lost(_)) | None => {}
                 },
                 changed = peers_rx.changed() => {
                     if changed.is_ok() {
@@ -1047,6 +1054,10 @@ async fn session(
                                             found.instance, found.host, found.addr, found.port, found.flags
                                         );
                                     }
+                                    Some(BrowseEvent::Withdrawn(instance)) => {
+                                        mdns_cache.lock().unwrap().lost(&instance);
+                                        println!("WITHDRAWN instance={instance:?}");
+                                    }
                                     Some(BrowseEvent::Lost(instance)) => {
                                         mdns_cache.lock().unwrap().lost(&instance);
                                         println!("LOST instance={instance:?}");
@@ -1252,6 +1263,10 @@ async fn session(
                         "FOUND instance={:?} host={:?} addr={} port={} flags=0x{:x}",
                         found.instance, found.host, found.addr, found.port, found.flags
                     );
+                }
+                Some(BrowseEvent::Withdrawn(instance)) => {
+                    mdns_cache.lock().unwrap().lost(&instance);
+                    println!("WITHDRAWN instance={instance:?}");
                 }
                 Some(BrowseEvent::Lost(instance)) => {
                     mdns_cache.lock().unwrap().lost(&instance);
