@@ -135,6 +135,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SheetState
@@ -198,7 +199,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -5462,10 +5466,9 @@ private fun SettingsScreen(controller: CrossPairController) {
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    CrossPairButtonGroup(
+                    UploadModeList(
                         options = UploadPolicy.entries,
                         selected = uploadPolicy,
-                        label = { it.label },
                         onSelected = {
                             uploadPolicy = it
                             val current = controller.settings
@@ -5480,13 +5483,6 @@ private fun SettingsScreen(controller: CrossPairController) {
                                 it,
                             )
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = uploadPolicy.summary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
                     )
                 }
                 SettingsCard(grouped = true) {
@@ -5935,6 +5931,58 @@ private fun SettingsIconBubble(@DrawableRes icon: Int, busy: Boolean = false) {
                     tint = colors.onPrimaryContainer,
                     modifier = Modifier.size(22.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UploadModeList(
+    options: List<UploadPolicy>,
+    selected: UploadPolicy,
+    onSelected: (UploadPolicy) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .selectableGroup(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        options.forEach { option ->
+            val isSelected = option == selected
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (isSelected) colors.primaryContainer else colors.surfaceContainerHigh,
+                border = if (isSelected) BorderStroke(1.5.dp, colors.primary) else null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.RadioButton,
+                        onClick = { onSelected(option) },
+                    ),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = isSelected, onClick = null)
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = option.label,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = if (isSelected) colors.onPrimaryContainer else colors.onSurface,
+                        )
+                        Text(
+                            text = option.summary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isSelected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }
