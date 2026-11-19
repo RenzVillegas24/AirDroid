@@ -4040,14 +4040,28 @@ private fun fileIcon(name: String): Int {
 }
 
 private suspend fun openReceivedFile(context: Context, path: String) {
-    val uri = shareableUri(context, path) ?: return
+    val file = File(path)
+    val uri = shareableUri(context, path)
+    if (uri == null || !file.exists()) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(
+                context,
+                "That file is no longer on this phone",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        return
+    }
     val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, mimeTypeFor(path))
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     withContext(Dispatchers.Main) {
+        // A chooser lets the user pick a viewer that handles a FileProvider
+        // URI; some galleries only open MediaStore entries and report
+        // "Media not found" for everything else.
         try {
-            context.startActivity(intent)
+            context.startActivity(Intent.createChooser(intent, "Open with"))
         } catch (_: Exception) {
             Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
         }
