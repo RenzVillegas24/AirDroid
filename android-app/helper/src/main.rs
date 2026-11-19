@@ -30,6 +30,7 @@ use owly_airdrop::proto::mdns::{
 };
 use owly_airdrop::proto::receiver::Config as ReceiverConfig;
 use owly_airdrop::proto::sender::Config as SenderConfig;
+use owly_airdrop::proto::sender::UploadMode;
 use owly_awdl::{Channel, Config, MacAddr, Presence, RadioConstraints, TxRate};
 use owly_radio::native::Native;
 use owly_radio::radio::PeerInfo;
@@ -354,6 +355,11 @@ fn update_transfer_pause(paused: &mut bool, now: bool) {
 /// and the rest of `Config` keep their defaults.
 const TX_NO_ACK_DEFAULT: bool = false;
 
+/// The app's upload mode, or the library default.
+fn upload_mode() -> Option<UploadMode> {
+    env::var("OWLY_UPLOAD").ok().and_then(|v| UploadMode::parse(v.trim()))
+}
+
 fn tx_no_ack() -> bool {
     match env::var("OWLY_TX_NO_ACK") {
         Ok(value) => match value.trim() {
@@ -512,6 +518,9 @@ async fn send(path: PathBuf, target: Option<String>, channel: u8, name: String) 
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
+    if let Some(mode) = upload_mode() {
+        sender_config.upload = mode;
+    }
     let sender = Sender::new(sender_config)?;
     let mdns_cache = Arc::new(Mutex::new(MdnsCache::default()));
     // One file per send, so the send ID is fixed for this command.
@@ -899,6 +908,10 @@ async fn session(
     let mut browse = mdns.browse().await?;
     let mut sender_config = SenderConfig::new(name, sender_id(addr));
     sender_config.ask_timeout = Duration::from_secs(90);
+    if let Some(mode) = upload_mode() {
+        sender_config.upload = mode;
+    }
+    println!("UPLOAD_MODE {}", sender_config.upload.name());
     let sender = Arc::new(Sender::new(sender_config)?);
     let mdns_cache = Arc::new(Mutex::new(MdnsCache::default()));
     let send_active = Arc::new(AtomicBool::new(false));

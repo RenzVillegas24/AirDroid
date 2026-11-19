@@ -4842,6 +4842,7 @@ private fun SettingsScreen(controller: AirDroidController) {
     val uriHandler = LocalUriHandler.current
     var channel by remember { mutableIntStateOf(controller.settings.channel) }
     var autoChannelDwellSecs by remember { mutableIntStateOf(controller.settings.autoChannelDwellSecs) }
+    var uploadPolicy by remember { mutableStateOf(controller.settings.uploadPolicy) }
     var bleArm by remember { mutableIntStateOf(controller.settings.bleArm) }
     var deviceName by remember { mutableStateOf(controller.settings.deviceName) }
     var themeMode by remember { mutableStateOf(controller.settings.themeMode) }
@@ -5235,6 +5236,51 @@ private fun SettingsScreen(controller: AirDroidController) {
                     Spacer(Modifier.height(6.dp))
                     Text(
                         text = "12s is the default. Longer dwell helps older iPhones; shorter cycles channels faster.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+                SettingsCard(grouped = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBubble(R.drawable.ic_send)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Upload mode",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurface,
+                            )
+                            Text(
+                                text = "How the archive is prepared before it goes on the air",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    AirDroidButtonGroup(
+                        options = UploadPolicy.entries,
+                        selected = uploadPolicy,
+                        label = { it.label },
+                        onSelected = {
+                            uploadPolicy = it
+                            val current = controller.settings
+                            controller.saveSettings(
+                                current.channel,
+                                current.bleArm,
+                                current.deviceName,
+                                current.themeMode,
+                                current.tintMode,
+                                current.pauseDiscoveryDuringTransfer,
+                                current.visibleDuringTransfer,
+                                it,
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = uploadPolicy.summary,
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                     )

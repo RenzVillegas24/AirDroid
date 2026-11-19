@@ -142,6 +142,22 @@ The UI now reports it: `staging`, `stagingLabel` and `stagingProgress` drive an
 in the peer sheet. The copy reads in 1 MiB chunks and only updates the bar when
 the provider reports a size.
 
+### Upload mode setting
+
+Settings → Upload mode picks how the archive is prepared, and the helper reads
+it from `OWLY_UPLOAD` when the session starts:
+
+| Mode | Behaviour |
+| --- | --- |
+| Auto (default) | compress under 512 MB, store and stream above |
+| Stream | store and stream everything; the upload starts at once |
+| Compress | spool and compress everything; smallest on the air, starts later |
+| Type | stream already-compressed extensions, compress the rest |
+| Chunked | experimental: compress and stream with `Transfer-Encoding: chunked` |
+
+Changing the mode drops the live session, so the next scan/send uses it.
+`Chunked` is unverified against Apple receivers and is there for testing.
+
 The copy is skipped when the provider exposes a real path the root helper can
 read: `file://`, external-storage document ids (`primary:Download/x`), the
 Downloads provider's `raw:` ids, and MediaStore ids whose `_data` column is

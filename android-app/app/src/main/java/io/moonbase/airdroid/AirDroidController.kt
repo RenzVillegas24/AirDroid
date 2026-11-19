@@ -58,6 +58,35 @@ data class Peer(
         get() = airdropState == AirdropState.READY
 }
 
+/** How the helper puts the upload body on the air. */
+enum class UploadPolicy(val label: String, val env: String, val summary: String) {
+    AUTO(
+        "Auto",
+        "auto",
+        "Compress small files; stream anything over 512 MB.",
+    ),
+    STREAM(
+        "Stream",
+        "stream",
+        "Store and stream every file. Starts at once, no compression.",
+    ),
+    SPOOL(
+        "Compress",
+        "spool",
+        "Compress everything first. Smaller on the air, starts later.",
+    ),
+    TYPE_AWARE(
+        "Type",
+        "type",
+        "Stream already-compressed files; compress the rest.",
+    ),
+    CHUNKED(
+        "Chunked",
+        "chunked",
+        "Experimental: compress and stream without a length. A receiver may refuse.",
+    ),
+}
+
 data class AirDroidSettings(
     val channel: Int = 0,
     // V2 is the best wake arm for the K20/iPhone pair.
@@ -69,6 +98,7 @@ data class AirDroidSettings(
     val visibleDuringTransfer: Boolean = true,
     val updateReminders: Boolean = true,
     val autoChannelDwellSecs: Int = 12,
+    val uploadPolicy: UploadPolicy = UploadPolicy.AUTO,
 )
 
 /**
@@ -638,6 +668,7 @@ class AirDroidController(private val context: Context) {
         tintMode: TintMode = settings.tintMode,
         pauseDiscoveryDuringTransfer: Boolean = settings.pauseDiscoveryDuringTransfer,
         visibleDuringTransfer: Boolean = settings.visibleDuringTransfer,
+        uploadPolicy: UploadPolicy = settings.uploadPolicy,
     ) {
         val previous = settings
         val cleanName = deviceName.trim().ifBlank { "AirDroid K20" }
@@ -657,6 +688,7 @@ class AirDroidController(private val context: Context) {
         if (effectiveChannel != previous.channel) {
             activeChannel = if (effectiveChannel > 0) effectiveChannel else 44
         }
+        settings = settings.copy(uploadPolicy = uploadPolicy)
         prefs.edit()
             .putInt("channel", effectiveChannel)
             .putInt("bleArm", bleArm)
@@ -665,6 +697,7 @@ class AirDroidController(private val context: Context) {
             .putString("tintMode", tintMode.name)
             .putBoolean("pauseDiscoveryDuringTransfer", pauseDiscoveryDuringTransfer)
             .putBoolean("visibleDuringTransfer", visibleDuringTransfer)
+            .putString("uploadPolicy", uploadPolicy.name)
             .apply()
         val channelLabel = if (effectiveChannel == AUTO_CHANNEL) "Auto" else effectiveChannel.toString()
         sendMessage = "Settings saved · channel $channelLabel"
@@ -684,7 +717,8 @@ class AirDroidController(private val context: Context) {
         // Channel and identity are fixed when the session helper starts awdl0.
         // Drop the live session so the next scan/send recreates it with the new
         // values; a BLE-arm change only needs the advertisement restarted.
-        val identityChanged = effectiveChannel != previous.channel || cleanName != previous.deviceName
+        val identityChanged = effectiveChannel != previous.channel ||
+            cleanName != previous.deviceName || uploadPolicy != previous.uploadPolicy
         if (identityChanged) {
             scanning = false
             scope.launch {
@@ -723,6 +757,9 @@ class AirDroidController(private val context: Context) {
         updateReminders = prefs.getBoolean("updateReminders", true),
         autoChannelDwellSecs = prefs.getInt("autoChannelDwellSecs", 12)
             .coerceIn(MIN_AUTO_DWELL_SECS, MAX_AUTO_DWELL_SECS),
+        uploadPolicy = prefs.getString("uploadPolicy", UploadPolicy.AUTO.name)
+            ?.let { runCatching { UploadPolicy.valueOf(it) }.getOrNull() }
+            ?: UploadPolicy.AUTO,
     )
 
     suspend fun prepare() {
@@ -3475,7 +3512,8 @@ class AirDroidController(private val context: Context) {
         // Let the hidden STA vdev do normal 802.11 ACK/retry. The ACK-less
         // path turns every lost unicast frame into a TCP retransmission and
         // collapses to the observed 64 KiB staircase.
-        val command = "OWLY_TX_NO_ACK=0 $APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
+        val command = "OWLY_TX_NO_ACK=0 OWLY_UPLOAD=${settings.uploadPolicy.env} " +
+            "$APP_TMP/owly-k20-helper session $channel '$name' '$RECEIVE_DIR' 8771"
         append("")
         append("$ starting helper session")
         val process = try {
