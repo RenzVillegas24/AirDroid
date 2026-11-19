@@ -26,8 +26,9 @@ AirDrop-capable kernel, and this release only fixes the app.
   off-centre. The row now owns the full width with its own 20 dp content
   padding, and the other list items carry the margin themselves.
 - **Adding a large file looked frozen.** A pick is copied into the outgoing
-  cache before it can be sent, so a 1 GB file is a 1 GB write. The send card
-  and the peer sheet now show "Adding <name>…" with a progress bar.
+  cache before it can be sent, so a 1 GB file is a 1 GB write. Every added
+  file now gets its own row — queued, then storing with a progress bar, then
+  a check — and moves into the staged list as it finishes.
 - **A device could appear before its name did.** The generic "iPhone" label
   stood in for a UUID; the card now shows a loading placeholder until the real
   name arrives.

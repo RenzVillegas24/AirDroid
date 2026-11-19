@@ -87,6 +87,15 @@ enum class UploadPolicy(val label: String, val env: String, val summary: String)
     ),
 }
 
+/** One file being added: the same per-file feedback a transfer gets. */
+data class StagingJob(
+    val id: Long,
+    val name: String,
+    val started: Boolean = false,
+    val progress: Float? = null,
+    val done: Boolean = false,
+)
+
 data class AirDroidSettings(
     val channel: Int = 0,
     // V2 is the best wake arm for the K20/iPhone pair.
@@ -380,14 +389,10 @@ class AirDroidController(private val context: Context) {
     var receiveMessage by mutableStateOf("Receiver is stopped")
         private set
     var pickedFile by mutableStateOf<File?>(null)
-    /** True while a picker result is being copied into the outgoing cache. */
-    var staging by mutableStateOf(false)
+    /** Files being copied into the outgoing cache, one row each. */
+    var stagingJobs by mutableStateOf<List<StagingJob>>(emptyList())
         private set
-    var stagingLabel by mutableStateOf<String?>(null)
-        private set
-    /** 0..1 while a staged file is being copied, null when the size is unknown. */
-    var stagingProgress by mutableStateOf<Float?>(null)
-        private set
+    val staging: Boolean get() = stagingJobs.isNotEmpty()
     /** Size reported by the picker for a staged path the app may not stat. */
     private val stagedSizes = mutableMapOf<String, Long>()
     private var pickedDisplayName: String? = null
@@ -1201,7 +1206,10 @@ class AirDroidController(private val context: Context) {
     }
 
     /** Copies a picker result into the outgoing cache and returns (file, name). */
-    suspend fun stageFile(uri: Uri): Pair<File, String>? = withContext(Dispatchers.IO) {
+    private suspend fun stageFile(
+        uri: Uri,
+        onProgress: (Float?) -> Unit = {},
+    ): Pair<File, String>? = withContext(Dispatchers.IO) {
         try {
             val displayName = queryDisplayName(uri) ?: "airdrop-file"
             val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
@@ -1244,8 +1252,7 @@ class AirDroidController(private val context: Context) {
                         output.write(buffer, 0, read)
                         copied += read
                         if (total != null && total > 0) {
-                            val progress = (copied.toFloat() / total).coerceIn(0f, 1f)
-                            withContext(Dispatchers.Main) { stagingProgress = progress }
+                            onProgress((copied.toFloat() / total).coerceIn(0f, 1f))
                         }
                     }
                 }
@@ -1267,50 +1274,64 @@ class AirDroidController(private val context: Context) {
     }
 
     suspend fun pickFile(uri: Uri) {
-        staging = true
-        stagingProgress = null
-        stagingLabel = "Adding ${queryDisplayName(uri) ?: "file"}…"
-        val picked = try {
-            stageFile(uri)
-        } finally {
-            staging = false
-            stagingLabel = null
-            stagingProgress = null
-        }
+        var picked: Pair<File, String>? = null
+        stageFiles(listOf(uri)) { picked = it }
         pickedFile = picked?.first
         pickedDisplayName = picked?.second
         sendMessage = when {
             picked == null -> "Could not open that file."
-            else -> "Ready to send ${picked.second}."
+            else -> "Ready to send ${picked!!.second}."
         }
     }
 
     /**
-     * Stages picker results one by one, reporting what it is doing. A 1 GB
-     * pick is a full copy into the outgoing cache, so the UI must say so
-     * instead of appearing to ignore the tap.
+     * Stages picker results one by one, reporting each as it goes. A 1 GB
+     * pick is a full copy into the outgoing cache, so every file gets the
+     * same per-file progress and done state a transfer row has.
+     *
+     * [onReady] runs as soon as a file is ready, so the caller can add it to
+     * the list without waiting for the rest.
      */
-    suspend fun stageFiles(uris: List<Uri>): List<Pair<File, String>> {
-        if (uris.isEmpty()) return emptyList()
-        val out = mutableListOf<Pair<File, String>>()
-        staging = true
-        stagingProgress = null
-        try {
-            for ((index, uri) in uris.withIndex()) {
-                val name = queryDisplayName(uri) ?: "file ${index + 1}"
-                stagingLabel = if (uris.size == 1) {
-                    "Adding $name…"
-                } else {
-                    "Adding ${index + 1} of ${uris.size}: $name…"
-                }
-                stageFile(uri)?.let { out.add(it) }
-            }
-        } finally {
-            staging = false
-            stagingLabel = null
-            stagingProgress = null
+    suspend fun stageFiles(
+        uris: List<Uri>,
+        onReady: suspend (Pair<File, String>) -> Unit,
+    ): Int {
+        if (uris.isEmpty()) return 0
+        var ready = 0
+        // Every pick gets a row at once, so the queue is visible before the
+        // first copy starts.
+        val jobs = uris.mapIndexed { index, uri ->
+            StagingJob(
+                id = System.nanoTime() + index,
+                name = queryDisplayName(uri) ?: "file ${index + 1}",
+            )
         }
-        return out
+        stagingJobs = stagingJobs + jobs
+        for ((index, uri) in uris.withIndex()) {
+            val job = jobs[index]
+            stagingJobs = stagingJobs.map {
+                if (it.id == job.id) it.copy(started = true) else it
+            }
+            try {
+                val result = stageFile(uri) { progress ->
+                    stagingJobs = stagingJobs.map {
+                        if (it.id == job.id) it.copy(progress = progress) else it
+                    }
+                }
+                if (result != null) {
+                    // Let the check show before the file moves into the list.
+                    stagingJobs = stagingJobs.map {
+                        if (it.id == job.id) it.copy(progress = 1f, done = true) else it
+                    }
+                    delay(350)
+                    onReady(result)
+                    ready++
+                }
+            } finally {
+                stagingJobs = stagingJobs.filterNot { it.id == job.id }
+            }
+        }
+        return ready
     }
 
     /** Sends a staged list as one AirDrop offer: one accept, one upload. */

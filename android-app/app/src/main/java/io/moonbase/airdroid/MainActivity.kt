@@ -928,7 +928,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     fun addUris(uris: List<Uri>) {
         if (uris.isEmpty()) return
         scope.launch {
-            addStaged(controller.stageFiles(uris))
+            controller.stageFiles(uris) { addStaged(listOf(it)) }
         }
     }
 
@@ -1231,8 +1231,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
             onRemoveItem = { item -> sheetItems = sheetItems - item },
             onAddFiles = { beginAction(peer, PeerAction.FILES) },
             onAction = { action -> beginAction(peer, action) },
-            stagingLabel = controller.stagingLabel,
-            stagingProgress = controller.stagingProgress,
+            stagingJobs = controller.stagingJobs,
             onSend = {
                 controller.selectPeer(peer)
                 controller.sendStaged(sheetItems.map { it.path to it.name })
@@ -3039,8 +3038,7 @@ private fun PeerActionsSheet(
     onAddFiles: () -> Unit,
     onAction: (PeerAction) -> Unit,
     onSend: () -> Unit,
-    stagingLabel: String? = null,
-    stagingProgress: Float? = null,
+    stagingJobs: List<StagingJob> = emptyList(),
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     var fabExpanded by remember { mutableStateOf(false) }
@@ -3081,8 +3079,7 @@ private fun PeerActionsSheet(
             onAddFiles = onAddFiles,
             onAction = onAction,
             onSend = onSend,
-            stagingLabel = stagingLabel,
-            stagingProgress = stagingProgress,
+            stagingJobs = stagingJobs,
         )
     }
 }
@@ -3104,8 +3101,7 @@ private fun PeerSheetContent(
     onAddFiles: () -> Unit,
     onAction: (PeerAction) -> Unit,
     onSend: () -> Unit,
-    stagingLabel: String? = null,
-    stagingProgress: Float? = null,
+    stagingJobs: List<StagingJob> = emptyList(),
 ) {
     val colors = MaterialTheme.colorScheme
     var largeHeaderHeightPx by remember { mutableIntStateOf(0) }
@@ -3194,14 +3190,8 @@ private fun PeerSheetContent(
                     )
                 }
             }
-            if (stagingLabel != null) {
-                item(key = "staging") {
-                    StagingRow(
-                        label = stagingLabel,
-                        progress = stagingProgress,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                    )
-                }
+            items(stagingJobs, key = { "staging-${it.id}" }) { job ->
+                StagingFileRow(job)
             }
             if (selectedItems.isEmpty()) {
                 item(key = "emptyItems") {
@@ -3760,30 +3750,59 @@ private fun AttachControls(
     }
 }
 
-/** "Adding <file>…" while a pick is copied into the outgoing cache. */
+/** One file being copied into the outgoing cache, in the transfer-row style. */
 @Composable
-private fun StagingRow(
-    label: String?,
-    progress: Float? = null,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(
+private fun StagingFileRow(job: StagingJob, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_upload_file),
+            contentDescription = null,
+            tint = colors.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = job.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (job.started) {
+                Spacer(Modifier.height(4.dp))
+                val progress = job.progress
+                if (progress != null) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        when {
+            job.done -> Icon(
+                painter = painterResource(R.drawable.ic_check_circle),
+                contentDescription = "Stored",
+                tint = colors.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            job.started -> CircularProgressIndicator(
                 modifier = Modifier.size(18.dp),
                 strokeWidth = 2.dp,
             )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = label ?: "Adding files…",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
-        if (progress != null) {
-            Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxWidth(),
+            else -> Text(
+                text = "Queued",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
             )
         }
     }
@@ -4648,8 +4667,8 @@ private fun SendCard(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (controller.staging) {
-                StagingRow(controller.stagingLabel, controller.stagingProgress)
+            controller.stagingJobs.forEach { job ->
+                StagingFileRow(job, Modifier.padding(vertical = 2.dp))
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
