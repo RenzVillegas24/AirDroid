@@ -347,6 +347,13 @@ class AirDroidController(private val context: Context) {
     var receiveMessage by mutableStateOf("Receiver is stopped")
         private set
     var pickedFile by mutableStateOf<File?>(null)
+    /** True while a picker result is being copied into the outgoing cache. */
+    var staging by mutableStateOf(false)
+        private set
+    var stagingLabel by mutableStateOf<String?>(null)
+        private set
+    /** 0..1 while a staged file is being copied, null when the size is unknown. */
+    var stagingProgress by mutableStateOf<Float?>(null)
         private set
     private var pickedDisplayName: String? = null
 
@@ -1021,8 +1028,22 @@ class AirDroidController(private val context: Context) {
             val cleanName = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
             Log.i("AirDroidSend", "stageFile display=$displayName clean=$cleanName uri=$uri")
             val out = outgoingStagingFile(cleanName)
+            val total = querySize(uri)
             context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(out).use { output -> input.copyTo(output) }
+                FileOutputStream(out).use { output ->
+                    val buffer = ByteArray(1 shl 20)
+                    var copied = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        copied += read
+                        if (total != null && total > 0) {
+                            val progress = (copied.toFloat() / total).coerceIn(0f, 1f)
+                            withContext(Dispatchers.Main) { stagingProgress = progress }
+                        }
+                    }
+                }
             } ?: return@withContext null
             out to cleanName
         } catch (e: Exception) {
@@ -1041,13 +1062,50 @@ class AirDroidController(private val context: Context) {
     }
 
     suspend fun pickFile(uri: Uri) {
-        val picked = stageFile(uri)
+        staging = true
+        stagingProgress = null
+        stagingLabel = "Adding ${queryDisplayName(uri) ?: "file"}…"
+        val picked = try {
+            stageFile(uri)
+        } finally {
+            staging = false
+            stagingLabel = null
+            stagingProgress = null
+        }
         pickedFile = picked?.first
         pickedDisplayName = picked?.second
         sendMessage = when {
             picked == null -> "Could not open that file."
             else -> "Ready to send ${picked.second}."
         }
+    }
+
+    /**
+     * Stages picker results one by one, reporting what it is doing. A 1 GB
+     * pick is a full copy into the outgoing cache, so the UI must say so
+     * instead of appearing to ignore the tap.
+     */
+    suspend fun stageFiles(uris: List<Uri>): List<Pair<File, String>> {
+        if (uris.isEmpty()) return emptyList()
+        val out = mutableListOf<Pair<File, String>>()
+        staging = true
+        stagingProgress = null
+        try {
+            for ((index, uri) in uris.withIndex()) {
+                val name = queryDisplayName(uri) ?: "file ${index + 1}"
+                stagingLabel = if (uris.size == 1) {
+                    "Adding $name…"
+                } else {
+                    "Adding ${index + 1} of ${uris.size}: $name…"
+                }
+                stageFile(uri)?.let { out.add(it) }
+            }
+        } finally {
+            staging = false
+            stagingLabel = null
+            stagingProgress = null
+        }
+        return out
     }
 
     /** Sends a staged list as one AirDrop offer: one accept, one upload. */
@@ -3907,6 +3965,17 @@ class AirDroidController(private val context: Context) {
                 .waitFor(8, TimeUnit.SECONDS)
         } catch (_: Exception) {
         }
+    }
+
+    private fun querySize(uri: Uri): Long? {
+        var result: Long? = null
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                result = cursor.getLong(index)
+            }
+        }
+        return result
     }
 
     private fun queryDisplayName(uri: Uri): String? {

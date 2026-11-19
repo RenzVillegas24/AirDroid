@@ -132,6 +132,7 @@ import androidx.compose.material3.FloatingActionButtonMenuItem
 import androidx.compose.material3.FloatingActionButtonMenu
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -927,7 +928,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     fun addUris(uris: List<Uri>) {
         if (uris.isEmpty()) return
         scope.launch {
-            addStaged(uris.mapNotNull { controller.stageFile(it) })
+            addStaged(controller.stageFiles(uris))
         }
     }
 
@@ -1230,6 +1231,8 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
             onRemoveItem = { item -> sheetItems = sheetItems - item },
             onAddFiles = { beginAction(peer, PeerAction.FILES) },
             onAction = { action -> beginAction(peer, action) },
+            stagingLabel = controller.stagingLabel,
+            stagingProgress = controller.stagingProgress,
             onSend = {
                 controller.selectPeer(peer)
                 controller.sendStaged(sheetItems.map { it.path to it.name })
@@ -3036,6 +3039,8 @@ private fun PeerActionsSheet(
     onAddFiles: () -> Unit,
     onAction: (PeerAction) -> Unit,
     onSend: () -> Unit,
+    stagingLabel: String? = null,
+    stagingProgress: Float? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     var fabExpanded by remember { mutableStateOf(false) }
@@ -3076,6 +3081,8 @@ private fun PeerActionsSheet(
             onAddFiles = onAddFiles,
             onAction = onAction,
             onSend = onSend,
+            stagingLabel = stagingLabel,
+            stagingProgress = stagingProgress,
         )
     }
 }
@@ -3097,6 +3104,8 @@ private fun PeerSheetContent(
     onAddFiles: () -> Unit,
     onAction: (PeerAction) -> Unit,
     onSend: () -> Unit,
+    stagingLabel: String? = null,
+    stagingProgress: Float? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     var largeHeaderHeightPx by remember { mutableIntStateOf(0) }
@@ -3182,6 +3191,15 @@ private fun PeerSheetContent(
                         pinned = pinned,
                         onTogglePin = onTogglePin,
                         onSend = onSend,
+                    )
+                }
+            }
+            if (stagingLabel != null) {
+                item(key = "staging") {
+                    StagingRow(
+                        label = stagingLabel,
+                        progress = stagingProgress,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                     )
                 }
             }
@@ -3737,6 +3755,35 @@ private fun AttachControls(
                         contentDescription = null,
                     )
                 },
+            )
+        }
+    }
+}
+
+/** "Adding <file>…" while a pick is copied into the outgoing cache. */
+@Composable
+private fun StagingRow(
+    label: String?,
+    progress: Float? = null,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = label ?: "Adding files…",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        if (progress != null) {
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -4601,6 +4648,9 @@ private fun SendCard(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (controller.staging) {
+                StagingRow(controller.stagingLabel, controller.stagingProgress)
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     painter = painterResource(R.drawable.ic_send),

@@ -25,6 +25,9 @@ AirDrop-capable kernel, and this release only fixes the app.
 - **The nearby row was cut at the screen margin** while the empty card drifted
   off-centre. The row now owns the full width with its own 20 dp content
   padding, and the other list items carry the margin themselves.
+- **Adding a large file looked frozen.** A pick is copied into the outgoing
+  cache before it can be sent, so a 1 GB file is a 1 GB write. The send card
+  and the peer sheet now show "Adding <name>…" with a progress bar.
 - **A device could appear before its name did.** The generic "iPhone" label
   stood in for a UUID; the card now shows a loading placeholder until the real
   name arrives.
@@ -126,7 +129,24 @@ The nearby list follows the same rule: it shows AirDrop-ready peers instead of
 service is announced again. `PEER_GONE` still removes a peer that leaves AWDL
 entirely.
 
-### 6. Peer order was rebuilt on every update
+### 6. Large picks are copied into the cache
+
+The helper sends from a filesystem path, and a picker returns a `content://`
+URI, so `stageFile()` copies the whole file into
+`cacheDir/outgoing/<timestamp>/<name>` first. That is why a 1 GB pick pauses
+for a few seconds, and why several files stage one after another. The copy is
+also what keeps the original filename and gives the sender a stable size.
+
+The UI now reports it: `staging`, `stagingLabel` and `stagingProgress` drive an
+"Adding <name>…" row with a spinner and a determinate bar, in the send card and
+in the peer sheet. The copy reads in 1 MiB chunks and only updates the bar when
+the provider reports a size.
+
+A later change can remove the copy for providers that expose a real path, or
+stream the URI into the helper's stdin; both change the send path, so they are
+out of scope for this fix.
+
+### 7. Peer order was rebuilt on every update
 
 `handlePeerLine` removed the peer and appended it again on every `PEER` line, and
 the UI sorted by rssi. Any beacon that moved a few dB therefore moved the card,
@@ -139,7 +159,7 @@ A peer that is AirDrop-ready but has not sent its `dnm=` yet renders a pulsing
 placeholder card instead of the class fallback. `hasDisplayName()` uses a strict
 UUID match, so a real 36-character name is not hidden.
 
-### 7. Investigation boot hooks (device state, not app code)
+### 8. Investigation boot hooks (device state, not app code)
 
 The development phone had KernelSU boot scripts from November that wrote
 `con_mode=4` unconditionally:
