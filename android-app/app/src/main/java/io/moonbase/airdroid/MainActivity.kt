@@ -921,7 +921,7 @@ private fun HomeScreen(controller: AirDroidController, scope: CoroutineScope) {
     fun addStaged(items: List<Pair<File, String>>) {
         if (items.isEmpty()) return
         sheetItems = sheetItems + items.map { (file, name) ->
-            StagedItem(file.absolutePath, name, file.length())
+            StagedItem(file.absolutePath, name, controller.stagedSize(file.absolutePath, file.length()))
         }
     }
 
@@ -4699,7 +4699,7 @@ private fun SendCard(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = picked.readableSize(),
+                                text = controller.stagedSize(picked.absolutePath, picked.length()).readableBytes(),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.onPrimaryContainer.copy(alpha = 0.68f),
                             )

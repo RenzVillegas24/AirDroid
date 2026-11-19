@@ -145,7 +145,13 @@ the provider reports a size.
 The copy is skipped when the provider exposes a real path the root helper can
 read: `file://`, external-storage document ids (`primary:Download/x`), the
 Downloads provider's `raw:` ids, and MediaStore ids whose `_data` column is
-still populated. `stageFile` checks the path with `su -c test -r` once and
+still populated.
+
+MediaStore hides `_data` and `relative_path` from an app with no storage
+permission, so for Downloads/media ids the app asks root to find the file by
+display name in the public directories and accepts it only when the size the
+picker reported matches. The search is one `su` call; the cache copy remains
+the fallback for anything that cannot be matched. `stageFile` checks the path with `su -c test -r` once and
 falls back to the cache copy if the check fails, so nothing depends on the
 resolution succeeding. Logs say which path was taken:
 

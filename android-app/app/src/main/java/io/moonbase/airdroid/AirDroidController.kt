@@ -1,5 +1,6 @@
 package io.moonbase.airdroid
 
+import android.os.Build
 import android.os.Process as AndroidProcess
 import android.os.SystemClock
 import android.bluetooth.BluetoothManager
@@ -357,6 +358,8 @@ class AirDroidController(private val context: Context) {
     /** 0..1 while a staged file is being copied, null when the size is unknown. */
     var stagingProgress by mutableStateOf<Float?>(null)
         private set
+    /** Size reported by the picker for a staged path the app may not stat. */
+    private val stagedSizes = mutableMapOf<String, Long>()
     private var pickedDisplayName: String? = null
 
     /** True while MainActivity is started; controls dialog vs notification. */
@@ -1076,10 +1079,10 @@ class AirDroidController(private val context: Context) {
         }
     }
 
-    private fun queryMediaPath(base: Uri, id: String): String? = try {
+    private fun queryMediaColumn(base: Uri, id: String, column: String): String? = try {
         context.contentResolver.query(
             base,
-            arrayOf(MediaStore.MediaColumns.DATA),
+            arrayOf(column),
             "_id=?",
             arrayOf(id),
             null,
@@ -1089,6 +1092,60 @@ class AirDroidController(private val context: Context) {
     } catch (_: Exception) {
         null
     }
+
+    /**
+     * The path behind a MediaStore id. `_data` is hidden from apps on scoped
+     * storage, so rebuild it from `relative_path` + `display_name`, which the
+     * provider still reports. The caller verifies it as root before using it.
+     */
+    private fun queryMediaPath(base: Uri, id: String): String? {
+        queryMediaColumn(base, id, MediaStore.MediaColumns.DATA)
+            ?.takeIf { it.startsWith("/") }
+            ?.let { return it }
+        if (Build.VERSION.SDK_INT < 29) return null
+        val name = queryMediaColumn(base, id, MediaStore.MediaColumns.DISPLAY_NAME)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val relative = queryMediaColumn(base, id, MediaStore.MediaColumns.RELATIVE_PATH) ?: ""
+        return if (relative.startsWith("/")) {
+            relative.trimEnd('/') + "/" + name
+        } else {
+            "/storage/emulated/0/" + relative.trim('/').let { if (it.isEmpty()) "" else "$it/" } + name
+        }
+    }
+
+    /**
+     * Finds a public download by its display name as root, matching the size
+     * the picker reported. MediaStore hides `_data` and `relative_path` from an
+     * app without storage permissions, but the file itself is readable by the
+     * helper, so the search runs through `su` and never guesses: a name match
+     * with a different size is ignored.
+     */
+    private fun findPublicFileAsRoot(name: String, size: Long?): String? = try {
+        val quoted = "'" + name.replace("'", "'\\''") + "'"
+        val sizeCheck = if (size != null && size > 0) {
+            " && [ \"\$(stat -c %s \"\$p\")\" = \"$size\" ]"
+        } else {
+            ""
+        }
+        val script = "for p in /storage/emulated/0/Download/$quoted " +
+            "/storage/emulated/0/Documents/$quoted /storage/emulated/0/$quoted; do " +
+            "[ -f \"\$p\" ]$sizeCheck && { echo \"\$p\"; exit 0; }; done; " +
+            "find /storage/emulated/0 -maxdepth 5 -type f -name $quoted 2>/dev/null | " +
+            "while read -r p; do [ \"\$(stat -c %s \"\$p\")\" = \"${size ?: -1}\" ] && " +
+            "echo \"\$p\"; done | head -n 1"
+        val process = ProcessBuilder("su", "-c", script)
+            .redirectErrorStream(true)
+            .start()
+        val out = process.inputStream.bufferedReader().readLine()?.trim()
+        process.waitFor(5, TimeUnit.SECONDS)
+        out?.takeIf { it.startsWith("/") }
+    } catch (_: Exception) {
+        null
+    }
+
+    fun stagedSize(path: String, fallback: Long): Long =
+        stagedSizes[path]?.takeIf { it > 0 } ?: fallback
 
     /** Whether the root helper can open [path]; checked before skipping the copy. */
     private fun rootCanRead(path: String): Boolean = try {
@@ -1115,13 +1172,27 @@ class AirDroidController(private val context: Context) {
             // Prefer the provider's own file when the helper can read it: no
             // copy, so a 1 GB pick is added in milliseconds instead of a
             // minute of writing.
-            val direct = resolveDirectPath(uri)
-            if (direct != null) {
-                val file = File(direct)
-                if (file.isFile && file.length() > 0 && rootCanRead(direct)) {
-                    Log.i("AirDroidSend", "stageFile direct=$direct (no copy)")
-                    return@withContext file to cleanName
+            var direct = resolveDirectPath(uri)
+            if (direct == null) {
+                val authority = uri.authority.orEmpty()
+                if (authority.contains("downloads.documents") || authority == "media") {
+                    direct = findPublicFileAsRoot(cleanName, querySize(uri))
                 }
+            }
+            if (direct != null) {
+                // The app may not be allowed to stat the path, so existence and
+                // readability are checked as root, the process that reads it.
+                val usable = rootCanRead(direct)
+                Log.i(
+                    "AirDroidSend",
+                    "stageFile candidate=$direct usable=$usable size=${querySize(uri)}",
+                )
+                if (usable) {
+                    stagedSizes[direct] = querySize(uri) ?: 0L
+                    return@withContext File(direct) to cleanName
+                }
+            } else {
+                Log.i("AirDroidSend", "stageFile no path for uri=$uri")
             }
             Log.i("AirDroidSend", "stageFile copying uri=$uri")
             val out = outgoingStagingFile(cleanName)
