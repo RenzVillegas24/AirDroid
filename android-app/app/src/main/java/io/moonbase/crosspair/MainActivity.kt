@@ -1878,7 +1878,9 @@ private fun TransferCard(
                         TransferDirection.RECEIVED -> transfer.files.isEmpty()
                     }
                 ) {
-                    Modifier.clickable(onClick = onOpen)
+                    Modifier
+                        .clip(MaterialTheme.shapes.large)
+                        .clickable(onClick = onOpen)
                 } else {
                     Modifier
                 },
@@ -2150,8 +2152,7 @@ private fun TransferCard(
 
             if (transfer.files.isNotEmpty() &&
                 !(transfer.direction == TransferDirection.SENT &&
-                    transfer.files.size == 1 &&
-                    transfer.status.isActive)
+                    transfer.files.size == 1)
             ) {
                 TransferFileList(
                     transfer = transfer,
