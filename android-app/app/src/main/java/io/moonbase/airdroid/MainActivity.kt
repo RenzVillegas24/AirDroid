@@ -2393,15 +2393,8 @@ private fun TransferFileList(
         .maxByOrNull { it.completedAt ?: 0L }
         ?.id
     val visibleDoneId = recentDoneId ?: pendingDoneId
-    val visibleIds: List<String> = when {
-        expanded -> orderedFiles.map { it.id }
-        // While collapsed, keep the current row and the actual next queued row
-        // visible, and use the third slot for the just-finished blink. This
-        // keeps the group at exactly three rows.
-        active && visibleDoneId != null -> activeIds.take(2) + visibleDoneId
-        active -> activeIds.take(3)
-        else -> emptyList()
-    }
+    // Every file is always shown; the group no longer collapses to three rows.
+    val visibleIds: List<String> = orderedFiles.map { it.id }
     val visibleSet = visibleIds.toHashSet()
     val orderedIds = orderedFiles.map { it.id }
     val density = LocalDensity.current
@@ -2461,8 +2454,9 @@ private fun TransferFileList(
                 total = files.size,
                 active = active,
                 received = received,
-                expanded = expanded,
-                onClick = onToggle,
+                expanded = true,
+                onClick = {},
+                toggleable = false,
             )
         }
         // Keep every row composed. This is what lets the bouncy expand run for
@@ -2508,6 +2502,7 @@ private fun FileGroupHeader(
     received: Boolean,
     expanded: Boolean,
     onClick: () -> Unit,
+    toggleable: Boolean = true,
 ) {
     val colors = MaterialTheme.colorScheme
     val accent = if (received) colors.tertiary else colors.primary
@@ -2562,20 +2557,22 @@ private fun FileGroupHeader(
                 )
             }
             Spacer(Modifier.weight(1f))
-            Text(
-                text = if (expanded) "Hide" else "Show all",
-                style = MaterialTheme.typography.labelLarge,
-                color = accent,
-            )
-            Spacer(Modifier.width(2.dp))
-            Icon(
-                painter = painterResource(R.drawable.ic_expand_more),
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier
-                    .size(20.dp)
-                    .rotate(chevron),
-            )
+            if (toggleable) {
+                Text(
+                    text = if (expanded) "Hide" else "Show all",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = accent,
+                )
+                Spacer(Modifier.width(2.dp))
+                Icon(
+                    painter = painterResource(R.drawable.ic_expand_more),
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .rotate(chevron),
+                )
+            }
         }
     }
 }
@@ -2587,6 +2584,7 @@ private fun TransferFileRow(
     received: Boolean,
     justCompleted: Boolean,
     onOpen: (() -> Unit)?,
+    onRemove: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val transferring = file.status == TransferStatus.TRANSFERRING
@@ -2805,7 +2803,21 @@ private fun TransferFileRow(
                 )
                 else -> {}
             }
-            Spacer(Modifier.width(8.dp))
+            if (onRemove != null) {
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = "Remove ${file.name}",
+                        tint = colors.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            } else {
+                Spacer(Modifier.width(8.dp))
+            }
         }
     }
 }
@@ -3194,16 +3206,19 @@ private fun PeerSheetContent(
                     )
                 }
             }
-            items(stagingJobs, key = { "staging-${it.id}" }) { job ->
-                StagingFileRow(job = job, onRemove = { onRemoveStaging(job.id) })
-            }
             if (selectedItems.isEmpty() && stagingJobs.isEmpty()) {
                 item(key = "emptyItems") {
                     EmptyItemsState(modifier = Modifier.padding(horizontal = 20.dp))
                 }
             } else {
-                items(selectedItems, key = { it.path }) { item ->
-                    FileRow(item = item, onRemove = { onRemoveItem(item) })
+                item(key = "files-group") {
+                    FilesGroup(
+                        staged = selectedItems,
+                        jobs = stagingJobs,
+                        onRemoveStaged = onRemoveItem,
+                        onRemoveStaging = onRemoveStaging,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                    )
                 }
             }
         }
@@ -3754,80 +3769,80 @@ private fun AttachControls(
     }
 }
 
-/** One file still being added, in the same card shape as a staged file. */
+/** Staged files and files still being added, in the transfer group shape. */
 @Composable
-private fun StagingFileRow(
-    job: StagingJob,
-    onRemove: () -> Unit,
+private fun FilesGroup(
+    staged: List<StagedItem>,
+    jobs: List<StagingJob>,
+    onRemoveStaged: (StagedItem) -> Unit,
+    onRemoveStaging: (Long) -> Unit,
     modifier: Modifier = Modifier,
-    horizontalPadding: Dp = 20.dp,
 ) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = colors.surfaceContainerHigh,
+    if (staged.isEmpty() && jobs.isEmpty()) return
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = horizontalPadding),
+            .clip(TransferGroupShape),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                painter = painterResource(fileIcon(job.name)),
-                contentDescription = null,
-                tint = colors.onSurfaceVariant,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = middleEllipsis(job.name, 30),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip,
+        FileGroupHeader(
+            done = staged.size + jobs.count { it.done },
+            total = staged.size + jobs.size,
+            active = true,
+            received = false,
+            expanded = true,
+            onClick = {},
+            toggleable = false,
+        )
+        jobs.forEach { job ->
+            Box(Modifier.padding(top = TransferItemGap)) {
+                TransferFileRow(
+                    file = job.asTransferFile(),
+                    received = false,
+                    justCompleted = false,
+                    onOpen = null,
+                    onRemove = { onRemoveStaging(job.id) },
                 )
-                val progress = job.progress
-                Text(
-                    text = when {
-                        job.done -> "Stored"
-                        job.started && progress != null -> "Storing ${(progress * 100).toInt()}%"
-                        job.started -> "Storing…"
-                        else -> "Queued"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.onSurfaceVariant,
-                )
-                if (job.started && !job.done) {
-                    Spacer(Modifier.height(4.dp))
-                    if (progress != null) {
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    }
-                }
             }
-            IconButton(
-                onClick = onRemove,
-                modifier = Modifier.size(48.dp),
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_close),
-                    contentDescription = "Remove ${job.name}",
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp),
+        }
+        staged.forEach { item ->
+            Box(Modifier.padding(top = TransferItemGap)) {
+                TransferFileRow(
+                    file = item.asTransferFile(),
+                    received = false,
+                    justCompleted = false,
+                    onOpen = null,
+                    onRemove = { onRemoveStaged(item) },
                 )
             }
         }
     }
 }
+
+/** A staging row as the transfer row it looks like. */
+private fun StagingJob.asTransferFile(): TransferFile {
+    val total = size ?: 0L
+    val moved = if (total > 0) (((progress ?: 0f) * total).toLong()).coerceAtMost(total) else 0L
+    return TransferFile(
+        id = "staging-$id",
+        name = name,
+        totalBytes = total,
+        transferredBytes = moved,
+        status = when {
+            done -> TransferStatus.COMPLETE
+            started -> TransferStatus.TRANSFERRING
+            else -> TransferStatus.WAITING
+        },
+    )
+}
+
+/** A staged file as a completed transfer row. */
+private fun StagedItem.asTransferFile(): TransferFile = TransferFile(
+    id = "staged-$path",
+    name = name,
+    totalBytes = size,
+    transferredBytes = size,
+    status = TransferStatus.COMPLETE,
+)
 
 @Composable
 private fun EmptyItemsState(modifier: Modifier = Modifier) {
@@ -4688,11 +4703,12 @@ private fun SendCard(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            controller.stagingJobs.forEach { job ->
-                StagingFileRow(
-                    job = job,
-                    onRemove = { controller.cancelStagingJob(job.id) },
-                    horizontalPadding = 0.dp,
+            if (controller.stagingJobs.isNotEmpty()) {
+                FilesGroup(
+                    staged = emptyList(),
+                    jobs = controller.stagingJobs,
+                    onRemoveStaged = {},
+                    onRemoveStaging = { controller.cancelStagingJob(it) },
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
