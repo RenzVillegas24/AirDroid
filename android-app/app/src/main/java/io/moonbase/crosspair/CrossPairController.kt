@@ -1483,11 +1483,12 @@ class CrossPairController(private val context: Context) {
             "Sending ${cleanItems.size} files to ${target.displayName()}..."
         }
         val transferId = "tx-${System.currentTimeMillis()}-${++sendTransferCounter}"
-        val childFiles = cleanItems.mapIndexed { index, (_, name) ->
+        val childFiles = cleanItems.mapIndexed { index, (path, name) ->
             TransferFile(
                 id = "$transferId-$index",
                 name = name.ifBlank { files[index].name },
                 totalBytes = files[index].length().coerceAtLeast(0),
+                localPath = path,
             )
         }
         val transfer = TransferItem(

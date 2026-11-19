@@ -1126,6 +1126,11 @@ private fun HomeScreen(controller: CrossPairController, scope: CoroutineScope) {
                                 transfer = transfer,
                                 localName = myName,
                                 onCancel = { controller.cancelTransfer(transfer.id) },
+                                onOpenFile = { file ->
+                                    file.localPath?.let { path ->
+                                        scope.launch { openLocalFile(context, path) }
+                                    }
+                                },
                                 expanded = expandedGroups[transfer.id] == true,
                                 onToggleGroup = {
                                     expandedGroups[transfer.id] =
@@ -1142,6 +1147,16 @@ private fun HomeScreen(controller: CrossPairController, scope: CoroutineScope) {
                             TransferCard(
                                 transfer = transfer,
                                 localName = myName,
+                                onOpen = transfer.localPath
+                                    ?.takeIf { transfer.files.size <= 1 }
+                                    ?.let { path ->
+                                        { scope.launch { openLocalFile(context, path) } }
+                                    },
+                                onOpenFile = { file ->
+                                    file.localPath?.let { path ->
+                                        scope.launch { openLocalFile(context, path) }
+                                    }
+                                },
                                 expanded = expandedGroups[transfer.id] == true,
                                 onToggleGroup = {
                                     expandedGroups[transfer.id] =
@@ -1189,7 +1204,7 @@ private fun HomeScreen(controller: CrossPairController, scope: CoroutineScope) {
                                 },
                                 onOpenFile = { file ->
                                     file.localPath?.let { path ->
-                                        scope.launch { openReceivedFile(context, path) }
+                                        scope.launch { openLocalFile(context, path) }
                                     }
                                 },
                                 expanded = expandedGroups[transfer.id] == true,
@@ -1210,7 +1225,7 @@ private fun HomeScreen(controller: CrossPairController, scope: CoroutineScope) {
                                 transfer = transfer,
                                 localName = myName,
                                 onOpen = transfer.localPath?.let { path ->
-                                    { scope.launch { openReceivedFile(context, path) } }
+                                    { scope.launch { openLocalFile(context, path) } }
                                 },
                                 onShare = transfer.localPath?.let { path ->
                                     { scope.launch { shareReceivedFile(context, path) } }
@@ -1220,7 +1235,7 @@ private fun HomeScreen(controller: CrossPairController, scope: CoroutineScope) {
                                 },
                                 onOpenFile = { file ->
                                     file.localPath?.let { path ->
-                                        scope.launch { openReceivedFile(context, path) }
+                                        scope.launch { openLocalFile(context, path) }
                                     }
                                 },
                                 onShareGroup = if (paths.isNotEmpty()) {
@@ -4072,7 +4087,7 @@ private fun fileIcon(name: String): Int {
     }
 }
 
-private suspend fun openReceivedFile(context: Context, path: String) {
+private suspend fun openLocalFile(context: Context, path: String) {
     val file = File(path)
     if (!file.exists()) {
         withContext(Dispatchers.Main) {
@@ -4080,11 +4095,13 @@ private suspend fun openReceivedFile(context: Context, path: String) {
         }
         return
     }
-    ensureMediaAccess(context, listOf(path))
+    val owned = isAppOwned(context, path)
+    if (!owned) ensureMediaAccess(context, listOf(path))
     val mime = mimeTypeFor(path)
     // Galleries only open MediaStore entries; a FileProvider URI gets
     // "Media not found" from them. Ask the scanner for the media URI first.
-    val mediaUri = mediaUriFor(context, path, mime)
+    // Files in our own cache are readable through FileProvider already.
+    val mediaUri = if (owned) null else mediaUriFor(context, path, mime)
     val uri = mediaUri ?: shareableUri(context, path)
     if (uri == null) {
         withContext(Dispatchers.Main) {
@@ -4092,9 +4109,12 @@ private suspend fun openReceivedFile(context: Context, path: String) {
         }
         return
     }
-    val grant = canGrantMediaAccess(context, listOf(path))
-    Log.i("CrossPairOpen", "open path=$path uri=$uri mime=$mime media=${mediaUri != null} grant=$grant")
-    val opened = startViewer(context, uri, mime, chooser = mediaUri == null, grant = grant)
+    val grant = owned || canGrantMediaAccess(context, listOf(path))
+    Log.i(
+        "CrossPairOpen",
+        "open path=$path uri=$uri mime=$mime media=${mediaUri != null} owned=$owned grant=$grant",
+    )
+    val opened = startViewer(context, uri, mime, chooser = !owned && mediaUri == null, grant = grant)
     if (!opened) {
         withContext(Dispatchers.Main) {
             Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
@@ -4156,6 +4176,19 @@ private fun canGrantMediaAccess(context: Context, paths: List<String>): Boolean 
     requiredMediaPermissions(paths).all {
         ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
+
+private fun isAppOwned(context: Context, path: String): Boolean {
+    val target = File(path).absoluteFile
+    val roots = listOfNotNull(
+        context.cacheDir,
+        context.filesDir,
+        context.externalCacheDir,
+        context.getExternalFilesDir(null),
+    ).map { it.absoluteFile }
+    return roots.any { root ->
+        target.path == root.path || target.path.startsWith(root.path + File.separator)
+    }
+}
 
 private fun requiredMediaPermissions(paths: List<String>): List<String> {
     if (Build.VERSION.SDK_INT < 33) return listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
