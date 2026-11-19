@@ -5602,7 +5602,7 @@ private fun SettingsScreen(controller: CrossPairController) {
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        SettingsIconBubble(R.drawable.ic_refresh)
+                        SettingsIconBubble(R.drawable.ic_notifications)
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
