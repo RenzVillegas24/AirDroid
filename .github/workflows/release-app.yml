@@ -96,7 +96,7 @@ jobs:
       - name: Decode release keystore
         shell: bash
         env:
-          KEYSTORE_B64: ${{ secrets.CROSSPAIR_KEYSTORE_BASE64 || secrets.AIRDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_B64: ${{ secrets.CROSSPAIR_KEYSTORE_BASE64 }}
         run: |
           if [[ -z "$KEYSTORE_B64" ]]; then
             echo "missing repository secret CROSSPAIR_KEYSTORE_BASE64" >&2
@@ -114,9 +114,9 @@ jobs:
         shell: bash
         env:
           CROSSPAIR_KEYSTORE: ${{ runner.temp }}/crosspair-release.jks
-          CROSSPAIR_KEY_ALIAS: ${{ secrets.CROSSPAIR_KEY_ALIAS || secrets.AIRDROID_KEY_ALIAS || 'crosspair' }}
-          CROSSPAIR_KEYSTORE_PASSWORD: ${{ secrets.CROSSPAIR_KEYSTORE_PASSWORD || secrets.AIRDROID_KEYSTORE_PASSWORD }}
-          CROSSPAIR_KEY_PASSWORD: ${{ secrets.CROSSPAIR_KEY_PASSWORD || secrets.AIRDROID_KEY_PASSWORD }}
+          CROSSPAIR_KEY_ALIAS: ${{ secrets.CROSSPAIR_KEY_ALIAS || 'crosspair' }}
+          CROSSPAIR_KEYSTORE_PASSWORD: ${{ secrets.CROSSPAIR_KEYSTORE_PASSWORD }}
+          CROSSPAIR_KEY_PASSWORD: ${{ secrets.CROSSPAIR_KEY_PASSWORD }}
         run: |
           if [[ -z "$CROSSPAIR_KEYSTORE_PASSWORD" ]]; then
             echo "missing repository secret CROSSPAIR_KEYSTORE_PASSWORD" >&2
