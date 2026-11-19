@@ -91,6 +91,7 @@ enum class UploadPolicy(val label: String, val env: String, val summary: String)
 data class StagingJob(
     val id: Long,
     val name: String,
+    val size: Long? = null,
     val started: Boolean = false,
     val progress: Float? = null,
     val done: Boolean = false,
@@ -1304,6 +1305,7 @@ class AirDroidController(private val context: Context) {
             StagingJob(
                 id = System.nanoTime() + index,
                 name = queryDisplayName(uri) ?: "file ${index + 1}",
+                size = querySize(uri),
             )
         }
         stagingJobs = stagingJobs + jobs

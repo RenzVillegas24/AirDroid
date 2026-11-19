@@ -3190,8 +3190,13 @@ private fun PeerSheetContent(
                     )
                 }
             }
-            items(stagingJobs, key = { "staging-${it.id}" }) { job ->
-                StagingFileRow(job)
+            if (stagingJobs.isNotEmpty()) {
+                item(key = "staging-group") {
+                    StagingGroup(
+                        jobs = stagingJobs,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                    )
+                }
             }
             if (selectedItems.isEmpty()) {
                 item(key = "emptyItems") {
@@ -3750,62 +3755,50 @@ private fun AttachControls(
     }
 }
 
-/** One file being copied into the outgoing cache, in the transfer-row style. */
+/** The adding queue, in the same group shape as a transfer's file list. */
 @Composable
-private fun StagingFileRow(job: StagingJob, modifier: Modifier = Modifier) {
-    val colors = MaterialTheme.colorScheme
-    Row(
+private fun StagingGroup(jobs: List<StagingJob>, modifier: Modifier = Modifier) {
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clip(TransferGroupShape),
     ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_upload_file),
-            contentDescription = null,
-            tint = colors.onSurfaceVariant,
+        FileGroupHeader(
+            done = jobs.count { it.done },
+            total = jobs.size,
+            active = true,
+            received = false,
+            expanded = true,
+            onClick = {},
         )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = job.name,
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (job.started) {
-                Spacer(Modifier.height(4.dp))
-                val progress = job.progress
-                if (progress != null) {
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
+        jobs.forEach { job ->
+            Box(Modifier.padding(top = TransferItemGap)) {
+                TransferFileRow(
+                    file = job.asTransferFile(),
+                    received = false,
+                    justCompleted = false,
+                    onOpen = null,
+                )
             }
         }
-        Spacer(Modifier.width(12.dp))
-        when {
-            job.done -> Icon(
-                painter = painterResource(R.drawable.ic_check_circle),
-                contentDescription = "Stored",
-                tint = colors.primary,
-                modifier = Modifier.size(20.dp),
-            )
-            job.started -> CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                strokeWidth = 2.dp,
-            )
-            else -> Text(
-                text = "Queued",
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant,
-            )
-        }
     }
+}
+
+/** A staging row as the transfer row it looks like. */
+private fun StagingJob.asTransferFile(): TransferFile {
+    val total = size ?: 0L
+    val moved = if (total > 0) (((progress ?: 0f) * total).toLong()).coerceAtMost(total) else 0L
+    return TransferFile(
+        id = "staging-$id",
+        name = name,
+        totalBytes = total,
+        transferredBytes = moved,
+        status = when {
+            done -> TransferStatus.COMPLETE
+            started -> TransferStatus.TRANSFERRING
+            else -> TransferStatus.WAITING
+        },
+    )
 }
 
 @Composable
@@ -4667,8 +4660,8 @@ private fun SendCard(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            controller.stagingJobs.forEach { job ->
-                StagingFileRow(job, Modifier.padding(vertical = 2.dp))
+            if (controller.stagingJobs.isNotEmpty()) {
+                StagingGroup(jobs = controller.stagingJobs)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
