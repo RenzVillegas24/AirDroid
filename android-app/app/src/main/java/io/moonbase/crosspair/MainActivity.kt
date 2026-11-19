@@ -1872,9 +1872,11 @@ private fun TransferCard(
             .fillMaxWidth()
             .then(
                 if (complete &&
-                    transfer.direction == TransferDirection.RECEIVED &&
-                    transfer.files.isEmpty() &&
-                    onOpen != null
+                    onOpen != null &&
+                    when (transfer.direction) {
+                        TransferDirection.SENT -> transfer.files.size <= 1
+                        TransferDirection.RECEIVED -> transfer.files.isEmpty()
+                    }
                 ) {
                     Modifier.clickable(onClick = onOpen)
                 } else {
@@ -2461,6 +2463,9 @@ private fun TransferFileList(
         ?.id
     val visibleDoneId = recentDoneId ?: pendingDoneId
     val visibleIds: List<String> = when {
+        // A one-file card has no group header, so its only row must stay
+        // visible and clickable even when the list is collapsed.
+        files.size == 1 -> listOf(orderedFiles.first().id)
         expanded -> orderedFiles.map { it.id }
         // While collapsed, keep the current row and the actual next queued row
         // visible, and use the third slot for the just-finished blink. This
