@@ -4508,6 +4508,7 @@ private fun UpdateBanner(
     if (showUpdateDialog) {
         UpdateAvailableDialog(
             release = release,
+            isUpdateAvailable = true,
             onUpdate = {
                 if (release.apkUrl != null) {
                     controller.downloadUpdate()
@@ -4743,15 +4744,21 @@ private fun SettingsScreen(controller: AirDroidController) {
     var pendingChannel by remember { mutableStateOf<Int?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateCheckPending by remember { mutableStateOf(false) }
-    val availableRelease = (controller.updateState as? UpdateState.Available)?.release
+    val updateAvailable = controller.updateState is UpdateState.Available
+    val dialogRelease = when (val state = controller.updateState) {
+        is UpdateState.Available -> state.release
+        is UpdateState.UpToDate -> state.release
+        else -> null
+    }
 
     LaunchedEffect(controller.updateState) {
-        if (updateCheckPending && controller.updateState is UpdateState.Available) {
+        if (updateCheckPending &&
+            (controller.updateState is UpdateState.Available ||
+                controller.updateState is UpdateState.UpToDate)
+        ) {
             showUpdateDialog = true
             updateCheckPending = false
-        } else if (controller.updateState is UpdateState.UpToDate ||
-            controller.updateState is UpdateState.Failed
-        ) {
+        } else if (controller.updateState is UpdateState.Failed) {
             updateCheckPending = false
         }
     }
@@ -5269,10 +5276,13 @@ private fun SettingsScreen(controller: AirDroidController) {
                     trailing = when (controller.updateState) {
                         UpdateState.Checking -> "Checking"
                         is UpdateState.Available -> "Available"
+                        is UpdateState.UpToDate -> "Notes"
                         else -> "Check"
                     },
                     onClick = {
-                        if (controller.updateState is UpdateState.Available) {
+                        if (controller.updateState is UpdateState.Available ||
+                            controller.updateState is UpdateState.UpToDate
+                        ) {
                             showUpdateDialog = true
                         } else {
                             updateCheckPending = true
@@ -5314,14 +5324,15 @@ private fun SettingsScreen(controller: AirDroidController) {
         }
     }
 
-    if (showUpdateDialog && availableRelease != null) {
+    if (showUpdateDialog && dialogRelease != null) {
         UpdateAvailableDialog(
-            release = availableRelease,
+            release = dialogRelease,
+            isUpdateAvailable = updateAvailable,
             onUpdate = {
-                if (availableRelease.apkUrl != null) {
+                if (updateAvailable && dialogRelease.apkUrl != null) {
                     controller.downloadUpdate()
                 } else {
-                    uriHandler.openUri(availableRelease.releaseUrl)
+                    uriHandler.openUri(dialogRelease.releaseUrl)
                 }
                 showUpdateDialog = false
             },
@@ -5384,13 +5395,22 @@ private fun SettingsScreen(controller: AirDroidController) {
 @Composable
 private fun UpdateAvailableDialog(
     release: AppRelease,
+    isUpdateAvailable: Boolean,
     onUpdate: () -> Unit,
     onCancel: () -> Unit,
 ) {
     val notes = release.notes.trim()
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text("AirDroid ${release.version} is available") },
+        title = {
+            Text(
+                if (isUpdateAvailable) {
+                    "AirDroid ${release.version} is available"
+                } else {
+                    "AirDroid ${release.version} release notes"
+                },
+            )
+        },
         text = {
             Column(
                 modifier = Modifier
@@ -5398,7 +5418,11 @@ private fun UpdateAvailableDialog(
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = release.tag,
+                    text = if (isUpdateAvailable) {
+                        "Installed ${BuildConfig.VERSION_NAME} · ${release.tag}"
+                    } else {
+                        "You're up to date · ${release.tag}"
+                    },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -5415,12 +5439,18 @@ private fun UpdateAvailableDialog(
         },
         confirmButton = {
             TextButton(onClick = onUpdate) {
-                Text(if (release.apkUrl != null) "Update" else "Open release")
+                Text(
+                    if (isUpdateAvailable && release.apkUrl != null) {
+                        "Update"
+                    } else {
+                        "Open release"
+                    },
+                )
             }
         },
         dismissButton = {
             TextButton(onClick = onCancel) {
-                Text("Cancel")
+                Text(if (isUpdateAvailable) "Cancel" else "Close")
             }
         },
     )

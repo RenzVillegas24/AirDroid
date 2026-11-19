@@ -28,7 +28,10 @@ data class AppRelease(
 sealed interface UpdateState {
     data object Idle : UpdateState
     data object Checking : UpdateState
-    data class UpToDate(val latestVersion: String) : UpdateState
+    data class UpToDate(
+        val latestVersion: String,
+        val release: AppRelease,
+    ) : UpdateState
     data class Available(val release: AppRelease) : UpdateState
     data class Failed(val message: String) : UpdateState
 }
@@ -80,7 +83,7 @@ object AppUpdates {
             if (isNewer(version, currentVersion)) {
                 UpdateState.Available(release)
             } else {
-                UpdateState.UpToDate(version)
+                UpdateState.UpToDate(version, release)
             }
         } catch (e: Exception) {
             UpdateState.Failed(e.message?.takeIf { it.isNotBlank() } ?: "Could not check for updates.")
