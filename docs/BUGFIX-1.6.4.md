@@ -17,6 +17,9 @@ AirDrop-capable kernel, and this release only fixes the app.
   a root command and was skipped when root was not granted yet.
 - **Stale investigation tools were used silently.** The app depended on files
   left in `/data/local/tmp/owly-app/` by the investigation branches.
+- **A phone that turned AirDrop off stayed listed as ready.** A learned name was
+  treated as proof of readiness, so the peer kept showing as a send target
+  after its service was withdrawn.
 
 No name, MAC, channel or peer table is hardcoded. Names come from the AirDrop
 announcement, channels from the configured channel, MACs from the interfaces.
@@ -87,7 +90,28 @@ Fix:
 `Reboot into Transfer mode` still means: enter once on the next boot, then
 behave normally.
 
-### 5. Investigation boot hooks (device state, not app code)
+### 5. Readiness was derived from the name
+
+The nearby list marked a peer ready when it had a name (`name.isNotBlank() ||
+seen`). That was written before names were parsed reliably; once `dnm=` arrived,
+every named AWDL peer looked AirDrop-ready forever. `LOST` also removed the MAC
+from nothing, so `seen` stayed true, and a 10 s "recently found" guard dropped
+the only `LOST` the browser would ever emit.
+
+Fix: readiness is a state machine over the service events, and the name is
+purely a label.
+
+- `FOUND` adds the MAC to `seen`; `LOST` removes it.
+- `LOST` schedules the downgrade after the same 1.2 s debounce `FOUND` uses;
+  a `FOUND` inside that window cancels it, so radio hopping cannot flicker.
+- `PEER` updates take the state from `lost` / `seen`, and keep the previous
+  state when neither changed; `AWDL name:` only updates the name.
+- Pending jobs are cancelled on `PEER_GONE`, scan reset and transfer recovery.
+
+A peer that leaves AWDL entirely is still removed by `PEER_GONE`; a peer that
+only withdraws AirDrop stays listed with `airdrop=NOT_READY`.
+
+### 6. Investigation boot hooks (device state, not app code)
 
 The development phone had KernelSU boot scripts from November that wrote
 `con_mode=4` unconditionally:

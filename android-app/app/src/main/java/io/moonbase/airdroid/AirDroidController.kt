@@ -232,6 +232,8 @@ class AirDroidController(private val context: Context) {
         private const val RECEIVE_READY_TIMEOUT_MS = 30_000L
         private const val SEND_TIMEOUT_MS = 300_000L
         private const val PROGRESS_UI_INTERVAL_MS = 100L
+        /** FOUND/LOST debounce: the radio hops, so both flap. */
+        private const val AIRDROP_EVENT_DEBOUNCE_MS = 1_200L
         private const val MONITOR_OWNER_PATH = "/sys/module/wlan/parameters/owly_owner_pid"
         private const val WATCHDOG_PID_PATH = "/data/local/tmp/owly-watchdog.pid"
         private const val MODE_SWITCH_TIMEOUT_MS = 60_000L
@@ -282,9 +284,9 @@ class AirDroidController(private val context: Context) {
     /** AirDrop mDNS instance -> AWDL MAC. Used to hide a peer after its service is lost. */
     private val airdropInstances = mutableMapOf<String, String>()
     private val airdropSeenMacs = mutableSetOf<String>()
-    private val airdropLastFoundAt = mutableMapOf<String, Long>()
     private val airdropLostMacs = mutableSetOf<String>()
     private val airdropFoundJobs = mutableMapOf<String, Job>()
+    private val airdropLostJobs = mutableMapOf<String, Job>()
     var scanning by mutableStateOf(false)
         private set
     var sending by mutableStateOf(false)
@@ -1869,12 +1871,18 @@ class AirDroidController(private val context: Context) {
             val awdlChannel = if (rawChannel in setOf(6, 44, 149)) rawChannel else 0
             val seen = airdropSeenMacs.any { it.equals(mac, ignoreCase = true) }
             val lost = airdropLostMacs.any { it.equals(mac, ignoreCase = true) }
-            val state = when {
-                name.isNotBlank() || seen -> AirdropState.READY
-                lost -> AirdropState.NOT_READY
-                else -> AirdropState.UNKNOWN
-            }
             val existing = peers.toMutableList()
+            val currentState = existing.firstOrNull {
+                it.mac.equals(mac, ignoreCase = true)
+            }?.airdropState
+            // Readiness comes from the AirDrop service only. A name is not a
+            // readiness signal, and an update without a fresh FOUND/LOST keeps
+            // whatever the last service event decided.
+            val state = when {
+                lost -> AirdropState.NOT_READY
+                seen -> AirdropState.READY
+                else -> currentState ?: AirdropState.UNKNOWN
+            }
             val wasReady = existing.any {
                 it.mac.equals(mac, ignoreCase = true) && it.airdropReady
             }
@@ -1915,16 +1923,11 @@ class AirDroidController(private val context: Context) {
             val mac = rest.substringBefore("=").trim().lowercase()
             val name = rest.substringAfter("=").trim().take(80)
             if (validMac(mac) && name.isNotBlank()) {
-                val seen = airdropSeenMacs.any { it.equals(mac, ignoreCase = true) }
-                val lost = airdropLostMacs.any { it.equals(mac, ignoreCase = true) }
-                val state = when {
-                    name.isNotBlank() || seen -> AirdropState.READY
-                    lost -> AirdropState.NOT_READY
-                    else -> AirdropState.UNKNOWN
-                }
+                // A learned name is not a readiness signal: keep the state the
+                // service events decided.
                 peers = peers.map {
                     if (it.mac.equals(mac, ignoreCase = true)) {
-                        it.copy(name = name, airdropState = state)
+                        it.copy(name = name)
                     } else {
                         it
                     }
@@ -1946,7 +1949,7 @@ class AirDroidController(private val context: Context) {
             val firstInstance =
                 instance.isNotBlank() && airdropInstances[instance] == null
             airdropSeenMacs.add(mac)
-            airdropLastFoundAt[mac.lowercase()] = System.currentTimeMillis()
+            airdropLostJobs.remove(mac)?.cancel()
             if (firstInstance) append("AirDrop service FOUND")
             if (instance.isNotBlank()) airdropInstances[instance] = mac
             if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
@@ -1955,7 +1958,7 @@ class AirDroidController(private val context: Context) {
                 // restore it if FOUND survives the short debounce.
                 airdropFoundJobs.remove(mac)?.cancel()
                 airdropFoundJobs[mac] = scope.launch {
-                    delay(1_200)
+                    delay(AIRDROP_EVENT_DEBOUNCE_MS)
                     if (airdropLostMacs.any { it.equals(mac, ignoreCase = true) }) {
                         airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
                         peers = peers.map {
@@ -1983,45 +1986,52 @@ class AirDroidController(private val context: Context) {
             if (!stillAdvertised) {
                 append("AirDrop service LOST")
                 airdropFoundJobs.remove(mac)?.cancel()
-                airdropLostMacs.add(mac)
-                if (!recentlyFound(mac)) {
-                    peers = peers.map {
-                        if (it.mac.equals(mac, ignoreCase = true) && it.name.isBlank()) {
-                            it.copy(airdropState = AirdropState.NOT_READY)
-                        } else {
-                            it
-                        }
-                    }
-                }
-                if (selectedMac.equals(mac, ignoreCase = true)) {
-                    selectedMac = peers.firstOrNull { it.airdropReady }?.mac
+                // Not advertised any more: a later PEER line must not turn the
+                // peer ready through `seen` while the debounce is running.
+                airdropSeenMacs.removeAll { it.equals(mac, ignoreCase = true) }
+                // Symmetric debounce with FOUND: a FOUND inside the window
+                // cancels this, so the card does not flicker while the radio
+                // hops, and a real LOST still lands after one window.
+                airdropLostJobs.remove(mac)?.cancel()
+                airdropLostJobs[mac] = scope.launch {
+                    delay(AIRDROP_EVENT_DEBOUNCE_MS)
+                    markAirdropNotReady(mac)
+                    airdropLostJobs.remove(mac)
                 }
             }
         }
     }
 
-    /** mDNS on the fixed 2.4 GHz channel flaps FOUND/LOST every few seconds. */
-    private fun recentlyFound(mac: String): Boolean {
-        val now = System.currentTimeMillis()
-        return airdropLastFoundAt.entries.any {
-            it.key.equals(mac, ignoreCase = true) && now - it.value < 10_000
+    /** Marks a peer not AirDrop-ready without dropping it from the AWDL list. */
+    private fun markAirdropNotReady(mac: String) {
+        airdropLostMacs.add(mac)
+        peers = peers.map {
+            if (it.mac.equals(mac, ignoreCase = true)) {
+                it.copy(airdropState = AirdropState.NOT_READY)
+            } else {
+                it
+            }
+        }
+        if (selectedMac.equals(mac, ignoreCase = true)) {
+            selectedMac = peers.firstOrNull { it.airdropReady }?.mac
         }
     }
 
     private fun clearAirdropForMac(mac: String) {
         airdropFoundJobs.remove(mac)?.cancel()
+        airdropLostJobs.remove(mac)?.cancel()
         airdropInstances.entries.removeAll { it.value.equals(mac, ignoreCase = true) }
         airdropSeenMacs.removeAll { it.equals(mac, ignoreCase = true) }
-        airdropLastFoundAt.remove(mac.lowercase())
         airdropLostMacs.removeAll { it.equals(mac, ignoreCase = true) }
     }
 
     private fun clearAirdropServices() {
         airdropFoundJobs.values.forEach { it.cancel() }
         airdropFoundJobs.clear()
+        airdropLostJobs.values.forEach { it.cancel() }
+        airdropLostJobs.clear()
         airdropInstances.clear()
         airdropSeenMacs.clear()
-        airdropLastFoundAt.clear()
         airdropLostMacs.clear()
     }
 
@@ -2030,6 +2040,8 @@ class AirDroidController(private val context: Context) {
         if (airdropLostMacs.isEmpty() && peers.all { it.airdropReady }) return
         airdropFoundJobs.values.forEach { it.cancel() }
         airdropFoundJobs.clear()
+        airdropLostJobs.values.forEach { it.cancel() }
+        airdropLostJobs.clear()
         airdropLostMacs.clear()
         // Restore only peers that have advertised AirDrop at least once. A raw
         // AWDL peer must not become a send target through this recovery path.
